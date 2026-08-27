@@ -52,10 +52,11 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Final, Iterator, Sequence
+from typing import Any, Final
 
 log = logging.getLogger(__name__)
 
@@ -360,7 +361,7 @@ class Store:
                     log.debug("Verbindung liess sich nicht schliessen", exc_info=True)
             self._local = threading.local()
 
-    def __enter__(self) -> "Store":
+    def __enter__(self) -> Store:
         self.connect()
         return self
 

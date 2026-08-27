@@ -71,7 +71,7 @@ def _guess_rules(entries: list[ACLEntry]) -> tuple[list[str], list[str], list[st
     return collect(SPEAK), collect(WHISPER), collect(LISTEN)
 
 
-def _acl_signature(entries: list[ACLEntry]) -> list[tuple]:
+def _acl_signature(entries: list[ACLEntry]) -> list[tuple[str, int, bool, bool, int, int]]:
     return [
         (e.group, e.userid, e.apply_here, e.apply_subs, e.allow, e.deny)
         for e in entries
@@ -94,25 +94,27 @@ def _channel_to_spec(
        ``nur-hoeren`` (Traverse, Enter) und lassen sich aus den drei Regeln
        allein nicht herleiten.
     """
-    base = dict(
-        name=channel.name,
-        description=channel.description,
-        position=channel.position,
-        path=path,
-    )
-    spec = ChannelSpec(**base)
-
     speak, whisper_in, listen_for = _guess_rules(own_acls)
     target = _acl_signature(own_acls)
 
-    def attempt(extra: list[TemplateEntry]) -> ChannelSpec | None:
-        candidate = ChannelSpec(
-            **base,
-            acl=extra,
-            speak=speak,
-            whisper_in=whisper_in,
-            listen_for=listen_for,
+    def baue(
+        acl: list[TemplateEntry] | None = None,
+        *,
+        mit_regeln: bool = True,
+    ) -> ChannelSpec:
+        return ChannelSpec(
+            name=channel.name,
+            description=channel.description,
+            position=channel.position,
+            path=path,
+            acl=list(acl or []),
+            speak=list(speak) if mit_regeln else [],
+            whisper_in=list(whisper_in) if mit_regeln else [],
+            listen_for=list(listen_for) if mit_regeln else [],
         )
+
+    def attempt(extra: list[TemplateEntry]) -> ChannelSpec | None:
+        candidate = baue(extra)
         if _acl_signature(_channel_acls(candidate, config_stub)) == target:
             return candidate
         return None
@@ -121,10 +123,7 @@ def _channel_to_spec(
 
     if match is None:
         # Zweiter Anlauf: die Restbits von @all als expliziten Eintrag.
-        derived = _channel_acls(
-            ChannelSpec(**base, speak=speak, whisper_in=whisper_in, listen_for=listen_for),
-            config_stub,
-        )
+        derived = _channel_acls(baue(), config_stub)
         derived_all = next(
             (e for e in derived if e.group == "all" and e.apply_here and not e.apply_subs),
             None,
@@ -153,6 +152,7 @@ def _channel_to_spec(
         return match
 
     # Nicht rekonstruierbar -- roh schreiben, damit nichts verloren geht.
+    spec = baue(mit_regeln=False)
     spec.acl = [
         TemplateEntry(
             group=entry.group,
@@ -168,7 +168,7 @@ def _channel_to_spec(
 
 
 def export_state(
-    client: "IceClient", *, roots: list[str] | None = None
+    client: IceClient, *, roots: list[str] | None = None
 ) -> dict[str, Any]:
     """Liest den Server und baut daraus die YAML-Struktur.
 
@@ -197,7 +197,6 @@ def export_state(
     # -- Richtlinien aus den Wurzel-ACLs zurueckgewinnen -------------------
     policies = PolicySpec()
     from ..ice.permissions import BY_NAME
-
     from .schema import POLICY_PERMISSIONS
 
     for policy_name, permission in POLICY_PERMISSIONS.items():
@@ -312,7 +311,7 @@ def export_state(
     return document
 
 
-def export_yaml(client: "IceClient", *, roots: list[str] | None = None) -> str:
+def export_yaml(client: IceClient, *, roots: list[str] | None = None) -> str:
     """Wie :func:`export_state`, aber gleich als YAML-Text."""
     document = export_state(client, roots=roots)
     header = (

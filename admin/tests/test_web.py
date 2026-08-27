@@ -411,7 +411,7 @@ def test_permissions_tabelle_kennzeichnet_listen(app_client):
 
 
 def test_registrierte_nutzer_und_gruppenmatrix(app_client):
-    client, fake = app_client
+    client, _fake = app_client
     _anmelden(client)
     csrf = _csrf(client)
 

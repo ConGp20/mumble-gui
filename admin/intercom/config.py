@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-__all__ = ["Settings", "ConfigError", "PLACEHOLDER_PREFIX"]
+__all__ = ["PLACEHOLDER_PREFIX", "ConfigError", "Settings"]
 
 #: setup.sh ersetzt alle Werte, die so beginnen, durch echte Zufallswerte.
 PLACEHOLDER_PREFIX: Final[str] = "ERSETZEN"
@@ -136,7 +136,7 @@ class Settings:
     # ------------------------------------------------------------------ #
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> Settings:
         warnings: list[str] = []
 
         ice_secret = _str("ICE_SECRET", "")

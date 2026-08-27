@@ -17,8 +17,12 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .config import ConfigError, Settings
+
+if TYPE_CHECKING:
+    from .provision.schema import IntercomConfig
 
 __all__ = ["main"]
 
@@ -29,11 +33,11 @@ EXIT_CONFIG = 2
 EXIT_CHANGES = 3
 
 
-def _colour(stream) -> bool:
+def _colour(stream: Any) -> bool:
     return hasattr(stream, "isatty") and stream.isatty()
 
 
-def _connect(settings: Settings):
+def _connect(settings: Settings) -> Any:
     """Verbindet sich mit murmur und meldet Fehler in Klartext."""
     from .ice.client import IceClient
 
@@ -44,7 +48,7 @@ def _connect(settings: Settings):
     return client
 
 
-def _load(settings: Settings, path: str | None):
+def _load(settings: Settings, path: str | None) -> IntercomConfig:
     from .provision.schema import load_config
 
     return load_config(path or settings.intercom_config)
@@ -258,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n  Abgebrochen.", file=sys.stderr)
         return EXIT_ERROR
-    except Exception as exc:  # noqa: BLE001 - letzte Instanz vor dem Nutzer
+    except Exception as exc:
         print(f"  Fehler: {exc}", file=sys.stderr)
         if args.verbose:
             raise

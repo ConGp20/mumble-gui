@@ -35,19 +35,20 @@ SelfRegister) und ``ResetUserContent`` (ohne ``Permission``-Praefix).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final, Iterable
+from typing import Final
 
 __all__ = [
-    "Permission",
-    "PERMISSIONS",
-    "BY_NAME",
-    "BY_BIT",
     "ALL_MASK",
+    "BY_BIT",
+    "BY_NAME",
     "CACHED_BIT",
+    "PERMISSIONS",
+    "Permission",
+    "describe_mask",
     "mask_to_names",
     "names_to_mask",
-    "describe_mask",
     "verify_against_slice",
 ]
 
@@ -231,22 +232,30 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
 BY_NAME: Final[dict[str, Permission]] = {p.name: p for p in PERMISSIONS}
 BY_BIT: Final[dict[int, Permission]] = {p.bit: p for p in PERMISSIONS}
 
+def _alle_bits() -> int:
+    mask = 0
+    for perm in PERMISSIONS:
+        mask |= perm.bit
+    return mask
+
+
 #: Alle gueltigen Bits zusammen -- entspricht ``ChanACL::All`` in ACL.h.
-ALL_MASK: Final[int] = 0
-for _p in PERMISSIONS:
-    ALL_MASK |= _p.bit
-del _p
+ALL_MASK: Final[int] = _alle_bits()
 
 #: Internes Cache-Flag des Servers. Wird von setACL wegmaskiert, taucht aber in
 #: ``effectivePermissions()`` auf und muss dort ausgeblendet werden.
 CACHED_BIT: Final[int] = 0x8000000
 
+def _lookup_tabelle() -> dict[str, str]:
+    tabelle: dict[str, str] = {}
+    for perm in PERMISSIONS:
+        tabelle[perm.name.lower()] = perm.name
+        tabelle[perm.label.lower()] = perm.name
+    return tabelle
+
+
 #: Kleinschreibung -> kanonischer Name, damit die YAML tolerant sein kann.
-_LOOKUP: Final[dict[str, str]] = {}
-for _p in PERMISSIONS:
-    _LOOKUP[_p.name.lower()] = _p.name
-    _LOOKUP[_p.label.lower()] = _p.name
-del _p
+_LOOKUP: Final[dict[str, str]] = _lookup_tabelle()
 # Haeufige Schreibweisen aus aelteren Mumble-Dokus und der Slice.
 _LOOKUP.update(
     {

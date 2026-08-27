@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Any
 
 from .ice.errors import IceError
 from .ice.types import MumbleChannel, MumbleUser
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-__all__ = ["Deviation", "GroupMembership", "Enforcer", "build_paths"]
+__all__ = ["Deviation", "Enforcer", "GroupMembership", "build_paths"]
 
 
 def build_paths(channels: dict[int, MumbleChannel]) -> dict[str, int]:
@@ -106,7 +107,7 @@ class GroupMembership:
     by_user: dict[int, set[str]] = field(default_factory=dict)
 
     @classmethod
-    def from_root_acl(cls, groups: Iterable) -> "GroupMembership":
+    def from_root_acl(cls, groups: Iterable[Any]) -> GroupMembership:
         by_user: dict[int, set[str]] = {}
         for group in groups:
             # `members` enthaelt auch geerbte Mitglieder; an der Wurzel ist das
@@ -138,10 +139,10 @@ class Enforcer:
     ausloesen -- beim zweiten Durchlauf stimmt der Zustand bereits.
     """
 
-    def __init__(self, client: "IceClient") -> None:
+    def __init__(self, client: IceClient) -> None:
         self._client = client
         self._lock = threading.RLock()
-        self._desired: "DesiredState | None" = None
+        self._desired: DesiredState | None = None
         self._membership = GroupMembership()
         self._paths: dict[str, int] = {}
         self._channel_of_path: dict[int, str] = {}
@@ -160,7 +161,7 @@ class Enforcer:
         with self._lock:
             return list(self._deviations)
 
-    def load(self, desired: "DesiredState", channels: dict[int, MumbleChannel]) -> None:
+    def load(self, desired: DesiredState, channels: dict[int, MumbleChannel]) -> None:
         """Uebernimmt den Wunschzustand und loest Kanalpfade in IDs auf.
 
         Wird nach jedem Provisioning und nach jeder Kanalaenderung aufgerufen --
@@ -284,7 +285,7 @@ class Enforcer:
         if entry is None:
             return []
         groups, targets = entry
-        if not membership.includes(user, groups):
+        if not membership.includes(user, groups or []):
             return []
 
         try:
@@ -336,10 +337,10 @@ class Enforcer:
         with self._lock:
             groups = self._priority.get(user.channel)
             membership = self._membership
-        return bool(groups) and membership.includes(user, groups)
+        return bool(groups) and membership.includes(user, groups or [])
 
 
-def _speak_groups(channel) -> list[str]:
+def _speak_groups(channel: Any) -> list[str]:
     """Die Gruppen, die in einem Kanal sprechen duerfen.
 
     Wird aus den erzeugten ACLs zurueckgelesen statt aus der YAML, damit auch

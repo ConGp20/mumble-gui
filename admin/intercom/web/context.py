@@ -66,6 +66,10 @@ class AppContext:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: list[asyncio.Task[None]] = []
+        #: Kurzlebige Aufgaben aus Callbacks. Ohne festgehaltene Referenz
+        #: kann der Garbage Collector eine laufende Task einsammeln --
+        #: asyncio haelt selbst nur eine schwache Referenz darauf.
+        self._nebenaufgaben: set[asyncio.Task[None]] = set()
         self._provision_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ #
@@ -93,12 +97,13 @@ class AppContext:
             self._start_monitor()
 
     async def shutdown(self) -> None:
-        for task in self._tasks:
+        for task in [*self._tasks, *self._nebenaufgaben]:
             task.cancel()
-        for task in self._tasks:
+        for task in [*self._tasks, *self._nebenaufgaben]:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._tasks.clear()
+        self._nebenaufgaben.clear()
 
         if self.monitor is not None:
             with contextlib.suppress(Exception):
@@ -123,7 +128,7 @@ class AppContext:
             self.store = Store(self.settings.db_path)
             self.store.connect()
             self.store.migrate()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.store = None
             self.banners.append(
                 f"{self.settings.db_path} ist nicht benutzbar ({exc}). Verlauf und "
@@ -144,7 +149,7 @@ class AppContext:
         try:
             self.monitor = MonitorBot(self.settings, on_stats=self._on_stats)
             self.monitor.start()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.monitor = None
             self.banners.append(f"Monitor-Bot konnte nicht starten: {exc}")
             log.exception("Monitor-Bot")
@@ -159,7 +164,7 @@ class AppContext:
             self.config = None
             self.config_error = str(exc)
             log.error("intercom.yaml ist unbrauchbar: %s", exc)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.config = None
             self.config_error = str(exc)
             log.exception("intercom.yaml")
@@ -226,13 +231,25 @@ class AppContext:
             if event == "user_connected" or payload.priority_speaker is False:
                 # Nur wenn es sich lohnen kann: der Abgleich liest sonst bei
                 # jeder Lautstaerkeaenderung den Server ab.
-                asyncio.create_task(self._enforce(payload))
+                self._spawn(self._enforce(payload))
         elif event == "user_disconnected":
             self.live.drop_user(payload.session)
         elif event in {"channel_created", "channel_removed", "channel_state_changed"}:
-            asyncio.create_task(self._refresh(full=True))
+            self._spawn(self._refresh(full=True))
             return
         self.live.hub.publish("state", self.live.snapshot(self.enforcer.deviations))
+
+    def _spawn(self, coro: Any) -> None:
+        """Startet eine Nebenaufgabe und haelt sie am Leben.
+
+        ``asyncio`` haelt auf laufende Tasks nur eine schwache Referenz. Wer das
+        Ergebnis von ``create_task`` wegwirft, riskiert, dass die Aufgabe
+        mittendrin eingesammelt wird -- der Abgleich waere dann manchmal da und
+        manchmal nicht, und zwar ohne jede Fehlermeldung.
+        """
+        task = asyncio.create_task(coro)
+        self._nebenaufgaben.add(task)
+        task.add_done_callback(self._nebenaufgaben.discard)
 
     def _on_stats(self, sample: Any) -> None:
         """Wird aus dem pymumble-Thread aufgerufen."""
@@ -304,7 +321,7 @@ class AppContext:
                 self.live.hub.publish("state", self.live.snapshot(deviations))
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - der Task darf nie sterben
+            except Exception:
                 log.exception("Polling-Durchlauf fehlgeschlagen")
 
     def _write_history(self) -> None:
@@ -333,7 +350,7 @@ class AppContext:
         if rows:
             try:
                 self.store.record_samples(rows)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("Verlauf konnte nicht geschrieben werden")
 
     async def _prune_loop(self) -> None:
@@ -345,7 +362,7 @@ class AppContext:
                     removed = self.store.prune(self.settings.history_retention_hours)
                     if removed:
                         log.info("Verlauf aufgeraeumt: %d Zeilen entfernt", removed)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception("Aufraeumen fehlgeschlagen")
             if (
                 self.settings.monitor_enabled
@@ -424,7 +441,7 @@ class AppContext:
                 ok=ok,
                 error=error,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("Audit-Eintrag konnte nicht geschrieben werden")
 
     # ------------------------------------------------------------------ #

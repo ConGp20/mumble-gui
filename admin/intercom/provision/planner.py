@@ -23,12 +23,13 @@ angefasst -- auch nicht mit ``PROVISION_PRUNE``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..ice.permissions import describe_mask
 from ..ice.types import ACLEntry, ChannelACL, ChannelGroup, MumbleChannel
-from .acl_map import DesiredState, build_desired_state
+from .acl_map import DesiredChannel, DesiredState, build_desired_state
 from .schema import PREDEFINED_GROUPS, IntercomConfig, Issue
 
 if TYPE_CHECKING:
@@ -191,7 +192,10 @@ class Plan:
             "empty": self.empty,
             "summary": self.summary(),
             "changes": [c.to_json() for c in self.changes],
-            "issues": [{"level": i.level, "path": i.path, "message": i.message} for i in self.issues],
+            "issues": [
+                {"level": i.level, "path": i.path, "message": i.message}
+                for i in self.issues
+            ],
             "unknown_users": self.unknown_users,
             "duration_ms": self.duration_ms,
         }
@@ -220,7 +224,7 @@ def _group_line(group: ChannelGroup) -> str:
     )
 
 
-def _acl_key(entry: ACLEntry) -> tuple:
+def _acl_key(entry: ACLEntry) -> tuple[str, int, bool, bool, int, int]:
     return (
         entry.group,
         entry.userid,
@@ -231,7 +235,7 @@ def _acl_key(entry: ACLEntry) -> tuple:
     )
 
 
-def _group_key(group: ChannelGroup) -> tuple:
+def _group_key(group: ChannelGroup) -> tuple[str, bool, bool, tuple[int, ...], tuple[int, ...]]:
     return (
         group.name,
         group.inherit,
@@ -246,7 +250,7 @@ class Reconciler:
 
     def __init__(
         self,
-        client: "IceClient",
+        client: IceClient,
         config: IntercomConfig,
         *,
         prune: bool = False,
@@ -328,11 +332,9 @@ class Reconciler:
     def _should_execute(self, change: Change) -> bool:
         if self.dry_run:
             return False
-        if change.needs_prune and not self.prune:
-            return False
-        return True
+        return not (change.needs_prune and not self.prune)
 
-    def _execute(self, change: Change, action) -> None:
+    def _execute(self, change: Change, action: Callable[[], None]) -> None:
         """Fuehrt die Aenderung aus, wenn wir nicht im Trockenlauf sind."""
         self._record(change)
         if not self._should_execute(change):
@@ -342,8 +344,12 @@ class Reconciler:
             change.applied = True
         except Exception as exc:  # noqa: BLE001 - im Report sichtbar machen
             change.error = str(exc)
-            log.error("Provisioning: %s (%s) fehlgeschlagen: %s",
-                      change.summary, change.target, exc)
+            log.error(
+                "Provisioning: %s (%s) fehlgeschlagen: %s",
+                change.summary,
+                change.target,
+                exc,
+            )
 
     # ------------------------------------------------------------------ #
     #  Kanaele
@@ -380,7 +386,7 @@ class Reconciler:
                 )
                 created: dict[str, int] = {}
 
-                def action(w=want, p=parent_id, out=created) -> None:
+                def action(w: Any = want, p: Any = parent_id, out: Any = created) -> None:
                     out["id"] = self.client.add_channel(w.name, p)
 
                 self._execute(change, action)
@@ -412,7 +418,7 @@ class Reconciler:
 
     def _apply_channel_details(
         self,
-        want,
+        want: DesiredChannel,
         channel_id: int,
         *,
         current: MumbleChannel | None = None,
@@ -451,7 +457,7 @@ class Reconciler:
             after=[f"{label}: {new!r}" for label, _, new in differences],
         )
 
-        def action(w=want, cur=current, cid=channel_id) -> None:
+        def action(w: Any = want, cur: Any = current, cid: Any = channel_id) -> None:
             updated = MumbleChannel(
                 id=cid,
                 name=w.name,
@@ -513,7 +519,7 @@ class Reconciler:
                 after=[f"verlinkt mit {want.links}"],
             )
 
-            def action(cid=channel_id, cur=current, ids=wanted_ids) -> None:
+            def action(cid: Any = channel_id, cur: Any = current, ids: Any = wanted_ids) -> None:
                 cur.links = ids
                 self.client.set_channel_state(cur)
 
@@ -544,7 +550,11 @@ class Reconciler:
                 destructive=True,
                 needs_prune=True,
             )
-            self._execute(change, lambda cid=channel_id: self.client.remove_channel(cid))
+
+            def entfernen(cid: int = channel_id) -> None:
+                self.client.remove_channel(cid)
+
+            self._execute(change, entfernen)
 
     # ------------------------------------------------------------------ #
     #  ACLs und Gruppen
@@ -556,7 +566,12 @@ class Reconciler:
             current = self.client.get_acl(0)
         except Exception as exc:  # noqa: BLE001
             self._record(
-                Change(kind="acl_update", target="(Wurzel)", summary="ACL nicht lesbar", error=str(exc))
+                Change(
+                    kind="acl_update",
+                    target="(Wurzel)",
+                    summary="ACL nicht lesbar",
+                    error=str(exc),
+                )
             )
             return
 
@@ -646,7 +661,12 @@ class Reconciler:
                 current = self.client.get_acl(channel_id)
             except Exception as exc:  # noqa: BLE001
                 self._record(
-                    Change(kind="acl_update", target=want.path, summary="ACL nicht lesbar", error=str(exc))
+                    Change(
+                        kind="acl_update",
+                        target=want.path,
+                        summary="ACL nicht lesbar",
+                        error=str(exc),
+                    )
                 )
                 continue
 
@@ -664,9 +684,19 @@ class Reconciler:
                 after=[line for _, line in acl_diff if line],
             )
 
-            def action(cid=channel_id, acls=want.acls, groups=keep_groups, inherit=current.inherit) -> None:
+            def action(
+                cid: Any = channel_id,
+                acls: Any = want.acls,
+                groups: Any = keep_groups,
+                inherit: Any = current.inherit,
+            ) -> None:
                 self.client.set_channel_acl(
-                    ChannelACL(channel_id=cid, acls=list(acls), groups=list(groups), inherit=inherit)
+                    ChannelACL(
+                        channel_id=cid,
+                        acls=list(acls),
+                        groups=list(groups),
+                        inherit=inherit,
+                    )
                 )
 
             self._execute(change, action)
@@ -736,7 +766,12 @@ class Reconciler:
             current = self.client.get_all_conf()
         except Exception as exc:  # noqa: BLE001
             self._record(
-                Change(kind="conf_set", target="(Konfiguration)", summary="nicht lesbar", error=str(exc))
+                Change(
+                    kind="conf_set",
+                    target="(Konfiguration)",
+                    summary="nicht lesbar",
+                    error=str(exc),
+                )
             )
             return
 
@@ -750,11 +785,15 @@ class Reconciler:
                 before=[current.get(key, "(nicht gesetzt)")],
                 after=[value],
             )
-            self._execute(change, lambda k=key, v=value: self.client.set_conf(k, v))
+
+            def schreiben(k: str = key, v: str = value) -> None:
+                self.client.set_conf(k, v)
+
+            self._execute(change, schreiben)
 
 
 def reconcile(
-    client: "IceClient",
+    client: IceClient,
     config: IntercomConfig,
     *,
     prune: bool = False,

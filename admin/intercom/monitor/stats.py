@@ -28,15 +28,16 @@ from __future__ import annotations
 import hashlib
 import math
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from ..ice.types import decode_address, decode_version
 
 __all__ = [
-    "UserStatsSample",
     "IntervalLoss",
     "LossTracker",
+    "UserStatsSample",
     "sha1_cert_hash",
 ]
 
@@ -52,7 +53,7 @@ def sha1_cert_hash(der: bytes) -> str:
     """
     if not der:
         return ""
-    return hashlib.sha1(der).hexdigest()  # noqa: S324 - murmur gibt SHA-1 vor
+    return hashlib.sha1(der).hexdigest()
 
 
 def _loss_pct(good: int, late: int, lost: int) -> float | None:
@@ -201,7 +202,7 @@ class UserStatsSample:
     @classmethod
     def from_protobuf(
         cls, message: Any, name: str = "", ts: float | None = None
-    ) -> "UserStatsSample":
+    ) -> UserStatsSample:
         """``mumble_pb2.UserStats`` -> :class:`UserStatsSample`.
 
         ``message`` wird nur ueber Attributzugriffe gelesen, damit diese

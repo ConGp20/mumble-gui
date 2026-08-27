@@ -201,7 +201,7 @@ def test_apply_repariert_eine_haendische_aenderung(ice_client, config):
 
     plan = reconcile(ice_client, config, dry_run=True)
     assert not plan.empty
-    assert any("Intercom/Regie" == c.target for c in plan.changes)
+    assert any(c.target == "Intercom/Regie" for c in plan.changes)
 
     reconcile(ice_client, config, dry_run=False)
     assert ice_client.get_channel_state(regie).description == ""
@@ -407,8 +407,8 @@ def test_export_bleibt_lesbar(ice_client, config):
 def test_export_faengt_handgeklickte_acls_verlustfrei(ice_client):
     """Ein Muster, das der Generator nicht erzeugen kann, muss roh exportiert
     werden -- sonst geht beim Sichern etwas verloren."""
-    from intercom.provision.exporter import export_state
     from intercom.ice.types import ACLEntry, ChannelACL
+    from intercom.provision.exporter import export_state
 
     channel_id = ice_client.add_channel("Handarbeit", 0)
     ice_client.set_channel_acl(
@@ -478,7 +478,7 @@ def test_prune_fasst_kanaele_ausserhalb_des_baums_nicht_an(ice_client, config):
 def test_fremde_wurzelgruppe_ueberlebt_ohne_prune(ice_client, config):
     """setACL ersetzt alle Gruppen -- eine nicht verwaltete darf trotzdem
     nicht nebenbei verschwinden."""
-    from intercom.ice.types import ChannelACL, ChannelGroup
+    from intercom.ice.types import ChannelGroup
     from intercom.provision.planner import reconcile
 
     _register_all(ice_client, config)

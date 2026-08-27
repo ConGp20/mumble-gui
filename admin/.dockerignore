@@ -1,0 +1,15 @@
+# Nur was ins Image gehoert, wird kopiert.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+
+# Wird im Image selbst erzeugt bzw. geladen.
+slice/
+static/vendor/
+
+# Tests laufen nicht im Laufzeit-Image.
+tests/

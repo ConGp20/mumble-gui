@@ -14,22 +14,23 @@ den von ``slice2py`` erzeugten Typen. Das hat drei Gruende:
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 __all__ = [
-    "decode_address",
-    "encode_address",
-    "decode_version",
-    "ServerVersion",
-    "MumbleUser",
-    "MumbleChannel",
     "ACLEntry",
-    "ChannelGroup",
-    "ChannelACL",
     "BanEntry",
+    "ChannelACL",
+    "ChannelGroup",
     "LogEntry",
+    "MumbleChannel",
+    "MumbleUser",
     "RegisteredUser",
+    "ServerVersion",
+    "decode_address",
+    "decode_version",
+    "encode_address",
 ]
 
 
@@ -190,7 +191,7 @@ class MumbleUser:
         return self.udp_ping if self.udp_ping > 0 else self.tcp_ping
 
     @classmethod
-    def from_ice(cls, u: Any) -> "MumbleUser":
+    def from_ice(cls, u: Any) -> MumbleUser:
         return cls(
             session=u.session,
             userid=u.userid,
@@ -249,7 +250,7 @@ class MumbleChannel:
         return self.id == 0
 
     @classmethod
-    def from_ice(cls, c: Any) -> "MumbleChannel":
+    def from_ice(cls, c: Any) -> MumbleChannel:
         return cls(
             id=c.id,
             name=c.name,
@@ -297,7 +298,7 @@ class ACLEntry:
         return not self.apply_here and not self.apply_subs
 
     @classmethod
-    def from_ice(cls, a: Any) -> "ACLEntry":
+    def from_ice(cls, a: Any) -> ACLEntry:
         return cls(
             apply_here=a.applyHere,
             apply_subs=a.applySubs,
@@ -344,7 +345,7 @@ class ChannelGroup:
     inherited: bool = False
 
     @classmethod
-    def from_ice(cls, g: Any) -> "ChannelGroup":
+    def from_ice(cls, g: Any) -> ChannelGroup:
         return cls(
             name=g.name,
             inherit=g.inherit,
@@ -407,7 +408,7 @@ class BanEntry:
         return self.duration <= 0
 
     @classmethod
-    def from_ice(cls, b: Any) -> "BanEntry":
+    def from_ice(cls, b: Any) -> BanEntry:
         return cls(
             address=decode_address(b.address),
             bits=b.bits,
@@ -432,7 +433,7 @@ class LogEntry:
     text: str
 
     @classmethod
-    def from_ice(cls, entry: Any) -> "LogEntry":
+    def from_ice(cls, entry: Any) -> LogEntry:
         return cls(timestamp=entry.timestamp, text=entry.txt)
 
     def to_json(self) -> dict[str, Any]:

@@ -29,11 +29,12 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Sequence
+from typing import Any
 
-import Ice  # type: ignore[import-not-found]
-import MumbleServer  # type: ignore[import-not-found]
+import Ice
+import MumbleServer
 
 from ..config import Settings
 from .errors import (
@@ -58,7 +59,7 @@ from .types import (
 
 log = logging.getLogger(__name__)
 
-__all__ = ["IceClient", "AsyncIceClient", "CallbackAdapter"]
+__all__ = ["AsyncIceClient", "CallbackAdapter", "IceClient"]
 
 
 #: Name des Adapters fuer Rueckrufe. Muss zum Property-Praefix passen.
@@ -151,8 +152,9 @@ class CallbackAdapter:
     it will be automatically removed"). Wir fangen deshalb alles ab.
     """
 
-    class _Servant(MumbleServer.ServerCallback):  # type: ignore[misc, name-defined]
-        def __init__(self, outer: "CallbackAdapter") -> None:
+    # slice2py erzeugt die Basisklasse zur Laufzeit; fuer mypy ist sie Any.
+    class _Servant(MumbleServer.ServerCallback):  # type: ignore[misc]
+        def __init__(self, outer: CallbackAdapter) -> None:
             self._outer = outer
 
         # -- Nutzer ----------------------------------------------------------
@@ -204,7 +206,7 @@ class CallbackAdapter:
         for handler in handlers:
             try:
                 handler(event, payload)
-            except Exception:  # noqa: BLE001 - siehe Klassendoku
+            except Exception:
                 log.exception(
                     "Callback-Handler fuer %s ist gescheitert. murmur wuerde den "
                     "Callback sonst abmelden, deshalb wird der Fehler geschluckt.",
@@ -330,7 +332,7 @@ class IceClient:
         # Pruefsummenvergleich: praeziser als die Versionsnummer.
         try:
             remote = dict(self._meta.getSliceChecksums())
-        except Exception:  # noqa: BLE001
+        except Exception:
             remote = {}
             log.debug("getSliceChecksums nicht verfuegbar", exc_info=True)
         if remote:
@@ -363,7 +365,7 @@ class IceClient:
             if self._server is not None and self._callback_proxy is not None:
                 try:
                     self._server.removeCallback(self._callback_proxy)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.debug("removeCallback fehlgeschlagen", exc_info=True)
             self._shutdown_communicator()
 
@@ -375,7 +377,7 @@ class IceClient:
         if self._communicator is not None:
             try:
                 self._communicator.destroy()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.debug("Communicator-Abbau fehlgeschlagen", exc_info=True)
             self._communicator = None
 

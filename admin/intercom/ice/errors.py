@@ -9,11 +9,11 @@ auskommen.
 from __future__ import annotations
 
 __all__ = [
-    "IceError",
-    "IceNotConnected",
-    "IceConnectionLost",
     "IceAuthError",
     "IceCallFailed",
+    "IceConnectionLost",
+    "IceError",
+    "IceNotConnected",
     "SliceMismatch",
 ]
 

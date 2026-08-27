@@ -1,0 +1,118 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intercom-admin"
+version = "1.0.0"
+description = "Administration, Provisionierung und Ueberwachung des Stadion-Intercoms"
+readme = "../README.md"
+requires-python = ">=3.11,<3.12"
+# Die Obergrenze ist keine Vorsicht, sondern gemessen: zeroc-ice 3.7.11 hat auf
+# PyPI kein Wheel fuer 3.11 und wird aus dem Quelltext gebaut; fuer 3.12+ ist
+# selbst das unzuverlaessig, und das Distributionspaket python3-zeroc-ice ist
+# gegen genau eine Python-Version gebaut. Siehe DECISIONS.md (D-008).
+
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "jinja2>=3.1",
+  "pyyaml>=6.0",
+  "itsdangerous>=2.1",
+  "python-multipart>=0.0.9",
+
+  # Ice-Schnittstelle zu murmur. Feste Version: die Slice wird damit uebersetzt,
+  # und ein Versionssprung wuerde die Pruefsummen gegen den Server verschieben.
+  "zeroc-ice==3.7.11",
+
+  # Nur fuer das selbstsignierte Client-Zertifikat des Monitor-Bots.
+  "cryptography>=42",
+
+  # PyPI kennt nur pymumble 1.6.1 (Mai 2021). Diese Fassung ruft ssl.wrap_socket
+  # auf, das ab CPython 3.12 nicht mehr existiert -- unter 3.11 laeuft sie zwar,
+  # aber die Version aus dem Standardzweig hat den Fehler behoben und einige
+  # weitere. Der Commit ist festgenagelt, damit ein spaeterer Bau dasselbe
+  # ergibt. ACHTUNG: der Standardzweig heisst pymumble_py3, NICHT master --
+  # master ist toter Python-2-Code.
+  "pymumble @ git+https://github.com/azlux/pymumble@a560e6013dfbccb3666ce8756e1ca6b790bf05c8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9", "httpx>=0.27"]
+
+[project.scripts]
+intercom = "intercom.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["intercom*"]
+
+# ---------------------------------------------------------------------------
+#  ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Von slice2py erzeugt -- wird bei jedem Bau neu geschrieben und niemals von
+# Hand angefasst.
+extend-exclude = ["slice"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF", "BLE"]
+ignore = [
+  # Die Anwendung spricht Deutsch; Umlaute sind in Texten als ae/oe/ue
+  # geschrieben, aber Zeichen wie „ und “ tauchen in Meldungen auf.
+  "RUF001", "RUF002", "RUF003",
+  # Depends(...) im Vorgabewert ist die vorgesehene Schreibweise von FastAPI,
+  # kein Versehen.
+  "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Die von slice2py erzeugten Namen sind vorgegeben (getACL, applyHere, ...).
+"intercom/ice/client.py" = ["N802", "N803"]
+"tests/fake_murmur.py" = ["N802", "N803", "A002"]
+"tests/*" = ["E501"]
+
+# ---------------------------------------------------------------------------
+#  mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+# Von slice2py erzeugt. Wird bei jedem Bau neu geschrieben, ist nicht
+# typannotiert und gehoert niemandem -- pruefen waere sinnlos.
+exclude = ["^slice/"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+# Von slice2py erzeugt bzw. ohne Typinformationen ausgeliefert.
+module = ["MumbleServer.*", "MumbleServer", "Ice", "Ice.*", "pymumble_py3.*", "IcePy"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Hier lohnt sich Strenge: reine Logik, keine untypisierten Fremdtypen.
+module = ["intercom.provision.*", "intercom.ice.types", "intercom.ice.permissions", "intercom.config"]
+strict = true
+
+[[tool.mypy.overrides]]
+# Hier ragen untypisierte Ice- und pymumble-Objekte herein; strict waere
+# nur ein Wald aus type: ignore.
+module = ["intercom.ice.client", "intercom.monitor.*", "intercom.web.*"]
+disallow_untyped_defs = true
+warn_return_any = false
+
+# ---------------------------------------------------------------------------
+#  pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: braucht einen echten mumble-server im Docker (docker compose -f docker-compose.test.yml)",
+]
+filterwarnings = [
+  # pymumble liefert vorgeneriertes protobuf-Zeug aus.
+  "ignore::DeprecationWarning:pymumble_py3.*",
+  "ignore::DeprecationWarning:google.protobuf.*",
+]

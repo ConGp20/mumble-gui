@@ -27,8 +27,9 @@ import ipaddress
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any
 
 from ..config import Settings
 from ..ice.types import MumbleChannel, MumbleUser
@@ -37,7 +38,7 @@ from ..runtime import build_paths
 
 log = logging.getLogger(__name__)
 
-__all__ = ["EventHub", "NetworkMap", "Alarm", "LiveState"]
+__all__ = ["Alarm", "EventHub", "LiveState", "NetworkMap"]
 
 
 # --------------------------------------------------------------------------- #
@@ -104,7 +105,7 @@ class EventHub:
             while True:
                 try:
                     yield await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": ping\n\n"
         finally:
             self._subscribers.discard(queue)
@@ -296,7 +297,7 @@ class LiveState:
             return f"#{channel_id}"
         return path or "(Wurzel)"
 
-    def user_rows(self, deviations: list | None = None) -> list[dict[str, Any]]:
+    def user_rows(self, deviations: list[Any] | None = None) -> list[dict[str, Any]]:
         """Eine Zeile je verbundenem Client -- die Datengrundlage der Tabelle."""
         deviation_map: dict[int, list[str]] = {}
         for deviation in deviations or []:
@@ -416,7 +417,7 @@ class LiveState:
 
         return [build(0, 0)] if 0 in self.channels else []
 
-    def alarms(self, deviations: list | None = None) -> list[Alarm]:
+    def alarms(self, deviations: list[Any] | None = None) -> list[Alarm]:
         """Die Alarmleiste."""
         found: list[Alarm] = []
         settings = self.settings
@@ -511,7 +512,7 @@ class LiveState:
     def current_alarms(self) -> list[Alarm]:
         return list(self._alarms)
 
-    def snapshot(self, deviations: list | None = None) -> dict[str, Any]:
+    def snapshot(self, deviations: list[Any] | None = None) -> dict[str, Any]:
         """Alles, was das Cockpit fuer eine Aktualisierung braucht."""
         return {
             "ts": time.time(),

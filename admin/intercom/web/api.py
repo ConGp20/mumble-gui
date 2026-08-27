@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -27,10 +28,10 @@ from .auth import Account, require_admin, require_user
 
 router = APIRouter(prefix="/api")
 
-__all__ = ["router", "metrics_text"]
+__all__ = ["metrics_text", "router"]
 
 
-def ctx(request: Request):
+def ctx(request: Request) -> Any:
     return request.app.state.ctx
 
 
@@ -58,7 +59,7 @@ def state(request: Request, account: Account = Depends(require_user)) -> dict[st
 
 
 @router.get("/events")
-async def events(request: Request, account: Account = Depends(require_user)):
+async def events(request: Request, account: Account = Depends(require_user)) -> StreamingResponse:
     """Server-Sent Events fuer die Live-Aktualisierung.
 
     ``X-Accel-Buffering: no`` ist fuer den Synology-Reverse-Proxy noetig -- ohne
@@ -66,7 +67,7 @@ async def events(request: Request, account: Account = Depends(require_user)):
     """
     context = ctx(request)
 
-    async def stream():
+    async def stream() -> AsyncIterator[str]:
         # Sofort den aktuellen Stand schicken, damit die Seite nicht leer bleibt,
         # bis das erste Ereignis eintrifft.
         first = json.dumps(
@@ -185,7 +186,7 @@ def _certificate_info(der: bytes) -> dict[str, Any]:
     import hashlib
 
     info: dict[str, Any] = {
-        "sha1": hashlib.sha1(der).hexdigest(),  # noqa: S324 - murmurs Format, nicht unsere Wahl
+        "sha1": hashlib.sha1(der).hexdigest(),
         "sha256": hashlib.sha256(der).hexdigest(),
         "bytes": len(der),
     }
@@ -195,8 +196,17 @@ def _certificate_info(der: bytes) -> dict[str, Any]:
         certificate = x509.load_der_x509_certificate(der)
         info["subject"] = certificate.subject.rfc4514_string()
         info["issuer"] = certificate.issuer.rfc4514_string()
-        info["not_before"] = certificate.not_valid_before_utc.isoformat()
-        info["not_after"] = certificate.not_valid_after_utc.isoformat()
+        # not_valid_*_utc gibt es erst ab cryptography 42; die aelteren
+        # Eigenschaften liefern dasselbe, nur ohne Zeitzone. Beide Wege
+        # bedienen, damit eine aeltere Umgebung nicht die ganze Kette verliert.
+        nicht_vor = getattr(certificate, "not_valid_before_utc", None) or (
+            certificate.not_valid_before
+        )
+        nicht_nach = getattr(certificate, "not_valid_after_utc", None) or (
+            certificate.not_valid_after
+        )
+        info["not_before"] = nicht_vor.isoformat()
+        info["not_after"] = nicht_nach.isoformat()
         info["serial"] = f"{certificate.serial_number:x}"
     except Exception:  # noqa: BLE001 - ohne cryptography bleibt es beim Hash
         pass
@@ -204,7 +214,9 @@ def _certificate_info(der: bytes) -> dict[str, Any]:
 
 
 class UserAction(BaseModel):
-    action: str = Field(description="move | mute | deaf | suppress | priority | kick | message | comment")
+    action: str = Field(
+        description="move | mute | deaf | suppress | priority | kick | message | comment"
+    )
     channel: int | None = None
     value: bool | None = None
     text: str = ""
@@ -301,7 +313,7 @@ async def register_connected(
         raise HTTPException(400, f"{user.name} ist bereits registriert.")
 
     name = body.name.strip() or user.name
-    cert_hash = hashlib.sha1(certificates[0]).hexdigest() if certificates else None  # noqa: S324
+    cert_hash = hashlib.sha1(certificates[0]).hexdigest() if certificates else None
     if not cert_hash and not body.password:
         raise HTTPException(
             400,
@@ -465,7 +477,7 @@ async def channel_message(
     return {"ok": True}
 
 
-async def _refresh(context) -> None:
+async def _refresh(context: Any) -> None:
     from ..ice.errors import IceError as _IceError
 
     try:
@@ -948,7 +960,9 @@ class BanModel(BaseModel):
 
 
 @router.get("/bans")
-async def bans_read(request: Request, account: Account = Depends(require_user)) -> list[dict[str, Any]]:
+async def bans_read(
+    request: Request, account: Account = Depends(require_user)
+) -> list[dict[str, Any]]:
     context = ctx(request)
     try:
         return [b.to_json() for b in await context.ice.get_bans()]
@@ -1227,7 +1241,7 @@ def history(
             "loss": context.store.sparkline(name, "loss_pct", minutes=minutes),
             "bandwidth": context.store.sparkline(name, "bandwidth_bps", minutes=minutes),
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(500, f"Verlauf nicht lesbar: {exc}") from exc
 
 
@@ -1286,7 +1300,7 @@ def _escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
 
 
-def metrics_text(context) -> str:
+def metrics_text(context: Any) -> str:
     """Metriken im Prometheus-Textformat.
 
     Bewusst ohne ``prometheus_client``: es sind ein Dutzend Zeilen, und eine
@@ -1349,7 +1363,7 @@ def metrics_text(context) -> str:
     counts: dict[int, int] = {}
     for user in live.users.values():
         counts[user.channel] = counts.get(user.channel, 0) + 1
-    for channel_id, channel in sorted(live.channels.items()):
+    for channel_id, _channel in sorted(live.channels.items()):
         labels = f'channel="{_escape(live.channel_name(channel_id))}"'
         lines.append(f"intercom_channel_users{{{labels}}} {counts.get(channel_id, 0)}")
 

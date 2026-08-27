@@ -20,6 +20,7 @@ Nachgebildet ist das Verhalten aus:
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from dataclasses import dataclass, field
@@ -150,10 +151,8 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
             try:
                 getattr(callback, event)(*args)
             except Exception:  # noqa: BLE001 - murmur meldet den Callback ab
-                try:
+                with contextlib.suppress(ValueError):
                     self.callbacks.remove(callback)
-                except ValueError:
-                    pass
 
     def _ancestors(self, channel_id: int) -> list[_Channel]:
         """Wurzel zuerst, der Kanal selbst nicht enthalten."""
@@ -194,10 +193,8 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
         self.callbacks.append(cb)
 
     def removeCallback(self, cb: Any, current: Any = None) -> None:
-        try:
+        with contextlib.suppress(ValueError):
             self.callbacks.remove(cb)
-        except ValueError:
-            pass
 
     def setAuthenticator(self, auth: Any, current: Any = None) -> None:
         return None
@@ -739,13 +736,13 @@ class FakeMurmur:
         self._adapter: Any = None
         self.port = 0
 
-    def __enter__(self) -> "FakeMurmur":
+    def __enter__(self) -> FakeMurmur:
         return self.start()
 
     def __exit__(self, *exc_info: Any) -> None:
         self.stop()
 
-    def start(self) -> "FakeMurmur":
+    def start(self) -> FakeMurmur:
         props = Ice.createProperties()
         props.setProperty("FakeMurmur.Endpoints", "tcp -h 127.0.0.1 -p 0")
         props.setProperty("Ice.MessageSizeMax", "8192")
@@ -786,37 +783,37 @@ class FakeMurmur:
 
         from intercom.config import Settings
 
-        defaults: dict[str, Any] = dict(
-            ice_host="127.0.0.1",
-            ice_port=self.port,
-            ice_secret=self.secret,
-            ice_server_id=1,
-            listen_host="127.0.0.1",
-            listen_port=8080,
-            admin_user="admin",
-            admin_password="admin",
-            readonly_user=None,
-            readonly_password=None,
-            session_secret="test" * 8,
-            intercom_config=Path("intercom.yaml"),
-            provision_on_start=False,
-            provision_prune=False,
-            monitor_enabled=False,
-            monitor_name="monitor",
-            monitor_channel="Intercom/Regie",
-            monitor_password=None,
-            monitor_cert=Path("/data/monitor-cert.pem"),
-            monitor_stats_interval_ms=5000,
-            mumble_port=64738,
-            poll_interval_ms=2000,
-            history_retention_hours=48,
-            alert_ping_ms=80.0,
-            alert_loss_pct=2.0,
-            log_level="INFO",
-            data_dir=Path("/tmp"),
-            slice_dir=Path("/tmp"),
-            expected_mumble_version=f"v{self.version[0]}.{self.version[1]}.{self.version[2]}",
-            warnings=(),
-        )
+        defaults: dict[str, Any] = {
+            "ice_host": "127.0.0.1",
+            "ice_port": self.port,
+            "ice_secret": self.secret,
+            "ice_server_id": 1,
+            "listen_host": "127.0.0.1",
+            "listen_port": 8080,
+            "admin_user": "admin",
+            "admin_password": "admin",
+            "readonly_user": None,
+            "readonly_password": None,
+            "session_secret": "test" * 8,
+            "intercom_config": Path("intercom.yaml"),
+            "provision_on_start": False,
+            "provision_prune": False,
+            "monitor_enabled": False,
+            "monitor_name": "monitor",
+            "monitor_channel": "Intercom/Regie",
+            "monitor_password": None,
+            "monitor_cert": Path("/data/monitor-cert.pem"),
+            "monitor_stats_interval_ms": 5000,
+            "mumble_port": 64738,
+            "poll_interval_ms": 2000,
+            "history_retention_hours": 48,
+            "alert_ping_ms": 80.0,
+            "alert_loss_pct": 2.0,
+            "log_level": "INFO",
+            "data_dir": Path("/tmp"),
+            "slice_dir": Path("/tmp"),
+            "expected_mumble_version": f"v{self.version[0]}.{self.version[1]}.{self.version[2]}",
+            "warnings": (),
+        }
         defaults.update(overrides)
         return Settings(**defaults)

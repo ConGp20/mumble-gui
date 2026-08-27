@@ -11,16 +11,19 @@ einfaches HTTP auf ``LISTEN_PORT``.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..config import ConfigError, Settings
-from .api import metrics_text, router as api_router
+from .api import metrics_text
+from .api import router as api_router
 from .auth import COOKIE_NAME, SESSION_MAX_AGE, Account, client_ip, current_user, require_user
 from .context import AppContext
 
@@ -54,7 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     setup_logging(settings)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         context = AppContext(settings)
         app.state.ctx = context
         app.state.settings = settings
@@ -101,7 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ #
 
     @app.get("/healthz")
-    def healthz(request: Request):
+    def healthz(request: Request) -> dict[str, Any]:
         context: AppContext = request.app.state.ctx
         report = context.health()
         # Der Healthcheck soll gruen sein, sobald der Prozess antwortet -- ein
@@ -121,7 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ #
 
     @app.get("/login", response_class=HTMLResponse)
-    def login_form(request: Request, fehler: str = ""):
+    def login_form(request: Request, fehler: str = "") -> Response:
         if current_user(request) is not None:
             return RedirectResponse("/", status_code=303)
         return templates.TemplateResponse(
@@ -133,7 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         benutzer: str = Form(...),
         passwort: str = Form(...),
-    ):
+    ) -> Response:
         context: AppContext = request.app.state.ctx
         source = client_ip(request)
 
@@ -176,7 +179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     @app.post("/logout")
-    def logout(request: Request):
+    def logout(request: Request) -> Response:
         account = current_user(request)
         if account is not None:
             request.app.state.ctx.audit(account.name, "auth.logout", client_ip(request))
@@ -188,8 +191,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     #  Seiten
     # ------------------------------------------------------------------ #
 
-    def page(name: str, titel: str):
-        def render(request: Request, account: Account = Depends(require_user)):
+    def page(name: str, titel: str) -> Callable[..., Response]:
+        def render(request: Request, account: Account = Depends(require_user)) -> Response:
             context: AppContext = request.app.state.ctx
             return templates.TemplateResponse(
                 request,
@@ -220,7 +223,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ #
 
     @app.exception_handler(HTTPException)
-    async def http_error(request: Request, exc: HTTPException):
+    async def http_error(request: Request, exc: HTTPException) -> Response:
         """Nicht angemeldete Seitenaufrufe landen auf der Anmeldeseite.
 
         Entschieden wird am Pfad, nicht am ``Accept``-Kopf: dieser Kopf ist

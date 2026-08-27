@@ -47,14 +47,17 @@ Abhaengigkeiten der ``pyproject.toml``:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import random
 import ssl
 import threading
 import time
+from collections.abc import Callable, Mapping
+from datetime import UTC
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from ..config import Settings
 from .stats import UserStatsSample
@@ -62,19 +65,19 @@ from .stats import UserStatsSample
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "PYMUMBLE_AVAILABLE",
+    "STATE_CONNECTED",
+    "STATE_CONNECTING",
+    "STATE_DISABLED",
+    "STATE_FAILED",
+    "STATE_STOPPED",
+    "STATE_WAITING",
     "MonitorBot",
     "backoff_delay",
-    "split_channel_path",
-    "resolve_channel_path",
-    "ensure_certificate",
     "certificate_fingerprint",
-    "PYMUMBLE_AVAILABLE",
-    "STATE_STOPPED",
-    "STATE_DISABLED",
-    "STATE_CONNECTING",
-    "STATE_CONNECTED",
-    "STATE_WAITING",
-    "STATE_FAILED",
+    "ensure_certificate",
+    "resolve_channel_path",
+    "split_channel_path",
 ]
 
 
@@ -244,7 +247,7 @@ def certificate_fingerprint(path: Path) -> str:
     registrierten Nutzer anzulegen und ihm die Gruppe ``admin`` zu geben.
     """
     der = ssl.PEM_cert_to_DER_cert(_first_certificate_block(path.read_text()))
-    return hashlib.sha1(der).hexdigest()  # noqa: S324 - murmur gibt SHA-1 vor
+    return hashlib.sha1(der).hexdigest()
 
 
 def ensure_certificate(path: Path, common_name: str) -> str:
@@ -311,10 +314,10 @@ def ensure_certificate(path: Path, common_name: str) -> str:
 
 
 def _utc(timestamp: float) -> Any:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     # naiv in UTC: aeltere cryptography-Fassungen verweigern bewusste Zeitzonen.
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(tzinfo=None)
+    return datetime.fromtimestamp(timestamp, tz=UTC).replace(tzinfo=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -323,7 +326,8 @@ def _utc(timestamp: float) -> Any:
 
 if PYMUMBLE_AVAILABLE:
 
-    class _UserStatsCmd(messages.Cmd):
+    # pymumble bringt keine Typinformationen mit; Cmd ist fuer mypy Any.
+    class _UserStatsCmd(messages.Cmd):  # type: ignore[misc]
         """Kommando "frag ``UserStats`` fuer diese Session ab".
 
         pymumble bringt so etwas nicht mit. Der Umweg ueber die
@@ -732,7 +736,7 @@ class MonitorBot:
             sample = UserStatsSample.from_protobuf(
                 message, name=self._name_of(int(message.session))
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("UserStats-Antwort nicht lesbar")
             return
         callback = self._on_stats
@@ -740,7 +744,7 @@ class MonitorBot:
             return
         try:
             callback(sample)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("on_stats hat eine Ausnahme geworfen")
 
     def _handle_permission_denied(self, message: Any) -> None:
@@ -785,7 +789,7 @@ class MonitorBot:
             return
         try:
             callback(state)
-        except Exception:  # noqa: BLE001 - ein Zustandsmelder darf den Bot nicht stoppen
+        except Exception:
             log.exception("on_state hat eine Ausnahme geworfen")
 
     def _fail(self, exc: BaseException) -> None:
@@ -805,9 +809,7 @@ class MonitorBot:
         """
         if mumble is None:
             return
-        try:
+        with contextlib.suppress(AttributeError, OSError):
             mumble.stop()
-        except (AttributeError, OSError):
-            pass
         if mumble.is_alive() and mumble is not threading.current_thread():
             mumble.join(2.0)

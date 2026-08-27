@@ -13,28 +13,29 @@ zwanzig Zeilen eigenem Code.
 from __future__ import annotations
 
 import difflib
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
 import yaml
 
 from ..ice.permissions import BY_NAME, names_to_mask
 
 __all__ = [
-    "IntercomConfig",
-    "ChannelSpec",
-    "ServerSpec",
-    "PolicySpec",
-    "TemplateEntry",
-    "NetworkSpec",
-    "Issue",
-    "ConfigInvalid",
-    "load_config",
-    "parse_config",
+    "POLICY_PERMISSIONS",
     "PREDEFINED_GROUPS",
     "ROOT_ONLY_POLICIES",
-    "POLICY_PERMISSIONS",
+    "ChannelSpec",
+    "ConfigInvalid",
+    "IntercomConfig",
+    "Issue",
+    "NetworkSpec",
+    "PolicySpec",
+    "ServerSpec",
+    "TemplateEntry",
+    "load_config",
+    "parse_config",
 ]
 
 #: Von murmur fest eingebaute Gruppen. Duerfen in speak/whisper_in/... benutzt,
@@ -95,7 +96,7 @@ class ConfigInvalid(ValueError):
         )
 
 
-def _suggest(name: str, options: Iterator[str] | list[str]) -> str:
+def _suggest(name: str, options: Iterable[str]) -> str:
     """Tippfehler-Hilfe: ' -- meintest du "kamera"?'"""
     matches = difflib.get_close_matches(name, list(options), n=1, cutoff=0.6)
     return f' -- meintest du "{matches[0]}"?' if matches else ""
@@ -159,20 +160,20 @@ class ChannelSpec:
     #: Vorlage und vor den aus speak/whisper_in/listen_for abgeleiteten
     #: Eintraegen angewendet. Der Exporter benutzt sie, um ein von Hand
     #: geklicktes Setup verlustfrei abzubilden.
-    acl: list["TemplateEntry"] = field(default_factory=list)
+    acl: list[TemplateEntry] = field(default_factory=list)
     speak: list[str] = field(default_factory=list)
     whisper_in: list[str] = field(default_factory=list)
     listen_for: list[str] = field(default_factory=list)
     listen_to: list[str] = field(default_factory=list)
     priority: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
-    children: list["ChannelSpec"] = field(default_factory=list)
+    children: list[ChannelSpec] = field(default_factory=list)
     #: Nicht ueber Ice setzbar, siehe validate(). Nur zur Dokumentation.
     max_users: int = 0
     #: Vollstaendiger Pfad, beim Einlesen gesetzt ("Intercom/Kameras/Kamera 1").
     path: str = ""
 
-    def walk(self) -> Iterator["ChannelSpec"]:
+    def walk(self) -> Iterator[ChannelSpec]:
         yield self
         for child in self.children:
             yield from child.walk()
@@ -387,8 +388,12 @@ def parse_config(data: Any, source: str = "<speicher>") -> IntercomConfig:
         if k not in {"defaultchannel", "welcometext"}
     }
     config.server = ServerSpec(
-        defaultchannel=(str(raw_server["defaultchannel"]) if raw_server.get("defaultchannel") else None),
-        welcometext=(str(raw_server["welcometext"]) if raw_server.get("welcometext") else None),
+        defaultchannel=(
+            str(raw_server["defaultchannel"]) if raw_server.get("defaultchannel") else None
+        ),
+        welcometext=(
+            str(raw_server["welcometext"]) if raw_server.get("welcometext") else None
+        ),
         conf=extra_conf,
     )
 
@@ -633,8 +638,16 @@ def _validate_references(config: IntercomConfig, issues: list[Issue]) -> None:
                 )
             )
 
-    for policy_name in ("priority_speaker", "whisper_anywhere", "move_users",
-                        "mute_deafen", "kick", "ban", "make_channel", "register_users"):
+    for policy_name in (
+        "priority_speaker",
+        "whisper_anywhere",
+        "move_users",
+        "mute_deafen",
+        "kick",
+        "ban",
+        "make_channel",
+        "register_users",
+    ):
         check_groups(config.policies.groups_for(policy_name), f"policies.{policy_name}")
 
     for user_name, groups in config.users.items():

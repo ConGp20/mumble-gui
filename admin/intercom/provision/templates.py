@@ -12,13 +12,13 @@ fertige ACL-Liste. Der Editor zeigt sie als Diff, bevor etwas geschrieben wird.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from ..ice.permissions import BY_NAME
 from ..ice.types import ACLEntry
 
-__all__ = ["Template", "TEMPLATES", "apply_template"]
+__all__ = ["TEMPLATES", "Template", "apply_template"]
 
 SPEAK = BY_NAME["Speak"].bit
 WHISPER = BY_NAME["Whisper"].bit

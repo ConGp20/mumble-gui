@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from unittest import mock
 
-import pytest
-
 from tests.conftest import needs_ice
 
 pytestmark = needs_ice
