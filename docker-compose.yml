@@ -1,0 +1,112 @@
+# =============================================================================
+#  Stadion-Intercom
+#
+#  Beide Dienste laufen bewusst im HOST-Netz (network_mode: host).
+#  Grund: Der Admin-Prozess registriert bei murmur einen Ice-CALLBACK. Dafuer
+#  oeffnet er selbst einen Ice-Objektadapter, und der Server ruft aktiv dorthin
+#  zurueck. Laege der Server in einem Bridge-Netz, waere "127.0.0.1" aus seiner
+#  Sicht sein eigener Namespace und der Rueckruf ginge ins Leere.
+#  Siehe DECISIONS.md (D-002).
+# =============================================================================
+
+services:
+
+  mumble-server:
+    image: mumblevoip/mumble-server:${MUMBLE_VERSION:-v1.5.735}
+    container_name: mumble-server
+    restart: unless-stopped
+    network_mode: host
+    user: "10000:10000"
+    volumes:
+      - ./server:/data
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      MUMBLE_SUPERUSER_PASSWORD: ${MUMBLE_SUPERUSER_PASSWORD}
+      # --- Ice-Schnittstelle -------------------------------------------------
+      # Nur Loopback. Ohne Secret koennte jeder auf dem Host den Server steuern.
+      MUMBLE_CONFIG_ICE: '"tcp -h 127.0.0.1 -p ${ICE_PORT:-6502}"'
+      MUMBLE_CONFIG_ICESECRETWRITE: ${ICE_SECRET}
+      # Ice-Callbacks brauchen mehr als einen Server-Thread, sonst blockiert
+      # murmur waehrend eines Rueckrufs alle weiteren Ice-Aufrufe.
+      MUMBLE_CONFIG_ICE_THREADPOOL_SERVER_SIZE: "2"
+      MUMBLE_CONFIG_ICE_THREADPOOL_SERVER_SIZEMAX: "8"
+      # --- Betrieb -----------------------------------------------------------
+      MUMBLE_CONFIG_PORT: ${MUMBLE_PORT:-64738}
+      MUMBLE_CONFIG_WELCOMETEXT: "<b>Stadion-Intercom</b> – PTT benutzen, nicht VOX."
+      MUMBLE_CONFIG_USERS: "100"
+      MUMBLE_CONFIG_BANDWIDTH: "72000"
+      MUMBLE_CONFIG_OPUSTHRESHOLD: "0"
+      MUMBLE_CONFIG_CHANNELNESTINGLIMIT: "10"
+      MUMBLE_CONFIG_LOGLEVEL: "1"
+      # Ohne Obfuskation sehen wir im Admin-GUI die echten Client-IPs.
+      MUMBLE_CONFIG_OBFUSCATE: "false"
+      MUMBLE_CONFIG_SENDVERSION: "true"
+    healthcheck:
+      # murmur selbst hat keinen HTTP-Endpunkt: wir pruefen den Ice-Port.
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/${ICE_PORT:-6502}' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mumble-admin:
+    build:
+      context: ./admin
+      args:
+        # Slice-Datei und Server stammen aus demselben Tag – siehe .env.
+        MUMBLE_VERSION: ${MUMBLE_VERSION:-v1.5.735}
+    image: stadion-intercom/mumble-admin:${MUMBLE_VERSION:-v1.5.735}
+    container_name: mumble-admin
+    restart: unless-stopped
+    network_mode: host
+    # Das GUI wird nur mit `--profile gui` gestartet, damit `setup.sh` zuerst
+    # den Server hochfahren und dessen Version auslesen kann.
+    profiles: ["gui"]
+    depends_on:
+      mumble-server:
+        condition: service_healthy
+    volumes:
+      - ./admin-data:/data
+      - ./intercom.yaml:/config/intercom.yaml:ro
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      ICE_HOST: ${ICE_HOST:-127.0.0.1}
+      ICE_PORT: ${ICE_PORT:-6502}
+      ICE_SECRET: ${ICE_SECRET}
+      ICE_SERVER_ID: ${ICE_SERVER_ID:-1}
+
+      LISTEN_HOST: ${LISTEN_HOST:-0.0.0.0}
+      LISTEN_PORT: ${LISTEN_PORT:-8080}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_READONLY_USER: ${ADMIN_READONLY_USER:-}
+      ADMIN_READONLY_PASSWORD: ${ADMIN_READONLY_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET}
+
+      INTERCOM_CONFIG: ${INTERCOM_CONFIG:-/config/intercom.yaml}
+      PROVISION_ON_START: ${PROVISION_ON_START:-true}
+      PROVISION_PRUNE: ${PROVISION_PRUNE:-false}
+
+      MONITOR_BOT_ENABLED: ${MONITOR_BOT_ENABLED:-true}
+      MONITOR_BOT_NAME: ${MONITOR_BOT_NAME:-monitor}
+      MONITOR_BOT_CHANNEL: ${MONITOR_BOT_CHANNEL:-Intercom/Regie}
+      MONITOR_BOT_PASSWORD: ${MONITOR_BOT_PASSWORD:-}
+      MONITOR_BOT_CERT: ${MONITOR_BOT_CERT:-/data/monitor-cert.pem}
+      MONITOR_STATS_INTERVAL_MS: ${MONITOR_STATS_INTERVAL_MS:-5000}
+      MUMBLE_PORT: ${MUMBLE_PORT:-64738}
+
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-2000}
+      HISTORY_RETENTION_HOURS: ${HISTORY_RETENTION_HOURS:-48}
+      ALERT_PING_MS: ${ALERT_PING_MS:-80}
+      ALERT_LOSS_PCT: ${ALERT_LOSS_PCT:-2.0}
+
+      # Nur zur Anzeige im Cockpit: Soll-Version laut Compose.
+      MUMBLE_VERSION: ${MUMBLE_VERSION:-v1.5.735}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${LISTEN_PORT:-8080}/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

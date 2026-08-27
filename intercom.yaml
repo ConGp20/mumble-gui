@@ -1,0 +1,273 @@
+# =============================================================================
+#  Stadion-Intercom – Wunschzustand des Mumble-Servers
+#
+#  Diese Datei ist die Wahrheit. Der Provisioner bringt den Server in genau
+#  diesen Zustand:
+#     docker compose exec mumble-admin intercom plan     # zeigt nur an
+#     docker compose exec mumble-admin intercom apply    # schreibt
+#     docker compose exec mumble-admin intercom export   # Ist-Zustand -> YAML
+#     docker compose exec mumble-admin intercom validate # nur pruefen
+#
+#  Vollstaendige Schema-Referenz: siehe README.md, Abschnitt "intercom.yaml".
+# =============================================================================
+
+version: 1
+
+server:
+  # Pfad im Kanalbaum, wird beim Anwenden zur Kanal-ID aufgeloest.
+  defaultchannel: "Intercom/Sammelruf"
+  welcometext: |
+    <b>Stadion-Intercom</b><br/>
+    Push-to-Talk benutzen – <b>kein VOX</b>.<br/>
+    Probleme? Kanal <i>Technik</i>.
+
+# -----------------------------------------------------------------------------
+#  Gruppen
+#  Werden am obersten Kanal des Baums (Intercom) angelegt und nach unten
+#  vererbt. Mitglieder kommen aus `users:` weiter unten.
+# -----------------------------------------------------------------------------
+groups:
+  - regie          # Bildregie / Sendeleitung
+  - kamera         # Kameraleute
+  - zeitnahme      # FinishLynx / Auswertung
+  - sprecher       # Stadionsprecher
+  - technik        # Ton, Netzwerk, Strom
+  - kampfgericht   # Kampfgericht / Wettkampfleitung
+  - leitung        # Produktionsleitung (darf alles)
+
+# -----------------------------------------------------------------------------
+#  Wiederverwendbare ACL-Bausteine
+#  Werden ueber `acl_template: <name>` an einem Kanal eingehaengt und VOR den
+#  aus speak/whisper_in/listen_for erzeugten Eintraegen angewendet.
+# -----------------------------------------------------------------------------
+acl_templates:
+
+  # Kanal ist sichtbar und betretbar, aber niemand ausser den erlaubten
+  # Gruppen darf sprechen. Basis fuer fast alle Intercom-Kanaele.
+  nur-hoeren:
+    - group: all
+      apply_here: true
+      apply_sub: false
+      allow: [Traverse, Enter, Listen]
+      deny:  [Speak, Whisper]
+
+  # Ein geschlossener Ring: nur Mitglieder sehen den Kanal ueberhaupt.
+  geschlossen:
+    - group: all
+      apply_here: true
+      apply_sub: true
+      allow: []
+      deny:  [Enter, Speak, Whisper, Listen]
+
+  # Kanal, in dem jeder alles darf (Sammelruf, Notfall).
+  offen:
+    - group: all
+      apply_here: true
+      apply_sub: false
+      allow: [Traverse, Enter, Speak, Whisper, Listen, TextMessage]
+      deny:  []
+
+# -----------------------------------------------------------------------------
+#  Kanalbaum
+#
+#  Pro Kanal:
+#    name          Pflicht. Eindeutig unter demselben Elternkanal.
+#    description   Tooltip im Client.
+#    position      Sortierung im Client (kleiner = weiter oben).
+#    max_users     0 = Serverdefault.
+#    temporary     true = verschwindet, wenn der letzte Nutzer geht.
+#    acl_template  Name aus acl_templates.
+#    speak         Gruppen, die hier sprechen duerfen. [all] = alle.
+#    whisper_in    Gruppen, die hierher flüstern duerfen.
+#    listen_for    Gruppen, die diesen Kanal mithoeren duerfen. [all] = alle.
+#    listen_to     Kanaele, die Mitglieder der speak-Gruppen zusaetzlich
+#                  mithoeren SOLLEN (wird zur Laufzeit gesetzt, siehe README).
+#    priority      Gruppen, deren Mitglieder hier Priority Speaker sind.
+#    links         Kanaele, mit denen dieser Kanal verlinkt wird.
+#    children      Unterkanaele.
+# -----------------------------------------------------------------------------
+channels:
+  - name: Intercom
+    description: "Wurzel des Stadion-Intercoms. Alle Gruppen leben hier."
+    position: 0
+    children:
+
+      - name: Regie
+        description: "Bildregie. Hoert alles, spricht ueberall hin."
+        position: 10
+        acl_template: nur-hoeren
+        speak: [regie, leitung]
+        whisper_in: [regie, leitung, technik]
+        listen_for: [regie, leitung, technik]
+        priority: [regie, leitung]
+        listen_to:
+          - "Intercom/Kameras"
+          - "Intercom/Zeitnahme"
+          - "Intercom/Stadionsprecher"
+          - "Intercom/Kampfgericht"
+
+      - name: Kameras
+        description: "Kamera-Ring. Regie spricht rein, Kameras untereinander."
+        position: 20
+        acl_template: nur-hoeren
+        speak: [kamera, regie, leitung]
+        whisper_in: [regie, leitung]
+        listen_for: [kamera, regie, leitung]
+        priority: [regie]
+        listen_to:
+          - "Intercom/Regie"
+        children:
+          - name: "Kamera 1 – Ziel"
+            description: "Zielkamera Gerade"
+            position: 1
+            speak: [kamera, regie]
+            listen_for: [kamera, regie, leitung]
+          - name: "Kamera 2 – Kurve"
+            position: 2
+            speak: [kamera, regie]
+            listen_for: [kamera, regie, leitung]
+          - name: "Kamera 3 – Technische Diszipl."
+            description: "Weit-, Hoch-, Stabhochsprung, Wurf"
+            position: 3
+            speak: [kamera, regie]
+            listen_for: [kamera, regie, leitung]
+          - name: "Kamera 4 – Totale"
+            position: 4
+            speak: [kamera, regie]
+            listen_for: [kamera, regie, leitung]
+
+      - name: Zeitnahme
+        description: "FinishLynx, Windmessung, Auswertung."
+        position: 30
+        acl_template: nur-hoeren
+        speak: [zeitnahme, regie, leitung]
+        whisper_in: [regie, leitung, sprecher]
+        listen_for: [zeitnahme, regie, leitung, sprecher]
+        listen_to:
+          - "Intercom/Kampfgericht"
+
+      - name: Stadionsprecher
+        description: "Sprecherkabine. Bekommt Ergebnisse von der Zeitnahme."
+        position: 40
+        acl_template: nur-hoeren
+        speak: [sprecher, regie, leitung]
+        whisper_in: [regie, leitung, zeitnahme]
+        listen_for: [sprecher, regie, leitung]
+        priority: [sprecher]
+        listen_to:
+          - "Intercom/Zeitnahme"
+
+      - name: Technik
+        description: "Ton, Netzwerk, Strom, Richtfunk."
+        position: 50
+        acl_template: nur-hoeren
+        speak: [technik, leitung]
+        whisper_in: [technik, regie, leitung]
+        listen_for: [technik, regie, leitung]
+
+      - name: Kampfgericht
+        description: "Wettkampfleitung und Kampfgericht."
+        position: 60
+        acl_template: nur-hoeren
+        speak: [kampfgericht, leitung]
+        whisper_in: [regie, leitung, sprecher]
+        listen_for: [kampfgericht, regie, leitung, zeitnahme]
+
+      - name: Sammelruf
+        description: "Alle hoeren mit. Nur fuer Ansagen an die ganze Produktion."
+        position: 70
+        acl_template: offen
+        speak: [regie, leitung, technik]
+        whisper_in: [all]
+        listen_for: [all]
+        priority: [regie, leitung]
+
+      - name: Notfall
+        description: "Notfallkanal. Jeder darf sprechen, jeder hoert mit."
+        position: 80
+        acl_template: offen
+        speak: [all]
+        whisper_in: [all]
+        listen_for: [all]
+        priority: [leitung, regie, technik]
+
+# -----------------------------------------------------------------------------
+#  Globale Richtlinien
+#  Werden als ACLs am obersten Kanal (Intercom) mit apply_sub=true gesetzt,
+#  gelten also im ganzen Baum. Ausnahme: priority_speaker ist keine ACL,
+#  sondern ein Nutzer-Zustand (siehe README).
+# -----------------------------------------------------------------------------
+policies:
+  priority_speaker:   [regie, leitung]
+  whisper_anywhere:   [regie, leitung]
+  move_users:         [regie, leitung]
+  mute_deafen:        [leitung]
+  kick:               [leitung]
+  ban:                [leitung]
+  make_channel:       [leitung]
+  register_users:     [leitung]
+  # true => @all darf am obersten Kanal weder sprechen noch fluestern;
+  # die Kanaele geben das je Gruppe wieder frei.
+  guests_listen_only: true
+
+# -----------------------------------------------------------------------------
+#  Nutzer -> Gruppen
+#  Der Name muss auf dem Server REGISTRIERT sein (Zertifikat oder Passwort),
+#  sonst landet er als Warnung im Provisioning-Report.
+# -----------------------------------------------------------------------------
+users:
+  regie-1:      { groups: [regie] }
+  regie-2:      { groups: [regie] }
+  kam-1:        { groups: [kamera] }
+  kam-2:        { groups: [kamera] }
+  kam-3:        { groups: [kamera] }
+  kam-4:        { groups: [kamera] }
+  lynx:         { groups: [zeitnahme] }
+  wind:         { groups: [zeitnahme] }
+  sprecher-1:   { groups: [sprecher] }
+  technik-1:    { groups: [technik] }
+  technik-2:    { groups: [technik] }
+  kg-1:         { groups: [kampfgericht] }
+  kg-2:         { groups: [kampfgericht] }
+  produktion:   { groups: [leitung, regie] }
+  monitor:      { groups: [regie] }   # Monitor-Bot, siehe MONITOR_BOT_NAME
+
+# -----------------------------------------------------------------------------
+#  Netzsegmente
+#  Rein fuer die Netzsicht im Cockpit: Clients werden anhand ihrer IP einem
+#  Segment zugeordnet, damit man eine kaputte Richtfunkstrecke sofort sieht.
+#  Reihenfolge zaehlt: der erste passende Eintrag gewinnt.
+# -----------------------------------------------------------------------------
+networks:
+  - name: "Kabel Regie"
+    cidr: "10.20.10.0/24"
+    note: "Regiewagen, geswitcht"
+  - name: "Richtfunk Nord"
+    cidr: "10.20.20.0/24"
+    note: "Ubiquiti AF60 zur Nordtribuene"
+  - name: "Richtfunk Sued"
+    cidr: "10.20.21.0/24"
+    note: "Ubiquiti AF60 zur Suedkurve"
+  - name: "AP Tribuene"
+    cidr: "10.20.30.0/24"
+    note: "UniFi U6-LR, Tribuenendach"
+  - name: "AP Innenraum"
+    cidr: "10.20.31.0/24"
+    note: "UniFi U6-Mesh, Wurfsektor"
+  - name: "VPN / extern"
+    cidr: "10.99.0.0/16"
+
+# -----------------------------------------------------------------------------
+#  Geraete
+#  Reine Dokumentation. Der Provisioner fasst das nicht an, das Cockpit zeigt
+#  es im Detailpanel eines Clients an, wenn der Name passt.
+# -----------------------------------------------------------------------------
+devices:
+  kam-1:      { model: "Inrico T320",   type: "PoC-Handheld", note: "Kamera Ziel" }
+  kam-2:      { model: "Inrico T320",   type: "PoC-Handheld" }
+  kam-3:      { model: "Anysecu 4G-W2", type: "PoC-Handheld" }
+  kam-4:      { model: "Anysecu 4G-W2", type: "PoC-Handheld" }
+  regie-1:    { model: "PC / Mumble",   type: "Desktop", note: "Regiewagen" }
+  lynx:       { model: "PC / Mumble",   type: "Desktop", note: "FinishLynx-Rechner" }
+  sprecher-1: { model: "PC / Mumble",   type: "Desktop", note: "Sprecherkabine" }
+  technik-1:  { model: "iPhone / Mumble", type: "iOS" }
