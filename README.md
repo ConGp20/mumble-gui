@@ -590,9 +590,12 @@ wegmaskiert, ist Gruppenmitgliedschaft ueber `setACL` tatsaechlich dauerhaft.
 Ohne erreichbaren Testserver werden sie uebersprungen.
 
 > Sie wurden in der Umgebung, in der dieser Code entstanden ist, **nicht
-> ausgefuehrt**: dort ist der Zugriff auf die Docker-Hub-Layer gesperrt, ein
-> `mumblevoip/mumble-server`-Image liess sich nicht laden. Auf dem NAS laufen
-> sie wie oben beschrieben.
+> ausgefuehrt**. Registry und Anmeldung waren dort erreichbar
+> (`auth.docker.io` → 200, `registry-1.docker.io/v2/` → 401), die Layer selbst
+> kommen aber von `production.cloudfront.docker.com`, und dieser Host wird von
+> der Egress-Richtlinie abgelehnt (CONNECT → 403). Damit laesst sich kein
+> Docker-Hub-Image laden, auch kein `python:3.11-slim` fuer den Bau des
+> Admin-Images. Auf dem NAS laufen sie wie oben beschrieben.
 
 ### Warum der Live-Strom nicht ueber den TestClient geprueft wird
 
