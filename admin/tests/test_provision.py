@@ -707,3 +707,118 @@ def test_fremder_wurzel_acl_ueberlebt_ohne_prune(ice_client, config):
     reconcile(ice_client, config, prune=True, dry_run=False)
     danach = ice_client.get_acl(0).own_acls()
     assert not any(a.userid == chef for a in danach), "mit --prune haette er weg sein muessen"
+
+
+# --------------------------------------------------------------------------- #
+#  Zusammenfassen von ACL-Eintraegen
+# --------------------------------------------------------------------------- #
+
+
+def _sequenziell(start: int, eintraege) -> int:
+    """Wertet Eintraege so aus wie ChanACL::effectivePermissions (ACL.cpp 222-225)."""
+    granted = start
+    for eintrag in eintraege:
+        granted = (granted | eintrag.allow) & ~eintrag.deny
+    return granted
+
+
+def test_zusammenfassen_verhaelt_sich_wie_die_folge():
+    """Eigenschaftstest: verschmolzen == nacheinander, fuer jeden Ausgangszustand.
+
+    murmur wertet mehrere Eintraege derselben Gruppe der Reihe nach aus, der
+    spaetere gewinnt. Wer sie mit 'allow |= ...; deny |= ...; allow &= ~deny'
+    zusammenfasst, dreht das um und verschluckt lautlos genau die Rechte, die
+    der spaetere Eintrag zurueckgeben sollte.
+    """
+    import random
+
+    from intercom.ice.types import ACLEntry
+    from intercom.provision.acl_map import merge_entries
+
+    random.seed(20260827)
+    for anzahl in (2, 3, 4):
+        for _ in range(2000):
+            eintraege = [
+                ACLEntry(
+                    apply_here=True,
+                    apply_subs=False,
+                    group="x",
+                    allow=random.getrandbits(21),
+                    deny=random.getrandbits(21),
+                )
+                for _ in range(anzahl)
+            ]
+            verschmolzen = merge_entries(eintraege)
+            assert len(verschmolzen) == 1
+            for start in (0, 0x1FFFFF, random.getrandbits(21)):
+                assert _sequenziell(start, eintraege) == _sequenziell(start, verschmolzen), (
+                    f"Abweichung bei {anzahl} Eintraegen, Start {start:#x}"
+                )
+
+
+def test_vorlage_und_regel_widersprechen_sich_die_regel_gewinnt(ice_client):
+    """`whisper_in: [all]` gegen eine Vorlage, die Whisper verbietet.
+
+    Die Regel steht spaeter und muss gewinnen -- sonst verschwindet sie
+    spurlos, und im Kanal darf niemand hineinfluestern, obwohl es dasteht.
+    """
+    from intercom.ice.permissions import BY_NAME
+    from intercom.provision.planner import reconcile
+
+    config = _load("""
+        version: 1
+        groups: [regie]
+        acl_templates:
+          nur-hoeren:
+            - group: all
+              apply_here: true
+              apply_sub: false
+              allow: [Traverse, Enter, Listen]
+              deny: [Speak, Whisper]
+        channels:
+          - name: Intercom
+            children:
+              - name: Ansage
+                acl_template: nur-hoeren
+                speak: [regie]
+                whisper_in: [all]
+    """)
+    ice_client.register_user("regie-1", cert_hash="a" * 40)
+    reconcile(ice_client, config, dry_run=False)
+
+    entries = _acls(ice_client, "Intercom/Ansage")
+    allow, deny = entries["all"]
+    assert allow & BY_NAME["Whisper"].bit, "whisper_in: [all] ist verschwunden"
+    assert not deny & BY_NAME["Whisper"].bit
+    assert deny & BY_NAME["Speak"].bit, "speak: [regie] haette @all Speak nehmen muessen"
+
+
+def test_rohexport_mit_widerspruechlichen_eintraegen(ice_client):
+    """Handgeklickt: erst verbieten, dann erlauben. Der Umlauf darf das nicht drehen."""
+    from intercom.ice.types import ACLEntry, ChannelACL
+    from intercom.provision.exporter import export_yaml
+    from intercom.provision.planner import reconcile
+    from intercom.provision.schema import parse_config
+
+    SPEAK = 0x08
+    kanal = ice_client.add_channel("Handarbeit", 0)
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=kanal,
+            acls=[
+                ACLEntry(apply_here=True, apply_subs=False, group="all", allow=0, deny=SPEAK),
+                ACLEntry(apply_here=True, apply_subs=False, group="all", allow=SPEAK, deny=0),
+            ],
+        )
+    )
+    vorher = _snapshot(ice_client)["channels"]["Handarbeit"]["acls"]
+    assert _sequenziell(0, ice_client.get_acl(kanal).own_acls()) & SPEAK, "Aufbau misslungen"
+
+    exportiert = parse_config(yaml.safe_load(export_yaml(ice_client)))
+    reconcile(ice_client, exportiert, dry_run=False)
+
+    danach = ice_client.get_acl(kanal).own_acls()
+    assert _sequenziell(0, danach) & SPEAK, (
+        f"Speak wurde beim Umlauf verschluckt.\nvorher: {vorher}\n"
+        f"danach: {[(a.group, hex(a.allow), hex(a.deny)) for a in danach]}"
+    )

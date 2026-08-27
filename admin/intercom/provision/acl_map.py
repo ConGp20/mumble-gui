@@ -146,11 +146,26 @@ def merge_entries(entries: list[ACLEntry]) -> list[ACLEntry]:
             index[key] = copy
             merged.append(copy)
         else:
-            existing.allow |= entry.allow
-            existing.deny |= entry.deny
-            # Innerhalb eines Eintrags schlaegt deny das allow -- murmur wertet
-            # 'granted |= allow; granted &= ~deny' in genau dieser Folge aus.
-            existing.allow &= ~existing.deny
+            # Zwei Eintraege A (frueher) und B (spaeter) mit demselben Schluessel
+            # wertet murmur nacheinander aus (ACL.cpp, Z. 222-225):
+            #
+            #     g = ((g | A.allow) & ~A.deny | B.allow) & ~B.deny
+            #
+            # Ein einzelner Eintrag kann das exakt nachbilden. Je Bit gilt:
+            # gesetzt wird es, wenn B es erlaubt, oder wenn A es erlaubt und B
+            # es nicht verbietet. Verboten wird es, wenn B es verbietet, oder
+            # wenn A es verbietet und B es nicht erlaubt:
+            #
+            #     M.allow = B.allow | (A.allow & ~B.deny)
+            #     M.deny  = B.deny  | (A.deny  & ~B.allow)
+            #
+            # Der spaetere Eintrag gewinnt damit, so wie im Server. Ein simples
+            # 'allow |= ...; deny |= ...; allow &= ~deny' drehte das um und
+            # verschluckte lautlos genau die Rechte, die der spaetere Eintrag
+            # zurueckgeben sollte.
+            vorher_allow, vorher_deny = existing.allow, existing.deny
+            existing.allow = entry.allow | (vorher_allow & ~entry.deny)
+            existing.deny = entry.deny | (vorher_deny & ~entry.allow)
     return merged
 
 
