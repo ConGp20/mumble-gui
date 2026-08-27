@@ -221,11 +221,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
-        """Nicht angemeldete Browser bekommen die Anmeldeseite, nicht 401-JSON."""
+        """Nicht angemeldete Seitenaufrufe landen auf der Anmeldeseite.
+
+        Entschieden wird am Pfad, nicht am ``Accept``-Kopf: dieser Kopf ist
+        beliebig setzbar, und ein Browser, der aus irgendeinem Grund nur
+        ``*/*`` schickt, bekaeme sonst rohes JSON statt eines Anmeldeformulars.
+        Unter ``/api/`` ist JSON dagegen immer richtig -- dort ruft niemand von
+        Hand auf.
+        """
         from fastapi.responses import JSONResponse
 
-        wants_html = "text/html" in request.headers.get("accept", "")
-        if exc.status_code == 401 and wants_html:
+        ist_api = request.url.path.startswith("/api/")
+        if exc.status_code == 401 and not ist_api:
             return RedirectResponse("/login", status_code=303)
         return JSONResponse(
             {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers

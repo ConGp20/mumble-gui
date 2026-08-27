@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div x-data="serverSeite()" x-init="start()">
+  <div class="karte" style="margin-bottom:12px">
+    <header>
+      Serverkonfiguration
+      <span class="rechts leise">Ist gegen Vorgabe – abweichende Werte sind hervorgehoben</span>
+    </header>
+    <div class="inhalt" style="padding-bottom:0">
+      <div class="werkzeugleiste">
+        <input type="search" x-model="confFilter" placeholder="Schluessel filtern" style="min-width:240px">
+        <label><input type="checkbox" x-model="nurAbweichend"> nur abweichende</label>
+        <span class="fueller"></span>
+        <button class="knopf" @click="ladeConf()">Neu laden</button>
+      </div>
+    </div>
+    <div class="tabellenrahmen">
+      <table class="dicht">
+        <thead>
+          <tr><th>Schluessel</th><th>Wert</th><th>Vorgabe</th><th>Compose</th><th></th><th></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="z in gefilterteConf" :key="z.key">
+            <tr :data-stufe="z.env_mismatch ? 'warnung' : (z.overridden ? 'ok' : '')">
+              <td class="mono" x-text="z.key"></td>
+              <td class="mono" x-text="z.value || '–'"></td>
+              <td class="mono text-leise" x-text="z.default || '–'"></td>
+              <td class="mono text-leise" x-text="z.env_value || '–'"></td>
+              <td>
+                <template x-if="z.restart_required">
+                  <span class="abzeichen stumm" title="Wirkt erst nach Serverneustart">Neustart</span>
+                </template>
+                <template x-if="z.env_mismatch">
+                  <span class="abzeichen tcp" title="Compose und Live-Wert laufen auseinander">≠ Compose</span>
+                </template>
+              </td>
+              <td>
+                {% if account.can_write %}
+                <button class="knopf klein" @click="setze(z)">Aendern</button>
+                {% endif %}
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <div class="inhalt hinweis">
+      Als „Neustart“ markierte Schluessel liest murmur nur beim Start; ein
+      <code>setConf</code> darauf wird gespeichert, wirkt aber erst nach
+      <code>docker compose restart mumble-server</code>. Weicht der Live-Wert
+      von dem ab, was die Compose setzt, hat jemand ihn zur Laufzeit geaendert.
+    </div>
+  </div>
+
+  <div class="karte">
+    <header>
+      Serverlog
+      <span class="rechts leise" x-text="gesamt + ' Eintraege'"></span>
+    </header>
+    <div class="inhalt" style="padding-bottom:0">
+      <div class="werkzeugleiste">
+        <input type="search" x-model="muster" @keydown.enter="ladeLog()"
+               placeholder="Regulaerer Ausdruck (Enter)" style="min-width:280px">
+        <label><input type="checkbox" x-model="live" @change="live ? starteTail() : stoppeTail()">
+          Live-Tail</label>
+        <span class="fueller"></span>
+        <a class="knopf" href="/api/log/download">Herunterladen</a>
+        <button class="knopf" @click="ladeLog()">Neu laden</button>
+      </div>
+      <template x-if="logFehler">
+        <div class="banner fehler" x-text="logFehler"></div>
+      </template>
+    </div>
+    <div class="inhalt">
+      <div class="log">
+        <template x-for="(z, i) in logZeilen" :key="i">
+          <div class="zeile">
+            <span class="zeit" x-text="I.fmtDatum(z.timestamp)"></span>
+            <span x-text="z.text"></span>
+          </div>
+        </template>
+        <template x-if="logZeilen.length === 0">
+          <div class="still">Keine Eintraege.</div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block skripte %}
+{% raw %}
+<script>
+function serverSeite() {
+  return {
+    I: window.Intercom,
+    conf: [], confFilter: "", nurAbweichend: false,
+    logZeilen: [], gesamt: 0, muster: "", live: false, tail: null, logFehler: "",
+
+    start() { this.ladeConf(); this.ladeLog(); },
+
+    ladeConf() {
+      this.I.get("/api/conf")
+        .then(d => { this.conf = d.rows || []; })
+        .catch(err => alert("Konfiguration nicht lesbar: " + err.message));
+    },
+
+    get gefilterteConf() {
+      const s = this.confFilter.trim().toLowerCase();
+      return this.conf.filter(z => {
+        if (this.nurAbweichend && !z.overridden && !z.env_mismatch) return false;
+        if (!s) return true;
+        return z.key.toLowerCase().indexOf(s) !== -1 ||
+               String(z.value).toLowerCase().indexOf(s) !== -1;
+      });
+    },
+
+    setze(z) {
+      const wert = prompt("Neuer Wert fuer " + z.key + ":", z.value);
+      if (wert === null) return;
+      this.I.put("/api/conf", {key: z.key, value: wert})
+        .then(d => {
+          if (d.restart_required) {
+            alert("Gespeichert. Dieser Schluessel wirkt erst nach einem Neustart " +
+                  "des Servers:\n\ndocker compose restart mumble-server");
+          }
+          this.ladeConf();
+        })
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    ladeLog() {
+      this.logFehler = "";
+      const p = this.muster ? "&pattern=" + encodeURIComponent(this.muster) : "";
+      this.I.get("/api/log?first=0&count=400" + p)
+        .then(d => { this.logZeilen = d.entries || []; this.gesamt = d.total; })
+        .catch(err => { this.logFehler = err.message; });
+    },
+
+    /* Der Log kommt nicht ueber SSE: murmur bietet keine Benachrichtigung bei
+       neuen Zeilen, es bleibt nur Abfragen. Fuenf Sekunden reichen fuer einen
+       Tail und belasten den Server nicht. */
+    starteTail() {
+      this.stoppeTail();
+      this.tail = setInterval(() => this.ladeLog(), 5000);
+    },
+
+    stoppeTail() {
+      if (this.tail) { clearInterval(this.tail); this.tail = null; }
+    }
+  };
+}
+</script>
+{% endraw %}
+{% endblock %}

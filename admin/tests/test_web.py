@@ -1,0 +1,619 @@
+"""Web-Schicht von aussen: Anmeldung, Rechte, CSRF, API, SSE.
+
+Die Anwendung laeuft dabei vollstaendig -- inklusive Lebenszyklus, Ice-Verbindung
+zum murmur-Doppel, SQLite und Hintergrundaufgaben. Nur der Mumble-Server ist ein
+Doppel, alles andere ist echt.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.conftest import needs_ice
+
+pytestmark = needs_ice
+
+
+@pytest.fixture()
+def app_client(fake_murmur, tmp_path):
+    """Gestartete Anwendung mit TestClient."""
+    from fastapi.testclient import TestClient
+
+    from intercom.web.app import create_app
+
+    config = tmp_path / "intercom.yaml"
+    config.write_text(
+        """
+version: 1
+groups: [regie, kamera]
+channels:
+  - name: Intercom
+    children:
+      - name: Regie
+        speak: [regie]
+        listen_for: [regie]
+        priority: [regie]
+      - name: Kameras
+        speak: [kamera, regie]
+        listen_for: [kamera, regie]
+policies:
+  guests_listen_only: true
+users:
+  regie-1: { groups: [regie], channel: "Intercom/Regie" }
+networks:
+  - name: "Kabel Regie"
+    cidr: "10.20.10.0/24"
+""",
+        encoding="utf-8",
+    )
+
+    settings = fake_murmur.settings(
+        intercom_config=config,
+        data_dir=tmp_path,
+        provision_on_start=True,
+        admin_user="admin",
+        admin_password="geheim",
+        readonly_user="viewer",
+        readonly_password="lesen",
+        poll_interval_ms=250,
+    )
+    with TestClient(create_app(settings)) as client:
+        yield client, fake_murmur
+
+
+def _anmelden(client, benutzer="admin", passwort="geheim"):
+    antwort = client.post(
+        "/login",
+        data={"benutzer": benutzer, "passwort": passwort},
+        follow_redirects=False,
+    )
+    return antwort
+
+
+def _csrf(client) -> str:
+    return client.get("/api/me").json()["csrf"]
+
+
+def _warte_auf_client(client, name: str, sekunden: float = 5.0) -> None:
+    """Wartet, bis ein Client im Zustand auftaucht.
+
+    Ein ``userConnected`` kommt aus einem Ice-Thread und wird per
+    ``call_soon_threadsafe`` in den Loop der Anwendung gehoben. Der Test laeuft
+    in einem anderen Thread und muss diesen Weg abwarten, statt ihn
+    vorauszusetzen.
+    """
+    import time
+
+    frist = time.monotonic() + sekunden
+    while time.monotonic() < frist:
+        daten = client.get("/api/state").json()
+        if any(u["name"] == name for u in daten["users"]):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"Client {name!r} ist nicht im Zustand aufgetaucht.")
+
+
+# --------------------------------------------------------------------------- #
+#  Anmeldung und Rechte
+# --------------------------------------------------------------------------- #
+
+
+def test_ohne_anmeldung_zur_anmeldeseite(app_client):
+    """Seitenaufrufe leiten um, API-Aufrufe antworten mit 401-JSON."""
+    client, _ = app_client
+    seite = client.get("/", follow_redirects=False)
+    assert seite.status_code == 303
+    assert seite.headers["location"] == "/login"
+
+    api = client.get("/api/state")
+    assert api.status_code == 401
+    assert api.json()["detail"]
+
+
+def test_healthz_und_metrics_brauchen_keine_anmeldung(app_client):
+    """Der Docker-Healthcheck und Prometheus koennen sich nicht anmelden."""
+    client, _ = app_client
+    gesundheit = client.get("/healthz")
+    assert gesundheit.status_code == 200
+    assert gesundheit.json()["ice"]["connected"] is True
+
+    metriken = client.get("/metrics")
+    assert metriken.status_code == 200
+    assert "intercom_up 1" in metriken.text
+    assert "intercom_clients" in metriken.text
+
+
+def test_falsches_passwort(app_client):
+    client, _ = app_client
+    antwort = _anmelden(client, passwort="falsch")
+    assert antwort.status_code == 401
+    assert "stimmt nicht" in antwort.text
+
+
+def test_anmeldung_und_cockpit(app_client):
+    client, _ = app_client
+    assert _anmelden(client).status_code == 303
+    seite = client.get("/")
+    assert seite.status_code == 200
+    assert "Cockpit" in seite.text
+    assert "Stadion-Intercom" in seite.text
+
+
+def test_secrets_stehen_nicht_im_html(app_client):
+    """Das Ice-Secret darf nirgends im Frontend landen."""
+    client, fake = app_client
+    _anmelden(client)
+    for pfad in ("/", "/kanaele", "/acl", "/nutzer", "/server", "/provisioning", "/audit"):
+        text = client.get(pfad).text
+        assert fake.secret not in text, f"Secret steht in {pfad}"
+        assert "geheim" not in text, f"Admin-Passwort steht in {pfad}"
+    assert fake.secret not in client.get("/healthz").text
+
+
+def test_nur_lese_konto_darf_nicht_schreiben(app_client):
+    client, _ = app_client
+    _anmelden(client, "viewer", "lesen")
+    assert client.get("/api/state").status_code == 200
+
+    csrf = _csrf(client)
+    antwort = client.post(
+        "/api/channels",
+        json={"name": "Verboten", "parent": 0},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert antwort.status_code == 403
+    assert "nur lesen" in antwort.json()["detail"]
+
+
+def test_ohne_csrf_token_kein_schreiben(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.post("/api/channels", json={"name": "Ohne", "parent": 0})
+    assert antwort.status_code == 403
+    assert "CSRF" in antwort.json()["detail"]
+
+
+def test_falsches_csrf_token_wird_abgewiesen(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.post(
+        "/api/channels",
+        json={"name": "Ohne", "parent": 0},
+        headers={"X-CSRF-Token": "erfunden"},
+    )
+    assert antwort.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+#  Provisioning beim Start
+# --------------------------------------------------------------------------- #
+
+
+def test_provision_on_start_hat_gewirkt(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    namen = {c.name for c in fake.server.channels.values()}
+    assert {"Intercom", "Regie", "Kameras"} <= namen
+
+    gesundheit = client.get("/healthz").json()
+    assert gesundheit["provision"]["last_at"] is not None
+    assert gesundheit["provision"]["failed"] == 0
+
+
+def test_zweiter_plan_ist_leer(app_client):
+    """Nach dem Start-Provisioning gibt es nichts mehr zu tun."""
+    client, _ = app_client
+    _anmelden(client)
+    plan = client.post("/api/provision/plan", headers={"X-CSRF-Token": _csrf(client)})
+    assert plan.status_code == 200
+    assert plan.json()["empty"] is True, plan.json()["changes"]
+
+
+def test_export_liefert_yaml(app_client):
+    import yaml
+
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.get("/api/provision/export")
+    assert antwort.status_code == 200
+    daten = yaml.safe_load(antwort.text)
+    assert any(c["name"] == "Intercom" for c in daten["channels"])
+
+
+# --------------------------------------------------------------------------- #
+#  Zustand und Clients
+# --------------------------------------------------------------------------- #
+
+
+def test_state_enthaelt_clients_und_segmente(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    fake.server.connect_user("regie-1", userid=1, address="10.20.10.7")
+    fake.server.connect_user("gast", userid=-1, address="192.168.9.9")
+
+    daten = client.get("/api/state").json()
+    namen = {u["name"] for u in daten["users"]}
+    assert namen == {"regie-1", "gast"}
+
+    segmente = {s["segment"] for s in daten["segments"]}
+    assert "Kabel Regie" in segmente     # 10.20.10.7 passt ins CIDR
+    assert "sonstige" in segmente        # 192.168.9.9 passt nirgends
+
+    assert daten["channels"], "Kanalbaum fehlt"
+    assert daten["counts"]["users"] == 2
+
+
+def test_detail_eines_clients(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("regie-1", userid=1, address="10.20.10.7")
+
+    daten = client.get(f"/api/users/{session}").json()
+    assert daten["user"]["name"] == "regie-1"
+    assert daten["user"]["segment"] == "Kabel Regie"
+    assert "certificates" in daten
+    assert "expected_listeners" in daten
+
+
+def test_client_verschieben_wird_auditiert(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("regie-1", userid=1)
+    ziel = next(c.id for c in fake.server.channels.values() if c.name == "Kameras")
+
+    csrf = _csrf(client)
+    antwort = client.post(
+        f"/api/users/{session}/action",
+        json={"action": "move", "channel": ziel},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert antwort.status_code == 200
+    assert fake.server.users[session].channel == ziel
+
+    audit = client.get("/api/audit?action=user.move").json()
+    assert audit["total"] >= 1
+    assert audit["entries"][0]["actor"] == "admin"
+    assert "regie-1" in audit["entries"][0]["target"]
+
+
+def test_kanal_anlegen_und_loeschen(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    csrf = _csrf(client)
+
+    neu = client.post(
+        "/api/channels",
+        json={"name": "Testkanal", "parent": 0, "description": "nur ein Test"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert neu.status_code == 200
+    kanal_id = neu.json()["id"]
+    assert fake.server.channels[kanal_id].description == "nur ein Test"
+
+    weg = client.request(
+        "DELETE", f"/api/channels/{kanal_id}", headers={"X-CSRF-Token": csrf}
+    )
+    assert weg.status_code == 200
+    assert kanal_id not in fake.server.channels
+
+
+# --------------------------------------------------------------------------- #
+#  ACL-Editor
+# --------------------------------------------------------------------------- #
+
+
+def test_acl_lesen_und_vorschau(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    regie = next(c.id for c in fake.server.channels.values() if c.name == "Regie")
+
+    acl = client.get(f"/api/channels/{regie}/acl").json()
+    assert acl["channel_name"].endswith("Regie")
+    assert any(t["key"] == "nur-hoeren" for t in acl["templates"])
+
+    vorschau = client.post(
+        f"/api/channels/{regie}/acl/preview",
+        json={
+            "acls": [
+                {"group": "all", "apply_here": True, "apply_subs": False,
+                 "allow": ["Traverse"], "deny": ["Speak"]}
+            ],
+            "groups": [],
+            "inherit": True,
+        },
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    assert vorschau.status_code == 200
+    assert vorschau.json()["diff"]
+
+
+def test_acl_vorschau_warnt_vor_root_only_rechten(app_client):
+    """Kick an einem Unterkanal ist wirkungslos -- das muss dastehen."""
+    client, fake = app_client
+    _anmelden(client)
+    regie = next(c.id for c in fake.server.channels.values() if c.name == "Regie")
+
+    antwort = client.post(
+        f"/api/channels/{regie}/acl/preview",
+        json={
+            "acls": [{"group": "regie", "apply_here": True, "allow": ["Kick"], "deny": []}],
+            "groups": [],
+            "inherit": True,
+        },
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    warnungen = " ".join(antwort.json()["warnings"])
+    assert "Wurzelkanal" in warnungen
+
+
+def test_acl_lehnt_wirkungslose_eintraege_ab(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    regie = next(c.id for c in fake.server.channels.values() if c.name == "Regie")
+
+    antwort = client.put(
+        f"/api/channels/{regie}/acl",
+        json={
+            "acls": [{"group": "regie", "apply_here": False, "apply_subs": False,
+                      "allow": ["Speak"], "deny": []}],
+            "groups": [],
+            "inherit": True,
+        },
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    assert antwort.status_code == 400
+    assert "weder hier noch" in antwort.json()["detail"]
+
+
+def test_acl_vorlage(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    regie = next(c.id for c in fake.server.channels.values() if c.name == "Regie")
+
+    antwort = client.post(
+        f"/api/channels/{regie}/acl/template",
+        json={"key": "nur-hoeren", "groups": ["regie"]},
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    acls = antwort.json()["acls"]
+    alle = next(a for a in acls if a["group"] == "all")
+    assert "Speak" in alle["deny"]
+    assert "Listen" in alle["allow"]
+
+
+def test_effektive_rechte(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("regie-1", userid=1)
+    regie = next(c.id for c in fake.server.channels.values() if c.name == "Regie")
+
+    antwort = client.get(f"/api/channels/{regie}/effective?session={session}")
+    assert antwort.status_code == 200
+    namen = {p["name"] for p in antwort.json()["permissions"]}
+    assert "Speak" in namen
+
+
+def test_permissions_tabelle_kennzeichnet_listen(app_client):
+    """Listen fehlt in der Slice und muss im GUI erkennbar bleiben."""
+    client, _ = app_client
+    _anmelden(client)
+    rechte = client.get("/api/permissions").json()
+    listen = next(p for p in rechte if p["name"] == "Listen")
+    assert listen["bit"] == 0x800
+    assert listen["in_slice"] is False
+    kick = next(p for p in rechte if p["name"] == "Kick")
+    assert kick["root_only"] is True
+
+
+# --------------------------------------------------------------------------- #
+#  Nutzer, Bans, Konfiguration
+# --------------------------------------------------------------------------- #
+
+
+def test_registrierte_nutzer_und_gruppenmatrix(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    csrf = _csrf(client)
+
+    angelegt = client.post(
+        "/api/registered",
+        json={"name": "kam-9", "cert_hash": "b" * 40},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert angelegt.status_code == 200
+    userid = angelegt.json()["userid"]
+
+    gespeichert = client.put(
+        "/api/registered/groups",
+        json={"groups": {"kamera": [userid]}},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert gespeichert.status_code == 200
+
+    liste = client.get("/api/registered").json()
+    eintrag = next(u for u in liste["users"] if u["userid"] == userid)
+    assert "kamera" in eintrag["groups"]
+    # Die andere verwaltete Gruppe darf dabei nicht verschwinden.
+    assert "regie" in liste["groups"]
+
+
+def test_registrierung_ohne_passwort_und_hash_wird_abgelehnt(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.post(
+        "/api/registered", json={"name": "leer"}, headers={"X-CSRF-Token": _csrf(client)}
+    )
+    assert antwort.status_code == 400
+    assert "anmelden" in antwort.json()["detail"]
+
+
+def test_bans_umlauf(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    csrf = _csrf(client)
+
+    client.put(
+        "/api/bans",
+        json=[{"address": "10.20.30.99", "bits": 32, "reason": "Test"}],
+        headers={"X-CSRF-Token": csrf},
+    )
+    bans = client.get("/api/bans").json()
+    assert len(bans) == 1
+    assert bans[0]["address"] == "10.20.30.99"
+
+
+def test_conf_zeigt_neustart_pflicht(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    daten = client.get("/api/conf").json()
+    schluessel = {z["key"]: z for z in daten["rows"]}
+    assert schluessel["port"]["restart_required"] is True
+    assert schluessel["welcometext"]["restart_required"] is False
+
+
+def test_ice_secret_kann_nicht_ueber_conf_geaendert_werden(app_client):
+    """Das waere ein Fusstritt: danach ist die eigene Verbindung tot."""
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.put(
+        "/api/conf",
+        json={"key": "icesecretwrite", "value": "neu"},
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    assert antwort.status_code == 400
+    assert ".env" in antwort.json()["detail"]
+
+
+def test_serverlog(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    fake.server.connect_user("regie-1", userid=1)
+
+    daten = client.get("/api/log?first=0&count=50").json()
+    assert daten["total"] >= 1
+    assert any("regie-1" in e["text"] for e in daten["entries"])
+
+    gefiltert = client.get("/api/log?first=0&count=50&pattern=regie").json()
+    assert all("regie" in e["text"].lower() for e in gefiltert["entries"])
+
+    kaputt = client.get("/api/log?pattern=%5B")
+    assert kaputt.status_code == 400
+
+
+def test_log_download(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    fake.server.connect_user("regie-1", userid=1)
+    antwort = client.get("/api/log/download")
+    assert antwort.status_code == 200
+    assert "attachment" in antwort.headers["content-disposition"]
+
+
+# --------------------------------------------------------------------------- #
+#  Live-Strom
+# --------------------------------------------------------------------------- #
+
+
+def test_sse_endpunkt_setzt_die_richtigen_koepfe(app_client):
+    """Der Live-Strom wird direkt gepruft, nicht ueber den TestClient.
+
+    Starlettes TestClient wartet, bis eine Antwort vollstaendig ist. Ein
+    SSE-Strom endet nie von allein, ein ``client.stream("/api/events")`` wuerde
+    also fuer immer haengen -- eine Eigenheit des Testwerkzeugs, kein Fehler der
+    Anwendung. Deshalb wird die Route hier direkt aufgerufen und nur der erste
+    Rahmen abgeholt.
+    """
+    import asyncio
+    import json
+
+    from intercom.web.api import events
+
+    client, fake = app_client
+    _anmelden(client)
+    fake.server.connect_user("regie-1", userid=1)
+    _warte_auf_client(client, "regie-1")
+    kontext = client.app.state.ctx
+
+    class _Request:
+        """Das Minimum, das die Route anfasst."""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def is_disconnected(self):
+            return False
+
+    async def hole_ersten_rahmen():
+        antwort = await events(_Request(client.app), account=None)
+        assert antwort.media_type == "text/event-stream"
+        # Ohne diesen Kopf puffert der Synology-Reverse-Proxy den Strom und im
+        # Browser kommt minutenlang nichts an.
+        assert antwort.headers["x-accel-buffering"] == "no"
+        assert "no-cache" in antwort.headers["cache-control"]
+
+        strom = antwort.body_iterator
+        try:
+            return await asyncio.wait_for(strom.__anext__(), timeout=5.0)
+        finally:
+            await strom.aclose()
+
+    rahmen = asyncio.run(hole_ersten_rahmen())
+    assert rahmen.startswith("event: state\n")
+    nutzlast = json.loads(rahmen.split("data: ", 1)[1].strip())
+    assert any(u["name"] == "regie-1" for u in nutzlast["users"])
+    assert kontext.live.hub.subscriber_count == 0, "Abonnent wurde nicht abgeraeumt"
+
+
+def test_event_hub_verteilt_und_wirft_alte_rahmen_weg():
+    """Ein eingefrorener Browser darf das Cockpit nicht anhalten.
+
+    Die Warteschlange je Abonnent ist begrenzt; laeuft sie voll, fliegt der
+    AELTESTE Rahmen raus. Das ist unbedenklich, weil jeder Rahmen den
+    vollstaendigen Zustand traegt und nicht nur eine Differenz.
+    """
+    import asyncio
+
+    from intercom.web.state import EventHub
+
+    async def lauf():
+        hub = EventHub(queue_size=3)
+        assert hub.subscriber_count == 0
+
+        strom = hub.subscribe()
+        erster = await strom.__anext__()
+        assert erster.startswith(": ")          # Kommentarrahmen zur Begruessung
+        assert hub.subscriber_count == 1
+
+        for i in range(6):
+            hub.publish("state", {"n": i})
+
+        gesehen = []
+        for _ in range(3):
+            gesehen.append(await asyncio.wait_for(strom.__anext__(), timeout=2.0))
+        await strom.aclose()
+
+        assert hub.dropped == 3, "es haetten drei Rahmen entfallen muessen"
+        # Uebrig bleiben die JUENGSTEN drei.
+        assert '"n": 3' in gesehen[0]
+        assert '"n": 5' in gesehen[2]
+        assert hub.subscriber_count == 0
+
+    asyncio.run(lauf())
+
+
+def test_event_hub_ohne_abonnenten_serialisiert_nichts():
+    """Ohne offenes Cockpit soll das Polling keine Arbeit verschwenden."""
+    import asyncio
+
+    from intercom.web.state import EventHub
+
+    class Unsserialisierbar:
+        def __repr__(self):
+            raise AssertionError("haette nicht serialisiert werden duerfen")
+
+    async def lauf():
+        hub = EventHub()
+        hub.publish("state", {"x": Unsserialisierbar()})   # darf nicht werfen
+        assert hub.dropped == 0
+
+    asyncio.run(lauf())

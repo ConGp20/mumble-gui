@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div x-data="nutzer()" x-init="start()">
+
+  <div class="raster zwei">
+    <div class="karte">
+      <header>
+        Registrierte Nutzer
+        <span class="rechts leise" x-text="eintraege.length + ' Eintraege'"></span>
+      </header>
+      <div class="tabellenrahmen">
+        <table class="dicht">
+          <thead>
+            <tr><th>Name</th><th class="zahl">ID</th><th>Gruppen</th><th>Zertifikat</th>
+                <th>Zuletzt aktiv</th><th>Online</th><th></th></tr>
+          </thead>
+          <tbody>
+            <template x-for="u in eintraege" :key="u.userid">
+              <tr>
+                <td class="mono" x-text="u.name"></td>
+                <td class="zahl" x-text="u.userid"></td>
+                <td class="text-leise" x-text="(u.groups || []).join(', ') || '–'"></td>
+                <td class="mono text-leise" x-text="u.short_hash || '–'"></td>
+                <td class="text-leise" x-text="u.last_active || '–'"></td>
+                <td>
+                  <template x-if="u.online_session">
+                    <span class="abzeichen ok">online</span>
+                  </template>
+                </td>
+                <td>
+                  {% if account.can_write %}
+                  <button class="knopf klein" @click="umbenennen(u)">Name</button>
+                  <button class="knopf klein" @click="passwort(u)">Passwort</button>
+                  <button class="knopf klein" @click="loeschen(u)">✕</button>
+                  {% endif %}
+                </td>
+              </tr>
+            </template>
+            <template x-if="eintraege.length === 0">
+              <tr class="leer"><td colspan="7">Niemand registriert.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="karte">
+      <header>Verbunden, aber nicht registriert</header>
+      <div class="tabellenrahmen">
+        <table class="dicht">
+          <thead><tr><th>Name</th><th>Kanal</th><th>IP</th><th></th></tr></thead>
+          <tbody>
+            <template x-for="u in unregistriert" :key="u.session">
+              <tr>
+                <td class="mono" x-text="u.name"></td>
+                <td x-text="u.channel_name"></td>
+                <td class="mono text-leise" x-text="u.address"></td>
+                <td>
+                  {% if account.can_write %}
+                  <button class="knopf klein haupt" @click="registriere(u)">Jetzt registrieren</button>
+                  {% endif %}
+                </td>
+              </tr>
+            </template>
+            <template x-if="unregistriert.length === 0">
+              <tr class="leer"><td colspan="4">Alle verbundenen Clients sind registriert.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="inhalt hinweis">
+        „Jetzt registrieren“ nimmt den SHA-1 des Zertifikats, mit dem der Client
+        gerade verbunden ist. Ohne Zertifikat wird ein Passwort abgefragt.
+      </div>
+    </div>
+  </div>
+
+  <!-- Gruppen-Matrix ------------------------------------------------------ -->
+  <div class="karte" style="margin-top:12px">
+    <header>
+      Gruppen
+      <span class="rechts leise">Mitgliedschaft am Wurzelkanal, vererbt sich nach unten</span>
+    </header>
+    <div class="tabellenrahmen">
+      <table class="dicht matrix">
+        <thead>
+          <tr>
+            <th>Nutzer</th>
+            <template x-for="g in gruppen" :key="g">
+              <th class="dreh"><div x-text="g"></div></th>
+            </template>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="u in eintraege" :key="u.userid">
+            <tr>
+              <td class="mono" x-text="u.name"></td>
+              <template x-for="g in gruppen" :key="g">
+                <td class="zelle" :class="istMitglied(u.userid, g) ? 'erlaubt' : ''">
+                  <label>
+                    <input type="checkbox" :checked="istMitglied(u.userid, g)"
+                           {% if not account.can_write %}disabled{% endif %}
+                           @change="schalte(u.userid, g, $event.target.checked)">
+                  </label>
+                </td>
+              </template>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    {% if account.can_write %}
+    <div class="inhalt">
+      <div class="werkzeugleiste">
+        <button class="knopf haupt" :disabled="!geaendert" @click="matrixSpeichern()">
+          Gruppen speichern
+        </button>
+        <button class="knopf" @click="start()">Verwerfen</button>
+        <span class="fueller"></span>
+        <button class="knopf" @click="superuser()">SuperUser-Passwort aendern</button>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Bans ---------------------------------------------------------------- -->
+  <div class="karte" style="margin-top:12px">
+    <header>Bans <span class="rechts leise" x-text="bans.length + ' Eintraege'"></span></header>
+    <div class="tabellenrahmen">
+      <table class="dicht">
+        <thead>
+          <tr><th>Adresse</th><th class="zahl">Bits</th><th>Name</th><th>Hash</th>
+              <th>Grund</th><th>Seit</th><th>Dauer</th><th></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="(b, i) in bans" :key="i">
+            <tr>
+              <td class="mono" x-text="b.address"></td>
+              <td class="zahl" x-text="b.bits"></td>
+              <td x-text="b.name || '–'"></td>
+              <td class="mono text-leise" x-text="(b.hash || '').slice(0, 12) || '–'"></td>
+              <td x-text="b.reason || '–'"></td>
+              <td class="text-leise" x-text="I.fmtDatum(b.start)"></td>
+              <td x-text="b.permanent ? 'dauerhaft' : I.fmtDauer(b.duration)"></td>
+              <td>
+                {% if account.can_write %}
+                <button class="knopf klein" @click="banWeg(i)">✕</button>
+                {% endif %}
+              </td>
+            </tr>
+          </template>
+          <template x-if="bans.length === 0">
+            <tr class="leer"><td colspan="8">Keine Bans.</td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    {% if account.can_write %}
+    <div class="inhalt">
+      <div class="werkzeugleiste">
+        <input type="text" x-model="neuBan.address" placeholder="IP (10.20.30.40)">
+        <input type="number" x-model.number="neuBan.bits" style="width:70px" title="Praefixlaenge">
+        <input type="text" x-model="neuBan.reason" placeholder="Grund" style="min-width:180px">
+        <input type="number" x-model.number="neuBan.duration" style="width:110px"
+               title="Dauer in Sekunden, 0 = dauerhaft">
+        <button class="knopf" @click="banHinzu()">Bannen</button>
+      </div>
+      <div class="hinweis">
+        murmur kennt nur „ganze Liste ersetzen“ (<code>setBans</code>); das GUI
+        liest, aendert und schreibt sie deshalb immer vollstaendig zurueck.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block skripte %}
+{% raw %}
+<script>
+function nutzer() {
+  return {
+    I: window.Intercom,
+    eintraege: [], gruppen: [], unregistriert: [], bans: [],
+    matrix: {}, geaendert: false,
+    neuBan: {address: "", bits: 32, reason: "", duration: 0},
+
+    start() {
+      this.geaendert = false;
+      this.I.get("/api/registered").then(d => {
+        this.eintraege = d.users || [];
+        this.gruppen = d.groups || [];
+        this.matrix = {};
+        this.gruppen.forEach(g => {
+          this.matrix[g] = this.eintraege
+            .filter(u => (u.groups || []).indexOf(g) !== -1)
+            .map(u => u.userid);
+        });
+      }).catch(err => alert("Nutzer nicht lesbar: " + err.message));
+
+      this.I.get("/api/state").then(d => {
+        this.unregistriert = (d.users || []).filter(u => !u.registered);
+      });
+      this.I.get("/api/bans").then(d => { this.bans = d; });
+    },
+
+    istMitglied(userid, gruppe) {
+      return (this.matrix[gruppe] || []).indexOf(userid) !== -1;
+    },
+
+    schalte(userid, gruppe, an) {
+      const liste = this.matrix[gruppe] || (this.matrix[gruppe] = []);
+      const i = liste.indexOf(userid);
+      if (an && i === -1) { liste.push(userid); }
+      if (!an && i !== -1) { liste.splice(i, 1); }
+      this.geaendert = true;
+    },
+
+    matrixSpeichern() {
+      this.I.put("/api/registered/groups", {groups: this.matrix})
+        .then(() => { alert("Gruppen gespeichert."); this.start(); })
+        .catch(err => alert("Speichern fehlgeschlagen: " + err.message));
+    },
+
+    registriere(u) {
+      this.I.post("/api/users/" + u.session + "/register", {})
+        .then(d => { alert("Registriert als ID " + d.userid); this.start(); })
+        .catch(err => {
+          /* Ohne Zertifikat verlangt der Server ein Passwort. */
+          const pw = prompt(err.message + "\n\nPasswort fuer " + u.name + ":");
+          if (!pw) return;
+          this.I.post("/api/users/" + u.session + "/register", {password: pw})
+            .then(d => { alert("Registriert als ID " + d.userid); this.start(); })
+            .catch(e2 => alert("Fehlgeschlagen: " + e2.message));
+        });
+    },
+
+    umbenennen(u) {
+      const name = prompt("Neuer Name fuer " + u.name + ":", u.name);
+      if (!name || name === u.name) return;
+      this.I.patch("/api/registered/" + u.userid, {name: name})
+        .then(() => this.start())
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    passwort(u) {
+      const pw = prompt("Neues Passwort fuer " + u.name + " (leer = abbrechen):");
+      if (!pw) return;
+      this.I.patch("/api/registered/" + u.userid, {password: pw})
+        .then(() => alert("Passwort gesetzt."))
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    loeschen(u) {
+      if (!confirm("Registrierung von " + u.name + " loeschen?")) return;
+      this.I.entferne("/api/registered/" + u.userid)
+        .then(() => this.start())
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    superuser() {
+      const pw = prompt("Neues SuperUser-Passwort (mindestens 8 Zeichen):");
+      if (!pw) return;
+      this.I.post("/api/superuser-password", {password: pw})
+        .then(() => alert("SuperUser-Passwort geaendert."))
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    banHinzu() {
+      if (!this.neuBan.address.trim()) { alert("Adresse fehlt."); return; }
+      const liste = this.bans.concat([Object.assign({}, this.neuBan)]);
+      this.I.put("/api/bans", liste)
+        .then(() => { this.neuBan = {address: "", bits: 32, reason: "", duration: 0}; this.start(); })
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    banWeg(i) {
+      if (!confirm("Bann aufheben?")) return;
+      const liste = this.bans.slice();
+      liste.splice(i, 1);
+      this.I.put("/api/bans", liste)
+        .then(() => this.start())
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    }
+  };
+}
+</script>
+{% endraw %}
+{% endblock %}

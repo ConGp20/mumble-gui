@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anmeldung – Stadion-Intercom</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="anmeldung">
+    <form method="post" action="/login">
+      <h1>Stadion-Intercom</h1>
+      <div class="unterzeile">Administration</div>
+
+      {% if fehler %}
+        <div class="banner fehler" style="margin-bottom:14px">{{ fehler }}</div>
+      {% endif %}
+
+      <label>
+        Benutzer
+        <input type="text" name="benutzer" autocomplete="username" autofocus required>
+      </label>
+      <label>
+        Passwort
+        <input type="password" name="passwort" autocomplete="current-password" required>
+      </label>
+      <button class="knopf haupt" type="submit">Anmelden</button>
+
+      <p class="hinweis">
+        Zugangsdaten stehen in der <code>.env</code> als <code>ADMIN_USER</code>
+        und <code>ADMIN_PASSWORD</code>.
+      </p>
+    </form>
+  </div>
+</body>
+</html>

@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div x-data="aclEditor()" x-init="start()">
+
+  <div class="werkzeugleiste">
+    <label>Kanal
+      <select x-model="kanalId" @change="ladeAcl()" style="min-width:280px">
+        <template x-for="k in flach" :key="k.id">
+          <option :value="k.id" x-text="k.path || '(Wurzel)'"></option>
+        </template>
+      </select>
+    </label>
+    <span class="fueller"></span>
+    {% if account.can_write %}
+    <label>Vorlage
+      <select x-model="vorlage">
+        <option value="">– Ein-Klick-Vorlage –</option>
+        <template x-for="t in vorlagen" :key="t.key">
+          <option :value="t.key" x-text="t.label"></option>
+        </template>
+      </select>
+    </label>
+    <button class="knopf" :disabled="!vorlage" @click="vorlageAnwenden()">Uebernehmen</button>
+    {% endif %}
+  </div>
+
+  <template x-if="vorlage">
+    <div class="banner" x-text="(vorlagen.find(t => t.key === vorlage) || {}).description"></div>
+  </template>
+
+  <div class="raster zwei">
+
+    <!-- ACL-Eintraege ---------------------------------------------------- -->
+    <div class="karte">
+      <header>
+        ACL-Eintraege
+        <span class="rechts leise">Reihenfolge zaehlt – spaeter schlaegt frueher</span>
+      </header>
+      <div class="tabellenrahmen">
+        <table class="dicht">
+          <thead>
+            <tr>
+              <th>#</th><th>Gilt fuer</th><th>hier</th><th>Unterk.</th>
+              <th>erlaubt</th><th>verboten</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(a, i) in acls" :key="i">
+              <tr :class="a.inherited ? 'text-leise' : ''">
+                <td class="zahl" x-text="i + 1"></td>
+                <td>
+                  <span class="mono" x-text="a.group ? '@' + a.group : 'Nutzer ' + a.userid"></span>
+                  <template x-if="a.inherited">
+                    <span class="abzeichen">geerbt</span>
+                  </template>
+                </td>
+                <td><input type="checkbox" :checked="a.apply_here" :disabled="a.inherited"
+                           @change="a.apply_here = $event.target.checked"></td>
+                <td><input type="checkbox" :checked="a.apply_subs" :disabled="a.inherited"
+                           @change="a.apply_subs = $event.target.checked"></td>
+                <td class="text-leise" x-text="a.allow_names.join(', ') || '–'"></td>
+                <td class="text-leise" x-text="a.deny_names.join(', ') || '–'"></td>
+                <td>
+                  <template x-if="!a.inherited">
+                    <span>
+                      <button class="knopf klein" @click="bearbeite(i)">Rechte</button>
+                      <button class="knopf klein" @click="verschiebe(i, -1)" :disabled="i === 0">↑</button>
+                      <button class="knopf klein" @click="entferne(i)">✕</button>
+                    </span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+            <template x-if="acls.length === 0">
+              <tr class="leer"><td colspan="7">Keine ACL-Eintraege.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      {% if account.can_write %}
+      <div class="inhalt">
+        <div class="werkzeugleiste">
+          <input type="text" x-model="neueGruppe" placeholder="Gruppe (z. B. regie, $zerthash, !gast)">
+          <button class="knopf" :disabled="!neueGruppe.trim()" @click="neuerEintrag()">Eintrag hinzufuegen</button>
+          <span class="fueller"></span>
+          <label><input type="checkbox" x-model="inherit"> Von oben erben</label>
+        </div>
+        <div class="hinweis">
+          Praefixe: <code>!</code> kehrt um, <code>~</code> bezieht sich auf den ACL-Kanal,
+          <code>#</code> ist ein Zugriffstoken, <code>$</code> ein Zertifikatshash.
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Rechte-Matrix ---------------------------------------------------- -->
+    <div class="karte">
+      <header>
+        Rechte
+        <span class="rechts leise" x-text="bearbeitet === null ? 'Eintrag waehlen' :
+          ('Eintrag ' + (bearbeitet + 1))"></span>
+      </header>
+      <div class="tabellenrahmen">
+        <table class="dicht">
+          <thead>
+            <tr><th>Recht</th><th class="rechts">erlauben</th><th class="rechts">verbieten</th><th>Bedeutung</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="p in rechte" :key="p.name">
+              <tr :class="(kanalId !== '0' && p.root_only) ? 'text-leise' : ''">
+                <td>
+                  <span x-text="p.label"></span>
+                  <template x-if="!p.in_slice">
+                    <span class="abzeichen" title="Nicht in der Slice deklariert, wirkt aber">0x800</span>
+                  </template>
+                </td>
+                <td class="rechts">
+                  <input type="checkbox" :disabled="bearbeitet === null || (kanalId !== '0' && p.root_only)"
+                         :checked="hat(p.name, 'allow')"
+                         @change="setze(p.name, 'allow', $event.target.checked)">
+                </td>
+                <td class="rechts">
+                  <input type="checkbox" :disabled="bearbeitet === null || (kanalId !== '0' && p.root_only)"
+                         :checked="hat(p.name, 'deny')"
+                         @change="setze(p.name, 'deny', $event.target.checked)">
+                </td>
+                <td class="text-leise" style="white-space:normal" x-text="p.description"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="inhalt hinweis">
+        Ausgegraute Rechte wertet murmur nur am Wurzelkanal aus.
+      </div>
+    </div>
+  </div>
+
+  <div class="raster zwei" style="margin-top:12px">
+
+    <!-- Gruppen ---------------------------------------------------------- -->
+    <div class="karte">
+      <header>Gruppen an diesem Kanal</header>
+      <div class="tabellenrahmen">
+        <table class="dicht">
+          <thead><tr><th>Gruppe</th><th>erbt</th><th>vererbbar</th><th>Mitglieder</th><th></th></tr></thead>
+          <tbody>
+            <template x-for="(g, i) in groups" :key="g.name">
+              <tr :class="g.inherited ? 'text-leise' : ''">
+                <td class="mono">
+                  <span x-text="'@' + g.name"></span>
+                  <template x-if="g.inherited"><span class="abzeichen">geerbt</span></template>
+                </td>
+                <td x-text="g.inherit ? 'ja' : 'nein'"></td>
+                <td x-text="g.inheritable ? 'ja' : 'nein'"></td>
+                <td class="text-leise" x-text="(g.members || []).map(id => namen[id] || id).join(', ') || '–'"></td>
+                <td>
+                  <template x-if="!g.inherited">
+                    <button class="knopf klein" @click="gruppeBearbeiten(i)">Mitglieder</button>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="inhalt hinweis">
+        Dauerhafte Mitgliedschaft steht in der <code>add</code>-Liste und wird per
+        <code>setACL</code> geschrieben. <code>addUserToGroup</code> waere nur
+        temporaer und ueberlebte keinen Serverneustart.
+      </div>
+    </div>
+
+    <!-- Simulator + Speichern -------------------------------------------- -->
+    <div class="karte">
+      <header>Effektive Rechte pruefen</header>
+      <div class="inhalt">
+        <div class="werkzeugleiste">
+          <label>Client
+            <select x-model="pruefSession" @change="pruefe()">
+              <option value="">– waehlen –</option>
+              <template x-for="u in clients" :key="u.session">
+                <option :value="u.session" x-text="u.name + ' (' + u.channel_name + ')'"></option>
+              </template>
+            </select>
+          </label>
+        </div>
+        <template x-if="pruefung">
+          <div>
+            <div class="leise" style="margin-bottom:4px">
+              Was <span class="mono" x-text="pruefung.name"></span> in
+              <span class="mono" x-text="pruefung.channel"></span> darf –
+              direkt von murmur berechnet, nicht nachgerechnet.
+            </div>
+            <template x-for="p in pruefung.permissions" :key="p.name">
+              <span class="abzeichen" :class="p.granted ? 'ok' : ''"
+                    :style="p.granted ? '' : 'opacity:.35'" x-text="p.label"></span>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      {% if account.can_write %}
+      <div class="inhalt" style="border-top:1px solid var(--border)">
+        <div class="werkzeugleiste">
+          <button class="knopf" @click="vorschau()">Aenderungen ansehen</button>
+          <button class="knopf haupt" :disabled="!diff" @click="speichern()">Speichern</button>
+          <button class="knopf" @click="ladeAcl()">Verwerfen</button>
+        </div>
+        <template x-for="w in warnungen" :key="w">
+          <div class="banner" x-text="w"></div>
+        </template>
+        <template x-if="diff">
+          <div class="diff">
+            <template x-for="(z, i) in diff" :key="i">
+              <div>
+                <div class="zeile alt" x-show="z.before && z.changed === 'true'"
+                     x-text="'- ' + z.before"></div>
+                <div class="zeile neu" x-show="z.after && z.changed === 'true'"
+                     x-text="'+ ' + z.after"></div>
+                <div class="zeile kopf" x-show="z.changed !== 'true'"
+                     x-text="'  ' + z.after"></div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block skripte %}
+{% raw %}
+<script>
+function aclEditor() {
+  return {
+    I: window.Intercom,
+    flach: [], clients: [], rechte: [], vorlagen: [], namen: {},
+    kanalId: "0", acls: [], groups: [], inherit: true,
+    bearbeitet: null, neueGruppe: "", vorlage: "",
+    diff: null, warnungen: [], pruefSession: "", pruefung: null,
+
+    start() {
+      this.I.get("/api/permissions").then(d => { this.rechte = d; });
+      this.I.get("/api/state").then(d => {
+        const raus = [];
+        const gehe = (k) => { raus.push(k); (k.children || []).forEach(gehe); };
+        (d.channels || []).forEach(gehe);
+        this.flach = raus;
+        this.clients = d.users || [];
+      });
+      this.ladeAcl();
+    },
+
+    ladeAcl() {
+      this.diff = null; this.warnungen = []; this.bearbeitet = null;
+      this.I.get("/api/channels/" + this.kanalId + "/acl").then(d => {
+        this.acls = d.acls || [];
+        this.groups = d.groups || [];
+        this.inherit = d.inherit;
+        this.vorlagen = d.templates || [];
+        this.namen = d.registered || {};
+        if (d.dangling && d.dangling.length) {
+          this.warnungen = ["Es gibt " + d.dangling.length + " Eintraege, die weder " +
+            "hier noch fuer Unterkanaele gelten. Sie wirken nirgends und werden " +
+            "beim Speichern abgelehnt."];
+        }
+      }).catch(err => alert("ACL nicht lesbar: " + err.message));
+    },
+
+    bearbeite(i) { this.bearbeitet = i; },
+
+    hat(name, art) {
+      if (this.bearbeitet === null) return false;
+      const a = this.acls[this.bearbeitet];
+      return (art === "allow" ? a.allow_names : a.deny_names).indexOf(name) !== -1;
+    },
+
+    /* Ein Recht kann nicht gleichzeitig erlaubt und verboten sein: murmur
+       wertet 'granted |= allow; granted &= ~deny' aus, das Verbot gewinnt
+       immer. Eine Oberflaeche, die beides ankreuzen laesst, gaukelt eine
+       Wahl vor, die es nicht gibt. */
+    setze(name, art, an) {
+      const a = this.acls[this.bearbeitet];
+      const dieses = art === "allow" ? "allow_names" : "deny_names";
+      const andere = art === "allow" ? "deny_names" : "allow_names";
+      a[dieses] = a[dieses].filter(n => n !== name);
+      a[andere] = a[andere].filter(n => n !== name);
+      if (an) { a[dieses].push(name); }
+      this.diff = null;
+    },
+
+    neuerEintrag() {
+      this.acls.push({
+        group: this.neueGruppe.trim(), userid: -1,
+        apply_here: true, apply_subs: false,
+        allow_names: [], deny_names: [], inherited: false
+      });
+      this.bearbeitet = this.acls.length - 1;
+      this.neueGruppe = "";
+      this.diff = null;
+    },
+
+    entferne(i) { this.acls.splice(i, 1); this.bearbeitet = null; this.diff = null; },
+
+    verschiebe(i, richtung) {
+      const ziel = i + richtung;
+      if (ziel < 0 || ziel >= this.acls.length) return;
+      const [weg] = this.acls.splice(i, 1);
+      this.acls.splice(ziel, 0, weg);
+      this.bearbeitet = ziel;
+      this.diff = null;
+    },
+
+    gruppeBearbeiten(i) {
+      const g = this.groups[i];
+      const jetzt = (g.add || []).map(id => this.namen[id] || id).join(", ");
+      const eingabe = prompt("Mitglieder von @" + g.name + " (Namen, mit Komma getrennt):", jetzt);
+      if (eingabe === null) return;
+      const gesucht = eingabe.split(",").map(s => s.trim()).filter(Boolean);
+      const umgekehrt = {};
+      Object.keys(this.namen).forEach(id => { umgekehrt[this.namen[id]] = Number(id); });
+      const unbekannt = gesucht.filter(n => umgekehrt[n] === undefined);
+      if (unbekannt.length) {
+        alert("Nicht registriert: " + unbekannt.join(", ") +
+              "\nNur registrierte Nutzer koennen Mitglied sein.");
+        return;
+      }
+      g.add = gesucht.map(n => umgekehrt[n]);
+      this.diff = null;
+    },
+
+    vorlageAnwenden() {
+      const gruppen = prompt("Fuer welche Gruppen? (mit Komma getrennt)", "regie");
+      if (gruppen === null) return;
+      this.I.post("/api/channels/" + this.kanalId + "/acl/template", {
+        key: this.vorlage,
+        groups: gruppen.split(",").map(s => s.trim()).filter(Boolean)
+      }).then(d => {
+        /* Geerbte Eintraege bleiben stehen -- sie gehoeren dem Elternkanal. */
+        this.acls = this.acls.filter(a => a.inherited).concat(d.acls.map(a => ({
+          group: a.group, userid: a.userid,
+          apply_here: a.apply_here, apply_subs: a.apply_subs,
+          allow_names: a.allow, deny_names: a.deny, inherited: false
+        })));
+        this.diff = null;
+        this.vorschau();
+      }).catch(err => alert("Vorlage fehlgeschlagen: " + err.message));
+    },
+
+    nutzlast() {
+      return {
+        inherit: this.inherit,
+        acls: this.acls.filter(a => !a.inherited).map(a => ({
+          group: a.group, userid: a.userid,
+          apply_here: a.apply_here, apply_subs: a.apply_subs,
+          allow: a.allow_names, deny: a.deny_names
+        })),
+        groups: this.groups.filter(g => !g.inherited).map(g => ({
+          name: g.name, inherit: g.inherit, inheritable: g.inheritable,
+          add: g.add || [], remove: g.remove || []
+        }))
+      };
+    },
+
+    vorschau() {
+      this.I.post("/api/channels/" + this.kanalId + "/acl/preview", this.nutzlast())
+        .then(d => { this.diff = d.diff; this.warnungen = d.warnings; })
+        .catch(err => alert("Vorschau fehlgeschlagen: " + err.message));
+    },
+
+    speichern() {
+      if (!confirm("ACLs dieses Kanals ersetzen?")) return;
+      this.I.put("/api/channels/" + this.kanalId + "/acl", this.nutzlast())
+        .then(() => { this.ladeAcl(); alert("Gespeichert."); })
+        .catch(err => alert("Speichern fehlgeschlagen: " + err.message));
+    },
+
+    pruefe() {
+      if (!this.pruefSession) { this.pruefung = null; return; }
+      const client = this.clients.find(u => String(u.session) === String(this.pruefSession));
+      this.I.get("/api/channels/" + this.kanalId + "/effective?session=" + this.pruefSession)
+        .then(d => { this.pruefung = Object.assign({name: client ? client.name : "?"}, d); })
+        .catch(err => alert("Pruefung fehlgeschlagen: " + err.message));
+    }
+  };
+}
+</script>
+{% endraw %}
+{% endblock %}

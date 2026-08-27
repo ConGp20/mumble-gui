@@ -58,6 +58,7 @@ class AppContext:
         self.last_provision_at: float = 0.0
 
         self.started_at = time.time()
+        self._server_uptime = 0
         self.connected = False
         self.connection_error = ""
         #: Nicht toedliche Hinweise fuer das Banner im Cockpit.
@@ -273,6 +274,7 @@ class AppContext:
         try:
             if full:
                 self.live.set_channels(await self.ice.get_channels())
+                self._server_uptime = await self.ice.get_uptime()
             self.live.set_users(await self.ice.get_users())
         except IceError as exc:
             self.connected = False
@@ -431,7 +433,10 @@ class AppContext:
 
     def health(self) -> dict[str, Any]:
         version = self.ice.sync.server_version
+        # Die Laufzeit des virtuellen Servers kostet einen Ice-Aufruf; sie wird
+        # beim Polling mitgenommen und hier nur ausgelesen.
         return {
+            "server_uptime_s": self._server_uptime,
             "ok": self.connected,
             "ice": {
                 "connected": self.connected,

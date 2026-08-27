@@ -1,0 +1,553 @@
+{% extends "base.html" %}
+{% block inhalt %}
+
+<div x-data="cockpit()" x-init="start()">
+
+  <!-- Kennzahlen ------------------------------------------------------- -->
+  <div class="karte" style="margin-bottom:12px">
+    <div class="kennzahlen">
+      <div class="kennzahl">
+        <div class="beschriftung">Server</div>
+        <div class="wert" x-text="health.ice?.server_version || '–'"></div>
+        <div class="zusatz" x-text="health.ice?.server_version_text || ''"></div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Laufzeit Server</div>
+        <div class="wert" x-text="I.fmtDauer(serverUptime)"></div>
+        <div class="zusatz">Admin: <span x-text="I.fmtDauer(health.uptime_s)"></span></div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Clients</div>
+        <div class="wert" x-text="counts.users ?? 0"></div>
+        <div class="zusatz"><span x-text="counts.speaking ?? 0"></span> senden gerade</div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Kanaele</div>
+        <div class="wert" x-text="counts.channels ?? 0"></div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Bandbreite</div>
+        <div class="wert" x-text="I.fmtBits(counts.bandwidth_bps || 0)"></div>
+        <div class="zusatz">Summe aller Clients</div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Monitor-Bot</div>
+        <div class="wert">
+          <span class="status" :class="health.monitor?.connected ? 'status-ok' : 'status-kritisch'"
+                x-text="health.monitor?.connected ? 'aktiv' : (health.monitor?.enabled ? 'getrennt' : 'aus')"></span>
+        </div>
+        <div class="zusatz">
+          <template x-if="health.monitor?.ping_ms">
+            <span>eigener Ping <span x-text="I.fmtPing(health.monitor.ping_ms)"></span> ms</span>
+          </template>
+          <template x-if="!health.monitor?.connected && health.monitor?.error">
+            <span class="fehlertext" x-text="health.monitor.error"></span>
+          </template>
+        </div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Letztes Provisioning</div>
+        <div class="wert" style="font-size:13px"
+             x-text="health.provision?.last_at ? I.fmtZeit(health.provision.last_at) : 'nie'"></div>
+        <div class="zusatz" x-text="health.provision?.summary || 'noch nicht angewendet'"></div>
+      </div>
+      <div class="kennzahl">
+        <div class="beschriftung">Live-Verbindung</div>
+        <div class="wert">
+          <span class="status" :class="verbunden ? 'status-ok' : 'status-warnung'"
+                x-text="verbunden ? 'offen' : 'getrennt'"></span>
+        </div>
+        <div class="zusatz">Stand <span x-text="I.fmtZeit(stand)"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alarmleiste ------------------------------------------------------ -->
+  <div class="alarmleiste">
+    <template x-for="a in alarms" :key="a.kind + a.subject + a.session">
+      <div class="alarm" :class="a.level">
+        <span class="art" x-text="a.kind"></span>
+        <span class="betreff" x-text="a.subject"></span>
+        <span class="text" x-text="a.message"></span>
+      </div>
+    </template>
+  </div>
+  <template x-if="alarms.length === 0">
+    <div class="karte" style="margin-bottom:12px">
+      <div class="inhalt status status-ok">Keine Alarme.</div>
+    </div>
+  </template>
+
+  <div class="raster zwei" style="margin-bottom:12px">
+
+    <!-- Kanalbaum ------------------------------------------------------ -->
+    <div class="karte">
+      <header>
+        Kanalbaum
+        <span class="rechts leise">gestrichelt = Verlinkung bzw. Mithoeren</span>
+      </header>
+      <div class="inhalt baum">
+        <template x-for="wurzel in channels" :key="wurzel.id">
+          <div x-html="baumHtml(wurzel)"></div>
+        </template>
+        <template x-if="channels.length === 0">
+          <div class="still">Keine Kanaele gelesen.</div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Netzsicht ------------------------------------------------------ -->
+    <div class="karte">
+      <header>
+        Netzsicht
+        <span class="rechts leise">
+          Schwellen: <span x-text="schwellePing"></span> ms /
+          <span x-text="schwelleVerlust"></span> %
+        </span>
+      </header>
+      <div class="tabellenrahmen">
+        <table class="dicht">
+          <thead>
+            <tr>
+              <th>Segment</th>
+              <th class="zahl">Clients</th>
+              <th class="zahl">Ping Median</th>
+              <th class="zahl">Ping max</th>
+              <th class="zahl">Verlust max</th>
+              <th>Notiz</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="s in segments" :key="s.segment">
+              <tr :data-stufe="s.level">
+                <td x-text="s.segment"></td>
+                <td class="zahl" x-text="s.clients"></td>
+                <td class="zahl">
+                  <span class="heat" :class="s.ping_median ? '' : 'leer'"
+                        :style="heatStil(s.ping_median, schwellePing, schwellePing * 2)"
+                        x-text="I.fmtPing(s.ping_median)"></span>
+                </td>
+                <td class="zahl" x-text="I.fmtPing(s.ping_max)"></td>
+                <td class="zahl">
+                  <span class="heat" :class="s.loss_max === null ? 'leer' : ''"
+                        :style="heatStil(s.loss_max, schwelleVerlust, schwelleVerlust * 2)"
+                        x-text="s.loss_max === null ? '–' : I.fmtPct(s.loss_max)"></span>
+                </td>
+                <td class="text-leise" x-text="s.note"></td>
+              </tr>
+            </template>
+            <template x-if="segments.length === 0">
+              <tr class="leer"><td colspan="6">Kein Client verbunden.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="inhalt hinweis">
+        Segmente kommen aus <code>networks:</code> in der intercom.yaml.
+        Ein Client ohne passendes Netz landet unter „sonstige“.
+      </div>
+    </div>
+  </div>
+
+  <!-- Client-Tabelle --------------------------------------------------- -->
+  <div class="karte" x-data="I.dataTable(spalten, {schluessel: 'clients', sortKey: 'name'})"
+       x-modelable="zeilen" x-model="users" x-init="init()">
+    <header>
+      Clients
+      <span class="rechts">
+        <span class="leise" x-text="gefiltert.length + ' von ' + zeilen.length"></span>
+      </span>
+    </header>
+    <div class="inhalt" style="padding-bottom:0">
+      <div class="werkzeugleiste">
+        <input type="search" x-model="filter" placeholder="Filter (Name, IP, Kanal, Version …)"
+               style="min-width:280px">
+        <span class="fueller"></span>
+        <div class="spaltenwahl" @click.outside="spaltenOffen = false">
+          <button class="knopf klein" @click="spaltenOffen = !spaltenOffen">Spalten ▾</button>
+          <div class="liste" x-show="spaltenOffen" x-cloak>
+            <template x-for="s in spalten" :key="s.key">
+              <label>
+                <input type="checkbox" :checked="sichtbar[s.key]" @change="schalteSpalte(s.key)">
+                <span x-text="s.label"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tabellenrahmen">
+      <table class="dicht">
+        <thead>
+          <tr>
+            <template x-for="s in sichtbareSpalten" :key="s.key">
+              <th :class="kopfKlasse(s.key) + (s.zahl ? ' zahl' : '')"
+                  @click="sortiereNach(s.key)" x-text="s.label"></th>
+            </template>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="zeile in gefiltert" :key="zeile.session">
+            <tr class="anklickbar" :data-stufe="zeile.alert"
+                :class="$root.gewaehlt === zeile.session ? 'gewaehlt' : ''"
+                @click="$root.zeigeDetail(zeile.session)">
+              <template x-for="s in sichtbareSpalten" :key="s.key">
+                <td :class="s.zahl ? 'zahl' : ''" x-html="$root.zelle(zeile, s.key)"></td>
+              </template>
+            </tr>
+          </template>
+          <template x-if="gefiltert.length === 0">
+            <tr class="leer">
+              <td :colspan="sichtbareSpalten.length">Kein Client verbunden.</td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Detailpanel ------------------------------------------------------ -->
+  <div class="schublade" x-show="detail" x-cloak @keydown.escape.window="detail = null">
+    <header>
+      <h2 x-text="detail?.user?.name || ''"></h2>
+      <span class="leise" x-text="'Session ' + (detail?.user?.session ?? '')"></span>
+      <span class="fueller" style="flex:1"></span>
+      <button class="knopf klein" @click="detail = null">Schliessen ✕</button>
+    </header>
+    <div class="inhalt" x-show="detail">
+      <template x-if="detail">
+        <div>
+          <!-- Aktionen -->
+          {% if account.can_write %}
+          <div class="werkzeugleiste">
+            <select x-model="zielKanal">
+              <option value="">Kanal wählen …</option>
+              <template x-for="k in flacheKanaele" :key="k.id">
+                <option :value="k.id" x-text="k.path || '(Wurzel)'"></option>
+              </template>
+            </select>
+            <button class="knopf" :disabled="!zielKanal"
+                    @click="aktion('move', {channel: Number(zielKanal)})">Verschieben</button>
+            <button class="knopf" @click="aktion('mute', {value: !detail.user.mute})"
+                    x-text="detail.user.mute ? 'Stumm aufheben' : 'Stumm'"></button>
+            <button class="knopf" @click="aktion('deaf', {value: !detail.user.deaf})"
+                    x-text="detail.user.deaf ? 'Taub aufheben' : 'Taub'"></button>
+            <button class="knopf" @click="aktion('priority', {value: !detail.user.priority_speaker})"
+                    x-text="detail.user.priority_speaker ? 'Priority aus' : 'Priority an'"></button>
+            <button class="knopf gefahr" @click="kicken()">Kicken</button>
+            <button class="knopf" @click="nachricht()">Nachricht</button>
+            <template x-if="!detail.user.registered">
+              <button class="knopf haupt" @click="registrieren()">Jetzt registrieren</button>
+            </template>
+          </div>
+          {% endif %}
+
+          <!-- Verlauf -->
+          <h3>Verlauf der letzten 60 Minuten</h3>
+          <div class="raster zwei">
+            <div>
+              <div class="leise">Ping (ms)</div>
+              <div x-html="I.sparkline(detail.history?.ping || [], {schwelle: schwellePing})"></div>
+            </div>
+            <div>
+              <div class="leise">Paketverlust (%)</div>
+              <div x-html="I.sparkline(detail.history?.loss || [], {schwelle: schwelleVerlust})"></div>
+            </div>
+          </div>
+          <template x-if="!detail.history?.ping?.length">
+            <div class="hinweis">Noch kein Verlauf – die Aufzeichnung braucht ein paar Minuten.</div>
+          </template>
+
+          <div class="trenner"></div>
+
+          <!-- Soll/Ist -->
+          <h3>Soll gegen Ist</h3>
+          <dl class="feldliste">
+            <dt>Soll-Kanal</dt>
+            <dd :class="detail.user.channel_ok ? '' : 'fehlertext'"
+                x-text="detail.user.expected_channel || '(keiner festgelegt)'"></dd>
+            <dt>Ist-Kanal</dt>
+            <dd x-text="detail.user.channel_name"></dd>
+            <dt>Priority Speaker</dt>
+            <dd :class="(detail.expects_priority && !detail.user.priority_speaker) ? 'fehlertext' : ''"
+                x-text="(detail.user.priority_speaker ? 'ja' : 'nein') +
+                        (detail.expects_priority ? ' (Soll: ja)' : '')"></dd>
+            <dt>Hoert mit</dt>
+            <dd :class="detail.listeners_ok ? '' : 'fehlertext'"
+                x-text="(detail.listening || []).map(k => k.name).join(', ') || '(nichts)'"></dd>
+            <dt>Soll mithoeren</dt>
+            <dd x-text="(detail.expected_listeners || []).map(k => k.name).join(', ') || '(nichts)'"></dd>
+          </dl>
+
+          <div class="trenner"></div>
+
+          <!-- Alle Felder aus dem User-Struct -->
+          <h3>Client</h3>
+          <dl class="feldliste">
+            <dt>Name</dt>       <dd x-text="detail.user.name"></dd>
+            <dt>Nutzer-ID</dt>  <dd x-text="detail.user.registered ? detail.user.userid : 'nicht registriert'"></dd>
+            <dt>Adresse</dt>    <dd x-text="detail.user.address"></dd>
+            <dt>Segment</dt>    <dd x-text="detail.user.segment"></dd>
+            <dt>UDP-Ping</dt>   <dd x-text="I.fmtPing(detail.user.udp_ping) + ' ms'"></dd>
+            <dt>TCP-Ping</dt>   <dd x-text="I.fmtPing(detail.user.tcp_ping) + ' ms'"></dd>
+            <dt>Nur TCP</dt>    <dd :class="detail.user.tcp_only ? 'fehlertext' : ''"
+                                    x-text="detail.user.tcp_only ? 'ja – UDP blockiert' : 'nein'"></dd>
+            <dt>Verlust</dt>    <dd x-text="detail.user.loss_pct === null ? 'unbekannt (Monitor-Bot?)' : I.fmtPct(detail.user.loss_pct)"></dd>
+            <dt>Jitter</dt>     <dd x-text="detail.user.jitter_ms === null ? '–' : I.fmtZahl(detail.user.jitter_ms) + ' ms'"></dd>
+            <dt>Bandbreite</dt> <dd x-text="I.fmtBits(detail.user.bytes_per_sec * 8)"></dd>
+            <dt>Online seit</dt><dd x-text="I.fmtDauer(detail.user.online_secs)"></dd>
+            <dt>Leerlauf</dt>   <dd x-text="I.fmtDauer(detail.user.idle_secs)"></dd>
+            <dt>Version</dt>    <dd x-text="detail.user.version"></dd>
+            <dt>Release</dt>    <dd x-text="detail.user.release"></dd>
+            <dt>Betriebssystem</dt><dd x-text="detail.user.os + ' ' + detail.user.os_version"></dd>
+            <dt>Zustand</dt>    <dd x-html="$root.zelle(detail.user, 'zustand')"></dd>
+            <dt>Kommentar</dt>  <dd x-text="detail.user.comment || '–'"></dd>
+            <dt>Identity</dt>   <dd x-text="detail.user.identity || '–'"></dd>
+            <dt>Context</dt>    <dd x-text="detail.user.context || '–'"></dd>
+          </dl>
+
+          <template x-if="detail.device && Object.keys(detail.device).length">
+            <div>
+              <div class="trenner"></div>
+              <h3>Geraet (aus intercom.yaml)</h3>
+              <dl class="feldliste">
+                <template x-for="(wert, schluessel) in detail.device" :key="schluessel">
+                  <div style="display:contents">
+                    <dt x-text="schluessel"></dt><dd x-text="wert"></dd>
+                  </div>
+                </template>
+              </dl>
+            </div>
+          </template>
+
+          <div class="trenner"></div>
+          <h3>Zertifikatskette</h3>
+          <template x-if="!detail.certificates?.length">
+            <div class="hinweis">
+              Der Client hat kein Zertifikat vorgelegt – Anmeldung nur per Passwort moeglich.
+            </div>
+          </template>
+          <template x-for="(z, i) in detail.certificates" :key="i">
+            <dl class="feldliste" style="margin-bottom:8px">
+              <dt x-text="i === 0 ? 'Client' : 'Aussteller ' + i"></dt>
+              <dd x-text="z.subject || '(ohne Parser nicht lesbar)'"></dd>
+              <dt>SHA-1</dt><dd x-text="z.sha1"></dd>
+              <dt>Gueltig bis</dt><dd x-text="z.not_after || '–'"></dd>
+            </dl>
+          </template>
+          <div class="hinweis">
+            murmur erkennt einen Client am SHA-1 des ersten Zertifikats –
+            genau dieser Wert landet beim Registrieren als <code>UserHash</code>.
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block skripte %}
+{% raw %}
+<script>
+function cockpit() {
+  return {
+    I: window.Intercom,
+    users: [], channels: [], segments: [], alarms: [], counts: {}, health: {},
+    stand: 0, verbunden: false, detail: null, gewaehlt: null, zielKanal: "",
+    quelle: null,
+    schwellePing: Number(document.body.dataset.alertPing || 80),
+    schwelleVerlust: Number(document.body.dataset.alertLoss || 2),
+
+    spalten: [
+      {key: "name",          label: "Name"},
+      {key: "channel_name",  label: "Kanal"},
+      {key: "address",       label: "IP"},
+      {key: "segment",       label: "Segment"},
+      {key: "udp_ping",      label: "UDP", zahl: true},
+      {key: "tcp_ping",      label: "TCP", zahl: true, aus: true},
+      {key: "loss_pct",      label: "Verlust", zahl: true},
+      {key: "jitter_ms",     label: "Jitter", zahl: true, aus: true},
+      {key: "bytes_per_sec", label: "Bandbreite", zahl: true},
+      {key: "zustand",       label: "Zustand"},
+      {key: "version",       label: "Version"},
+      {key: "os",            label: "OS", aus: true},
+      {key: "online_secs",   label: "Online", zahl: true},
+      {key: "idle_secs",     label: "Leerlauf", zahl: true},
+      {key: "registered",    label: "Registriert"},
+      {key: "comment",       label: "Kommentar", aus: true}
+    ],
+
+    start() {
+      this.lade();
+      this.horche();
+    },
+
+    lade() {
+      this.I.get("/api/state").then(d => this.uebernehmen(d)).catch(() => {});
+    },
+
+    /* Live-Aktualisierung ueber SSE. Faellt die Verbindung aus (Neustart des
+       Containers, Reverse-Proxy), baut der Browser sie selbst wieder auf --
+       EventSource macht das von Haus aus. Wir zeigen nur den Zustand an. */
+    horche() {
+      const quelle = new EventSource("/api/events");
+      this.quelle = quelle;
+      quelle.addEventListener("open", () => { this.verbunden = true; });
+      quelle.addEventListener("error", () => { this.verbunden = false; });
+      quelle.addEventListener("state", (e) => {
+        this.verbunden = true;
+        try { this.uebernehmen(JSON.parse(e.data)); } catch (err) { /* Rahmen verworfen */ }
+      });
+    },
+
+    uebernehmen(d) {
+      this.users = d.users || [];
+      this.channels = d.channels || [];
+      this.segments = d.segments || [];
+      this.alarms = d.alarms || [];
+      this.counts = d.counts || {};
+      if (d.health) { this.health = d.health; }
+      this.stand = d.ts || (Date.now() / 1000);
+      if (this.detail) {
+        const frisch = this.users.find(u => u.session === this.detail.user.session);
+        if (frisch) { this.detail.user = Object.assign({}, this.detail.user, frisch); }
+      }
+    },
+
+    get serverUptime() {
+      return this.health.server_uptime_s || 0;
+    },
+
+    get flacheKanaele() {
+      const raus = [];
+      const gehe = (k) => { raus.push(k); (k.children || []).forEach(gehe); };
+      this.channels.forEach(gehe);
+      return raus;
+    },
+
+    heatStil(wert, warn, krit) {
+      const farbe = this.I.heatColor(wert, warn, krit);
+      return farbe ? ("background:" + farbe) : "";
+    },
+
+    /* Zellen-Inhalt. Bewusst eine Funktion statt zwanzig Templates: die
+       Spaltenauswahl ist frei, jede Spalte braucht ihre eigene Formatierung. */
+    zelle(z, key) {
+      const e = (s) => String(s === null || s === undefined ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      switch (key) {
+        case "name": {
+          let html = '<span class="mono">' + e(z.name) + "</span>";
+          if (z.bytes_per_sec > 0) { html += ' <span class="spricht">▮</span>'; }
+          if (!z.channel_ok) { html += ' <span class="abzeichen stumm">Kanal</span>'; }
+          if (z.vox_suspect) { html += ' <span class="abzeichen stumm">VOX?</span>'; }
+          return html;
+        }
+        case "udp_ping": return this.I.fmtPing(z.udp_ping);
+        case "tcp_ping": return this.I.fmtPing(z.tcp_ping);
+        case "loss_pct":
+          return z.loss_pct === null || z.loss_pct === undefined
+            ? '<span class="still">–</span>' : this.I.fmtPct(z.loss_pct);
+        case "jitter_ms":
+          return z.jitter_ms === null || z.jitter_ms === undefined
+            ? '<span class="still">–</span>' : this.I.fmtZahl(z.jitter_ms);
+        case "bytes_per_sec": return this.I.fmtBits(z.bytes_per_sec * 8);
+        case "online_secs": return this.I.fmtDauer(z.online_secs);
+        case "idle_secs": return this.I.fmtDauer(z.idle_secs);
+        case "registered":
+          return z.registered
+            ? '<span class="abzeichen ok">ja</span>'
+            : '<span class="abzeichen">nein</span>';
+        case "zustand": {
+          let html = "";
+          if (z.mute) html += '<span class="abzeichen stumm">stumm</span>';
+          if (z.deaf) html += '<span class="abzeichen taub">taub</span>';
+          if (z.suppress) html += '<span class="abzeichen stumm">unterdrueckt</span>';
+          if (z.self_mute) html += '<span class="abzeichen">selbst stumm</span>';
+          if (z.self_deaf) html += '<span class="abzeichen">selbst taub</span>';
+          if (z.priority_speaker) html += '<span class="abzeichen priority">priority</span>';
+          if (z.recording) html += '<span class="abzeichen aufnahme">aufnahme</span>';
+          if (z.tcp_only) html += '<span class="abzeichen tcp">TCP</span>';
+          return html || '<span class="still">–</span>';
+        }
+        case "os": return e(z.os) + " " + e(z.os_version);
+        default: return e(z[key]);
+      }
+    },
+
+    baumHtml(knoten) {
+      const e = (s) => String(s === null || s === undefined ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      let html = '<div class="baum-knoten"><div class="baum-zeile kanal">';
+      html += "<span>" + e(knoten.name || "(Wurzel)") + "</span>";
+      html += ' <span class="anzahl">' + knoten.total_users + "</span>";
+      if (knoten.speaking > 0) { html += ' <span class="spricht">▮</span>'; }
+      (knoten.link_names || []).forEach((n) => {
+        html += ' <span class="verlinkt">↔ ' + e(n) + "</span>";
+      });
+      html += "</div>";
+      (knoten.users || []).forEach((u) => {
+        html += '<div class="baum-zeile baum-nutzer">';
+        html += '<span class="status status-' + e(u.alert) + '"></span>';
+        html += '<span class="name">' + e(u.name) + "</span>";
+        if (u.bytes_per_sec > 0) { html += ' <span class="spricht">▮</span>'; }
+        if (u.mute) html += ' <span class="abzeichen stumm">stumm</span>';
+        if (u.deaf) html += ' <span class="abzeichen taub">taub</span>';
+        if (u.priority_speaker) html += ' <span class="abzeichen priority">P</span>';
+        if (u.recording) html += ' <span class="abzeichen aufnahme">REC</span>';
+        if (u.tcp_only) html += ' <span class="abzeichen tcp">TCP</span>';
+        html += ' <span class="anzahl">' + this.I.fmtPing(u.udp_ping) + " ms</span>";
+        html += "</div>";
+      });
+      if ((knoten.children || []).length) {
+        html += '<div class="baum-kinder">';
+        knoten.children.forEach((k) => { html += this.baumHtml(k); });
+        html += "</div>";
+      }
+      html += "</div>";
+      return html;
+    },
+
+    zeigeDetail(session) {
+      this.gewaehlt = session;
+      this.zielKanal = "";
+      this.I.get("/api/users/" + session)
+        .then(d => { this.detail = d; })
+        .catch(err => { alert("Detail nicht lesbar: " + err.message); });
+    },
+
+    aktion(name, zusatz) {
+      const koerper = Object.assign({action: name}, zusatz || {});
+      this.I.post("/api/users/" + this.detail.user.session + "/action", koerper)
+        .then(() => this.zeigeDetail(this.detail.user.session))
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    },
+
+    kicken() {
+      const grund = prompt("Grund für den Kick:", "Vom Admin getrennt");
+      if (grund === null) return;
+      this.aktion("kick", {text: grund});
+      this.detail = null;
+    },
+
+    nachricht() {
+      const text = prompt("Nachricht an " + this.detail.user.name + ":");
+      if (!text) return;
+      this.aktion("message", {text: text});
+    },
+
+    registrieren() {
+      if (!confirm("Client mit seinem aktuellen Zertifikat registrieren?")) return;
+      this.I.post("/api/users/" + this.detail.user.session + "/register", {})
+        .then(d => {
+          alert("Registriert als Nutzer-ID " + d.userid);
+          this.zeigeDetail(this.detail.user.session);
+        })
+        .catch(err => alert("Fehlgeschlagen: " + err.message));
+    }
+  };
+}
+</script>
+{% endraw %}
+{% endblock %}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ titel }} – Stadion-Intercom</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/vendor/alpine.min.js" defer></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>%F0%9F%8E%99</text></svg>">
+</head>
+<body data-csrf="{{ csrf }}"
+      data-alert-ping="{{ settings.alert_ping_ms }}"
+      data-alert-loss="{{ settings.alert_loss_pct }}">
+
+<header class="kopf">
+  <div class="marke">Stadion-Intercom <span>· Administration</span></div>
+  <nav class="navigation">
+    <a href="/"             class="{{ 'aktiv' if seite == 'cockpit' }}">Cockpit</a>
+    <a href="/kanaele"      class="{{ 'aktiv' if seite == 'kanaele' }}">Kanaele</a>
+    <a href="/acl"          class="{{ 'aktiv' if seite == 'acl' }}">ACL</a>
+    <a href="/nutzer"       class="{{ 'aktiv' if seite == 'nutzer' }}">Nutzer</a>
+    <a href="/server"       class="{{ 'aktiv' if seite == 'server' }}">Server</a>
+    <a href="/provisioning" class="{{ 'aktiv' if seite == 'provisioning' }}">Provisioning</a>
+    <a href="/audit"        class="{{ 'aktiv' if seite == 'audit' }}">Audit</a>
+  </nav>
+  <div class="kopf-rechts">
+    {% if health.ice.connected %}
+      <span class="status status-ok">murmur {{ health.ice.server_version or '?' }}</span>
+    {% else %}
+      <span class="status status-kritisch">murmur getrennt</span>
+    {% endif %}
+    <span class="still">|</span>
+    <span>{{ account.name }}{% if not account.can_write %} <span class="abzeichen">nur lesen</span>{% endif %}</span>
+    <form method="post" action="/logout" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="knopf klein" type="submit">Abmelden</button>
+    </form>
+  </div>
+</header>
+
+<main>
+  {# Banner: Versionsabweichung, fehlende SQLite, kaputte YAML. Sie stehen
+     ueber allem, weil sie erklaeren, warum eine Ansicht unvollstaendig ist. #}
+  {% if not health.ice.connected %}
+    <div class="banner fehler">
+      <b>Keine Verbindung zur Ice-Schnittstelle.</b>
+      {{ health.ice.error }}
+      Die angezeigten Daten sind der letzte bekannte Stand. Es wird laufend
+      erneut versucht.
+    </div>
+  {% endif %}
+  {% if health.config.error %}
+    <div class="banner fehler">
+      <b>intercom.yaml ist unbrauchbar.</b>
+      <pre class="mono" style="white-space:pre-wrap;margin:4px 0 0">{{ health.config.error }}</pre>
+    </div>
+  {% endif %}
+  {% for warnung in health.ice.warnings %}
+    <div class="banner">{{ warnung }}</div>
+  {% endfor %}
+  {% for banner in health.banners %}
+    <div class="banner">{{ banner }}</div>
+  {% endfor %}
+
+  {% block inhalt %}{% endblock %}
+</main>
+
+{% block skripte %}{% endblock %}
+</body>
+</html>

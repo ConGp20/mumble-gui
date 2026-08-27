@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div x-data="auditSeite()" x-init="lade()">
+  <div class="karte">
+    <header>
+      Audit-Log
+      <span class="rechts leise" x-text="gesamt + ' Eintraege'"></span>
+    </header>
+    <div class="inhalt" style="padding-bottom:0">
+      <div class="werkzeugleiste">
+        <input type="search" x-model="suche" @keydown.enter="offset = 0; lade()"
+               placeholder="Volltext (Enter)" style="min-width:240px">
+        <input type="text" x-model="actor" @keydown.enter="offset = 0; lade()"
+               placeholder="Wer" style="width:120px">
+        <input type="text" x-model="action" @keydown.enter="offset = 0; lade()"
+               placeholder="Was (z. B. acl.write)" style="width:170px">
+        <button class="knopf" @click="offset = 0; lade()">Filtern</button>
+        <span class="fueller"></span>
+        <button class="knopf" :disabled="offset === 0" @click="blaettern(-1)">◀</button>
+        <span class="leise" x-text="(offset + 1) + '–' + (offset + eintraege.length)"></span>
+        <button class="knopf" :disabled="offset + limit >= gesamt" @click="blaettern(1)">▶</button>
+      </div>
+      <template x-if="!verfuegbar">
+        <div class="banner">
+          Ohne SQLite gibt es kein Audit-Log. Schreibende Aktionen landen dann
+          nur im Containerlog.
+        </div>
+      </template>
+    </div>
+    <div class="tabellenrahmen">
+      <table class="dicht">
+        <thead>
+          <tr><th>Zeit</th><th>Wer</th><th>Was</th><th>Ziel</th><th></th><th></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="e in eintraege" :key="e.id">
+            <tr>
+              <td class="mono text-leise" x-text="I.fmtDatum(e.ts)"></td>
+              <td class="mono" x-text="e.actor"></td>
+              <td class="mono" x-text="e.action"></td>
+              <td x-text="e.target"></td>
+              <td>
+                <span class="status" :class="e.ok ? 'status-ok' : 'status-kritisch'"
+                      x-text="e.ok ? 'ok' : 'Fehler'"></span>
+              </td>
+              <td>
+                <button class="knopf klein" x-show="e.before || e.after"
+                        @click="detail = (detail === e.id ? null : e.id)">Diff</button>
+              </td>
+            </tr>
+          </template>
+          <template x-if="eintraege.length === 0">
+            <tr class="leer"><td colspan="6">Keine Eintraege.</td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <template x-for="e in eintraege" :key="'d' + e.id">
+      <div class="inhalt" x-show="detail === e.id" x-cloak>
+        <h3 x-text="e.action + ' – ' + e.target"></h3>
+        <template x-if="e.error">
+          <div class="banner fehler" x-text="e.error"></div>
+        </template>
+        <div class="raster zwei">
+          <div>
+            <div class="leise">vorher</div>
+            <pre class="diff alt" x-text="huebsch(e.before)"></pre>
+          </div>
+          <div>
+            <div class="leise">nachher</div>
+            <pre class="diff neu" x-text="huebsch(e.after)"></pre>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+{% endblock %}
+
+{% block skripte %}
+{% raw %}
+<script>
+function auditSeite() {
+  return {
+    I: window.Intercom,
+    eintraege: [], gesamt: 0, offset: 0, limit: 100, verfuegbar: true,
+    suche: "", actor: "", action: "", detail: null,
+
+    lade() {
+      let p = "?limit=" + this.limit + "&offset=" + this.offset;
+      if (this.suche) p += "&search=" + encodeURIComponent(this.suche);
+      if (this.actor) p += "&actor=" + encodeURIComponent(this.actor);
+      if (this.action) p += "&action=" + encodeURIComponent(this.action);
+      this.I.get("/api/audit" + p)
+        .then(d => {
+          this.eintraege = d.entries || [];
+          this.gesamt = d.total || 0;
+          this.verfuegbar = d.available !== false;
+        })
+        .catch(err => alert("Audit-Log nicht lesbar: " + err.message));
+    },
+
+    blaettern(richtung) {
+      this.offset = Math.max(0, this.offset + richtung * this.limit);
+      this.lade();
+    },
+
+    /* Vorher/Nachher stehen als JSON in der Datenbank. Eingerueckt liest es
+       sich beim Nachvollziehen deutlich besser als eine einzige lange Zeile. */
+    huebsch(text) {
+      if (!text) return "–";
+      try { return JSON.stringify(JSON.parse(text), null, 2); }
+      catch (e) { return text; }
+    }
+  };
+}
+</script>
+{% endraw %}
+{% endblock %}

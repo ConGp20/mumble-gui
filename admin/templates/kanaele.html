@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div x-data="kanaele()" x-init="lade()">
+
+  <div class="werkzeugleiste">
+    <button class="knopf" @click="lade()">Neu laden</button>
+    {% if account.can_write %}
+    <span class="fueller"></span>
+    <input type="text" x-model="neuName" placeholder="Neuer Kanalname" style="min-width:200px">
+    <select x-model="neuEltern">
+      <template x-for="k in flach" :key="k.id">
+        <option :value="k.id" x-text="k.path || '(Wurzel)'"></option>
+      </template>
+    </select>
+    <button class="knopf haupt" :disabled="!neuName.trim()" @click="anlegen()">Anlegen</button>
+    {% endif %}
+  </div>
+
+  <div class="raster zwei">
+    <div class="karte">
+      <header>
+        Kanalbaum
+        {% if account.can_write %}
+        <span class="rechts leise">Nutzer per Ziehen in einen Kanal schieben</span>
+        {% endif %}
+      </header>
+      <div class="inhalt baum">
+        <template x-for="wurzel in baum" :key="wurzel.id">
+          <div x-html="zeichne(wurzel)"></div>
+        </template>
+      </div>
+    </div>
+
+    <div class="karte">
+      <header>Kanal bearbeiten</header>
+      <div class="inhalt">
+        <template x-if="!gewaehlt">
+          <div class="still">Einen Kanal im Baum anklicken.</div>
+        </template>
+        <template x-if="gewaehlt">
+          <div>
+            <dl class="feldliste" style="margin-bottom:10px">
+              <dt>Pfad</dt><dd x-text="gewaehlt.path || '(Wurzel)'"></dd>
+              <dt>ID</dt><dd x-text="gewaehlt.id"></dd>
+              <dt>Nutzer</dt><dd x-text="gewaehlt.total_users"></dd>
+            </dl>
+
+            {% if account.can_write %}
+            <label>Name<input type="text" x-model="form.name" style="width:100%"></label>
+            <label>Beschreibung
+              <textarea x-model="form.description" rows="3" style="width:100%"></textarea>
+            </label>
+            <label>Position
+              <input type="number" x-model.number="form.position" style="width:90px">
+            </label>
+            <label>Elternkanal
+              <select x-model="form.parent" style="width:100%">
+                <template x-for="k in flach" :key="k.id">
+                  <option :value="k.id" x-text="k.path || '(Wurzel)'"
+                          :disabled="istNachfahre(k.id)"></option>
+                </template>
+              </select>
+            </label>
+            <label>Verlinkt mit
+              <select x-model="form.links" multiple size="5" style="width:100%">
+                <template x-for="k in flach" :key="k.id">
+                  <option :value="String(k.id)" x-text="k.path || '(Wurzel)'"
+                          x-show="k.id !== gewaehlt.id"></option>
+                </template>
+              </select>
+            </label>
+            <div class="werkzeugleiste" style="margin-top:8px">
+              <button class="knopf haupt" @click="speichern()">Speichern</button>
+              <button class="knopf" @click="nachricht()">Textnachricht senden</button>
+              <span class="fueller"></span>
+              <button class="knopf gefahr" :disabled="gewaehlt.id === 0"
+                      @click="loeschen()">Kanal loeschen</button>
+            </div>
+            <div class="hinweis">
+              Ein Kanal wird samt Unterkanaelen geloescht. Steht er in der
+              intercom.yaml, legt der naechste <code>apply</code> ihn wieder an.
+            </div>
+            {% else %}
+            <div class="hinweis">Dieser Zugang darf nur lesen.</div>
+            {% endif %}
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block skripte %}
+{% raw %}
+<script>
+function kanaele() {
+  return {
+    I: window.Intercom,
+    baum: [], gewaehlt: null, form: {}, neuName: "", neuEltern: "0",
+
+    lade() {
+      this.I.get("/api/state").then(d => {
+        this.baum = d.channels || [];
+        if (this.gewaehlt) {
+          const frisch = this.flach.find(k => k.id === this.gewaehlt.id);
+          this.gewaehlt = frisch || null;
+        }
+      });
+    },
+
+    get flach() {
+      const raus = [];
+      const gehe = (k) => { raus.push(k); (k.children || []).forEach(gehe); };
+      this.baum.forEach(gehe);
+      return raus;
+    },
+
+    /* Ein Kanal darf nicht unter einen eigenen Nachfahren wandern -- murmur
+       lehnt das ab, aber eine Auswahl, die zwangslaeufig scheitert, gehoert
+       gar nicht erst angeboten. */
+    istNachfahre(id) {
+      if (!this.gewaehlt) return false;
+      if (id === this.gewaehlt.id) return true;
+      const suche = (k) => {
+        if (k.id === id) return true;
+        return (k.children || []).some(suche);
+      };
+      return (this.gewaehlt.children || []).some(suche);
+    },
+
+    waehle(id) {
+      this.gewaehlt = this.flach.find(k => k.id === id) || null;
+      if (this.gewaehlt) {
+        this.form = {
+          name: this.gewaehlt.name,
+          description: this.gewaehlt.description,
+          position: this.gewaehlt.position,
+          parent: String(this.gewaehlt.parent),
+          links: (this.gewaehlt.links || []).map(String)
+        };
+      }
+    },
+
+    zeichne(knoten) {
+      const e = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      let html = '<div class="baum-knoten">';
+      html += '<div class="baum-zeile kanal" style="cursor:pointer" ' +
+              'ondragover="event.preventDefault()" ' +
+              'data-kanal="' + knoten.id + '">';
+      html += '<span onclick="window.__kanalWahl(' + knoten.id + ')">' +
+              e(knoten.name || "(Wurzel)") + "</span>";
+      html += ' <span class="anzahl">' + knoten.total_users + "</span>";
+      (knoten.link_names || []).forEach(n => {
+        html += ' <span class="verlinkt">↔ ' + e(n) + "</span>";
+      });
+      html += "</div>";
+      (knoten.users || []).forEach(u => {
+        html += '<div class="baum-zeile baum-nutzer" draggable="true" ' +
+                'data-session="' + u.session + '">';
+        html += '<span class="status status-' + e(u.alert) + '"></span>';
+        html += '<span class="name">' + e(u.name) + "</span>";
+        html += "</div>";
+      });
+      if ((knoten.children || []).length) {
+        html += '<div class="baum-kinder">';
+        knoten.children.forEach(k => { html += this.zeichne(k); });
+        html += "</div>";
+      }
+      return html + "</div>";
+    },
+
+    anlegen() {
+      this.I.post("/api/channels", {
+        name: this.neuName.trim(), parent: Number(this.neuEltern)
+      }).then(() => { this.neuName = ""; this.lade(); })
+        .catch(err => alert("Anlegen fehlgeschlagen: " + err.message));
+    },
+
+    speichern() {
+      this.I.patch("/api/channels/" + this.gewaehlt.id, {
+        name: this.form.name,
+        description: this.form.description,
+        position: Number(this.form.position),
+        parent: Number(this.form.parent),
+        links: (this.form.links || []).map(Number)
+      }).then(() => this.lade())
+        .catch(err => alert("Speichern fehlgeschlagen: " + err.message));
+    },
+
+    loeschen() {
+      if (!confirm("Kanal „" + this.gewaehlt.name + "“ samt Unterkanaelen loeschen?")) return;
+      this.I.entferne("/api/channels/" + this.gewaehlt.id)
+        .then(() => { this.gewaehlt = null; this.lade(); })
+        .catch(err => alert("Loeschen fehlgeschlagen: " + err.message));
+    },
+
+    nachricht() {
+      const text = prompt("Nachricht an „" + this.gewaehlt.name + "“:", "Start in 2 Minuten");
+      if (!text) return;
+      const baum = confirm("Auch an alle Unterkanaele senden?");
+      this.I.post("/api/channels/" + this.gewaehlt.id + "/message", {text: text, tree: baum})
+        .catch(err => alert("Senden fehlgeschlagen: " + err.message));
+    }
+  };
+}
+
+/* Auswahl und Ziehen laufen ueber das Dokument, weil der Baum als HTML-String
+   erzeugt wird und Alpine-Direktiven darin nicht ausgewertet wuerden. */
+document.addEventListener("alpine:initialized", () => {
+  const wurzel = document.querySelector("[x-data]")._x_dataStack[0];
+  window.__kanalWahl = (id) => wurzel.waehle(id);
+
+  document.addEventListener("dragstart", (e) => {
+    const zeile = e.target.closest("[data-session]");
+    if (zeile) { e.dataTransfer.setData("text/plain", zeile.dataset.session); }
+  });
+
+  document.addEventListener("drop", (e) => {
+    const ziel = e.target.closest("[data-kanal]");
+    if (!ziel) return;
+    e.preventDefault();
+    const session = e.dataTransfer.getData("text/plain");
+    if (!session) return;
+    window.Intercom.post("/api/users/" + session + "/action",
+                         {action: "move", channel: Number(ziel.dataset.kanal)})
+      .then(() => wurzel.lade())
+      .catch(err => alert("Verschieben fehlgeschlagen: " + err.message));
+  });
+});
+</script>
+{% endraw %}
+{% endblock %}
