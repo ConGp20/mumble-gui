@@ -196,6 +196,9 @@ class IntercomConfig:
     channels: list[ChannelSpec] = field(default_factory=list)
     policies: PolicySpec = field(default_factory=PolicySpec)
     users: dict[str, list[str]] = field(default_factory=dict)
+    #: Optionaler Soll-Kanal je Nutzer (Pfad). Nur fuer die Alarmleiste im
+    #: Cockpit -- der Provisioner schiebt niemanden von sich aus herum.
+    user_channels: dict[str, str] = field(default_factory=dict)
     networks: list[NetworkSpec] = field(default_factory=list)
     devices: dict[str, dict[str, str]] = field(default_factory=dict)
     #: Befunde aus der Validierung, auch die nicht-toedlichen.
@@ -486,6 +489,8 @@ def parse_config(data: Any, source: str = "<speicher>") -> IntercomConfig:
     for user_name, raw_user in raw_users.items():
         if isinstance(raw_user, dict):
             config.users[str(user_name)] = _as_list(raw_user.get("groups"))
+            if raw_user.get("channel"):
+                config.user_channels[str(user_name)] = str(raw_user["channel"]).strip("/")
         elif isinstance(raw_user, list):
             config.users[str(user_name)] = [str(g) for g in raw_user]
         else:
@@ -653,6 +658,18 @@ def _validate_references(config: IntercomConfig, issues: list[Issue]) -> None:
                         + ".",
                     )
                 )
+
+    for user_name, wanted_channel in config.user_channels.items():
+        if wanted_channel not in all_paths:
+            issues.append(
+                Issue(
+                    "error",
+                    f"users.{user_name}.channel",
+                    f"Kanal {wanted_channel!r} gibt es nicht"
+                    + _suggest(wanted_channel, all_paths)
+                    + ".",
+                )
+            )
 
     if config.server.defaultchannel:
         target = config.server.defaultchannel.strip("/")

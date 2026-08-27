@@ -215,22 +215,25 @@ policies:
 #  Der Name muss auf dem Server REGISTRIERT sein (Zertifikat oder Passwort),
 #  sonst landet er als Warnung im Provisioning-Report.
 # -----------------------------------------------------------------------------
+#  `channel:` ist optional und rein fuer die Alarmleiste: steht ein Client
+#  nicht in seinem Soll-Kanal, faellt das im Cockpit auf. Verschoben wird
+#  niemand automatisch -- waehrend eines Wettkampfs waere das gefaehrlich.
 users:
-  regie-1:      { groups: [regie] }
-  regie-2:      { groups: [regie] }
-  kam-1:        { groups: [kamera] }
-  kam-2:        { groups: [kamera] }
-  kam-3:        { groups: [kamera] }
-  kam-4:        { groups: [kamera] }
-  lynx:         { groups: [zeitnahme] }
-  wind:         { groups: [zeitnahme] }
-  sprecher-1:   { groups: [sprecher] }
-  technik-1:    { groups: [technik] }
+  regie-1:      { groups: [regie],        channel: "Intercom/Regie" }
+  regie-2:      { groups: [regie],        channel: "Intercom/Regie" }
+  kam-1:        { groups: [kamera],       channel: "Intercom/Kameras/Kamera 1 – Ziel" }
+  kam-2:        { groups: [kamera],       channel: "Intercom/Kameras/Kamera 2 – Kurve" }
+  kam-3:        { groups: [kamera],       channel: "Intercom/Kameras/Kamera 3 – Technische Diszipl." }
+  kam-4:        { groups: [kamera],       channel: "Intercom/Kameras/Kamera 4 – Totale" }
+  lynx:         { groups: [zeitnahme],    channel: "Intercom/Zeitnahme" }
+  wind:         { groups: [zeitnahme],    channel: "Intercom/Zeitnahme" }
+  sprecher-1:   { groups: [sprecher],     channel: "Intercom/Stadionsprecher" }
+  technik-1:    { groups: [technik],      channel: "Intercom/Technik" }
   technik-2:    { groups: [technik] }
-  kg-1:         { groups: [kampfgericht] }
-  kg-2:         { groups: [kampfgericht] }
+  kg-1:         { groups: [kampfgericht], channel: "Intercom/Kampfgericht" }
+  kg-2:         { groups: [kampfgericht], channel: "Intercom/Kampfgericht" }
   produktion:   { groups: [leitung, regie] }
-  monitor:      { groups: [regie] }   # Monitor-Bot, siehe MONITOR_BOT_NAME
+  monitor:      { groups: [regie],        channel: "Intercom/Regie" }   # Monitor-Bot
 
 # -----------------------------------------------------------------------------
 #  Netzsegmente
