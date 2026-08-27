@@ -456,12 +456,21 @@ Gruende:
 1. `MONITOR_BOT_ENABLED=false`.
 2. Der Bot ist nicht verbunden — im Cockpit oben rechts sichtbar, Fehlertext
    in der Kachel „Monitor-Bot".
-3. **Der Bot hat zu wenig Rechte.** murmur fuellt die Paketzaehler in
-   `UserStats` nur, wenn der Fragende im selben Kanal steht **oder** `Ban` am
-   Wurzelkanal hat (`Server::msgUserStats`). Der Bot gehoert deshalb in eine
-   Gruppe mit entsprechender Berechtigung — in der Beispielkonfiguration
-   `regie`, und `policies.ban` muss diese Gruppe enthalten, wenn der Verlust
-   **aller** Clients gemessen werden soll.
+3. **Der Bot hat zu wenig Rechte.** `Server::msgUserStats` fuellt die
+   Paketzaehler nur, wenn der Fragende im selben Kanal steht **oder** `Ban` am
+   Wurzelkanal hat:
+
+   ```cpp
+   bool extend = (uSource == pDstServerUser)
+                 || hasPermission(uSource, qhChannels.value(0), ChanACL::Ban);
+   bool local  = extend || (pDstServerUser->cChannel == uSource->cChannel);
+   ```
+
+   Deshalb hat die Beispielkonfiguration eine eigene Gruppe `monitor` mit genau
+   einem Mitglied, und `policies.ban` enthaelt sie. Steht der Bot stattdessen
+   nur in `regie`, misst er ausschliesslich die Clients in seinem eigenen Kanal
+   — die Spalte bleibt fuer alle anderen leer, ohne dass irgendwo ein Fehler
+   auftaucht. Siehe DECISIONS.md, D-015.
 4. Ein Client laeuft nur ueber TCP: dessen UDP-Zaehler bleiben auf 0. Das
    Cockpit zeigt dann `–` statt `0,0 %` — „unbekannt" ist die richtige Aussage,
    und die Alarmschwelle darf darauf nicht anschlagen.
@@ -495,7 +504,7 @@ koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
 cd admin
 python3.11 -m pip install -e ".[dev]"
 ./scripts/build_slice.sh v1.5.735 slice     # Slice holen und uebersetzen
-python -m pytest -q                          # 157 Tests
+python -m pytest -q                          # 159 Tests
 python -m ruff check .
 python -m mypy intercom
 ```
