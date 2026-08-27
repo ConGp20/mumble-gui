@@ -14,6 +14,7 @@ import time
 import pytest
 
 from intercom.store import SCHEMA_VERSION, Sample, Store, StoreClosed
+from intercom.store.db import _MIGRATIONS
 
 
 @pytest.fixture()
@@ -53,8 +54,10 @@ def test_migrate_ist_idempotent(tmp_path):
         assert store.schema_version() == SCHEMA_VERSION
         # Der zweite Lauf darf weder den Schritt noch die Daten wiederholen.
         with sqlite3.connect(pfad) as roh:
-            versionen = roh.execute("SELECT version FROM schema_version").fetchall()
-            assert versionen == [(1,)]
+            versionen = roh.execute(
+                "SELECT version FROM schema_version ORDER BY version"
+            ).fetchall()
+            assert versionen == [(v,) for v in range(1, SCHEMA_VERSION + 1)]
             assert roh.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 1
 
 
@@ -435,3 +438,84 @@ def test_close_raeumt_auch_fremde_threads_ab(tmp_path):
     assert len(store._connections) == 2
     store.close()
     assert store._connections == []
+
+
+def test_nicht_gemessener_verlust_bleibt_leer(store):
+    """``None`` heisst "nicht gemessen", ``0.0`` heisst "kein Verlust".
+
+    Ohne Monitor-Bot -- oder ohne dessen Ban-Recht am Wurzelkanal -- gibt es
+    ueberhaupt keine Verlustzahlen. Als 0 gespeichert zeichnete die Sparkline
+    daraus eine makellose Nulllinie, also eine Entwarnung, die niemand gemessen
+    hat.
+    """
+    jetzt = int(time.time())
+    store.record_samples([_sample(jetzt, loss_pct=None)])
+
+    verlauf = store.history("kam-1")
+    assert len(verlauf) == 1
+    assert verlauf[0].loss_pct is None
+
+
+def test_sparkline_zeichnet_die_luecke_nicht_zu(store):
+    """Ein Fach ohne Messung bleibt ``None``, auch wenn Ping-Werte da sind."""
+    jetzt = int(time.time())
+    store.record_samples(
+        [
+            _sample(jetzt - 90, loss_pct=None),
+            _sample(jetzt - 60, loss_pct=None),
+            _sample(jetzt - 30, loss_pct=3.5),
+        ]
+    )
+
+    reihe = store.sparkline("kam-1", "loss_pct", points=4, minutes=2)
+    gemessen = [w for w in reihe if w is not None]
+    assert gemessen == [3.5], reihe
+    # Der Ping wurde durchgehend gemessen -- die Luecke betrifft nur den Verlust.
+    assert len([w for w in store.sparkline("kam-1", "ping_ms", points=4, minutes=2)
+                if w is not None]) >= 2
+
+
+def test_alte_datenbank_wird_auf_nullbaren_verlust_gehoben(tmp_path):
+    """Migration 2 baut ``samples`` um -- vorhandene Zeilen muessen bleiben."""
+    pfad = tmp_path / "history.sqlite"
+    jetzt = int(time.time())
+
+    # Stand 1 herstellen: nur den ersten Schritt ausfuehren.
+    with sqlite3.connect(pfad) as roh:
+        roh.execute(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+        )
+        for anweisung in _MIGRATIONS[0][1]:
+            roh.execute(anweisung)
+        roh.execute("INSERT INTO schema_version VALUES (1, ?)", (jetzt,))
+        roh.execute(
+            "INSERT INTO samples (ts, session, name, userid, channel_id, address, "
+            "ping_ms, loss_pct, bandwidth_bps, tcp_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (jetzt, 11, "kam-1", 5, 3, "10.20.30.40", 12.5, 2.5, 48000, 0),
+        )
+
+    with Store(pfad) as store:
+        assert store.schema_version() == 1
+        assert store.migrate() == SCHEMA_VERSION
+
+        # Die alte Zeile ist noch da ...
+        verlauf = store.history("kam-1")
+        assert [(s.name, s.loss_pct) for s in verlauf] == [("kam-1", 2.5)]
+
+        # ... und neue Zeilen duerfen jetzt None sein.
+        store.record_samples([_sample(jetzt + 1, loss_pct=None)])
+        assert store.history("kam-1")[-1].loss_pct is None
+
+    # Die Indizes haengen an der neuen Tabelle, nicht an einer Zwischentabelle.
+    with sqlite3.connect(pfad) as roh:
+        indizes = {
+            name
+            for (name,) in roh.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'samples'"
+            )
+        }
+        assert {"samples_ts", "samples_name_ts"} <= indizes
+        tabellen = {
+            name for (name,) in roh.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        assert "samples_alt" not in tabellen

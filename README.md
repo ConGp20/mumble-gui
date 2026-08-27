@@ -515,6 +515,14 @@ Gruende:
    Cockpit zeigt dann `–` statt `0,0 %` — „unbekannt" ist die richtige Aussage,
    und die Alarmschwelle darf darauf nicht anschlagen.
 
+Dasselbe gilt fuer den Verlauf: die Sparkline „Verlust" im Detailpanel zeigt in
+solchen Zeitraeumen eine **Unterbrechung**, keine Nulllinie. In der Datenbank
+steht dort `NULL`. Der Unterschied ist der ganze Punkt — „kein Verlust" ist eine
+Entwarnung, „nicht gemessen" ist keine. Eine Messung gilt nach 60 s als veraltet
+(`LiveState.STATS_MAX_AGE_S`); danach faellt die Anzeige zurueck auf `–`, und
+weder Alarmbalken noch `/metrics` melden noch etwas. Auch das ist Absicht: ein
+Wert von vor zehn Minuten sieht aus wie eine Messung, ist aber eine Erinnerung.
+
 ### SSE bleibt stehen / Cockpit aktualisiert nicht
 
 Der Synology-Reverse-Proxy puffert Datenstroeme. Die Anwendung setzt

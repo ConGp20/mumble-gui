@@ -105,7 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ #
 
     @app.get("/healthz")
-    def healthz(request: Request) -> dict[str, Any]:
+    async def healthz(request: Request) -> dict[str, Any]:
         context: AppContext = request.app.state.ctx
         report = context.health()
         # Der Healthcheck soll gruen sein, sobald der Prozess antwortet -- ein
@@ -114,7 +114,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return report
 
     @app.get("/metrics", response_class=PlainTextResponse)
-    def metrics(request: Request) -> PlainTextResponse:
+    async def metrics(request: Request) -> PlainTextResponse:
+        """Bewusst ``async``, nicht ``def``.
+
+        FastAPI schiebt eine *synchrone* Pfadfunktion in einen Threadpool.
+        Dort laeuft sie neben dem asyncio-Loop -- und ``LiveState`` gehoert dem
+        Loop: die Rueckrufe aus Ice heben ihre Ereignisse mit
+        ``call_soon_threadsafe`` genau dorthin. Wer aus einem fremden Thread
+        ueber ``live.users`` laeuft, waehrend der Loop einen Client eintraegt
+        oder entfernt, faengt sich ein "dictionary changed size during
+        iteration" -- also einen 500er, und zwar bevorzugt dann, wenn viel
+        los ist. Als Koroutine laeuft die Funktion im Loop, und dazwischen
+        kommt nichts.
+
+        Voraussetzung dafuer ist, dass hier nichts blockiert: darum die
+        Laufzeit aus dem Polling statt frisch per Ice.
+        """
         context: AppContext = request.app.state.ctx
         return PlainTextResponse(
             metrics_text(context), media_type="text/plain; version=0.0.4; charset=utf-8"

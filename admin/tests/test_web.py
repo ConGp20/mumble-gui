@@ -1067,3 +1067,121 @@ def test_vox_verdacht_ueberlebt_solange_der_client_verbunden_ist(fake_murmur):
 
     live.set_users({7: bleibt})
     assert set(live._vox) == {7}
+
+
+def test_lesende_endpunkte_laufen_im_loop(app_client):
+    """Wer ``LiveState`` liest, muss eine Koroutine sein.
+
+    FastAPI schiebt eine synchrone Pfadfunktion in einen Threadpool. Dort
+    laeuft sie neben dem asyncio-Loop -- und der Loop traegt gerade Clients
+    in ``live.users`` ein oder aus. Eine Schleife darueber aus einem fremden
+    Thread endet in "dictionary changed size during iteration", also einem
+    500er, und zwar bevorzugt bei Betrieb.
+    """
+    import inspect
+
+    from intercom.web import api
+
+    for funktion in (api.state, api.provision_reload):
+        assert inspect.iscoroutinefunction(funktion), funktion.__name__
+
+    client, _fake = app_client
+    for pfad in ("/metrics", "/healthz"):
+        route = next(r for r in client.app.routes if getattr(r, "path", "") == pfad)
+        assert inspect.iscoroutinefunction(route.endpoint), pfad
+
+
+def test_metriken_holen_die_laufzeit_nicht_frisch(app_client, monkeypatch):
+    """``/metrics`` darf keinen Ice-Aufruf machen.
+
+    Der haengt am selben Threadpool wie alles andere -- ausgerechnet der
+    Endpunkt, der eine Ueberlastung melden soll, waere dann der erste, der
+    daran haengenbleibt.
+    """
+    from intercom.web.api import metrics_text
+
+    client, _fake = app_client
+    kontext = client.app.state.ctx
+
+    def verboten() -> int:
+        raise AssertionError("/metrics hat einen Ice-Aufruf gemacht")
+
+    monkeypatch.setattr(kontext.ice.sync, "get_uptime", verboten)
+    kontext._server_uptime = 4711
+
+    text = metrics_text(kontext)
+    assert "intercom_server_uptime_seconds 4711" in text
+
+
+def test_metriken_melden_keinen_alten_verlust(app_client):
+    """Ein Wert von vor zehn Minuten waere in Prometheus eine gerade Linie."""
+    from intercom.web.api import metrics_text
+
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("kam-1", userid=1)
+    _warte_auf_client(client, "kam-1")
+
+    live = client.app.state.ctx.live
+    live.note_stats(session, 40.0, 5.0)
+    assert "intercom_client_loss_percent" in metrics_text(client.app.state.ctx)
+    assert "40.0" in metrics_text(client.app.state.ctx)
+
+    live.stats_seen[session] -= live.STATS_MAX_AGE_S + 1
+    text = metrics_text(client.app.state.ctx)
+    assert not [z for z in text.splitlines() if z.startswith("intercom_client_loss_percent{")]
+
+
+def test_herunterfahren_blockiert_den_loop_nicht(app_client, monkeypatch):
+    """``monitor.stop()`` und ``ice.shutdown()`` warten auf Threads.
+
+    Im Loop ausgefuehrt steht dabei alles -- auch das, was uvicorn noch
+    erledigen will. Docker schickt nach zehn Sekunden SIGKILL.
+    """
+    import asyncio
+    import time as zeit
+
+    client, _fake = app_client
+    kontext = client.app.state.ctx
+
+    monkeypatch.setattr(kontext.ice, "shutdown", lambda: zeit.sleep(1.0))
+
+    async def messen() -> float:
+        laeuft = True
+        takte = 0
+
+        async def uhr() -> None:
+            nonlocal takte
+            while laeuft:
+                takte += 1
+                await asyncio.sleep(0.02)
+
+        aufgabe = asyncio.create_task(uhr())
+        await asyncio.sleep(0.05)
+        await kontext._abbau_der_threads()
+        laeuft = False
+        await aufgabe
+        return takte
+
+    takte = asyncio.run(messen())
+    # Ohne to_thread stuende die Uhr eine Sekunde lang -- sie kaeme auf die
+    # zwei, drei Takte vor dem Abbau.
+    assert takte > 20, f"der Loop stand still ({takte} Takte)"
+
+
+def test_herunterfahren_gibt_nach_der_frist_auf(app_client, monkeypatch):
+    """Ein haengender Abbau darf das Herunterfahren nicht aufhalten."""
+    import asyncio
+    import time as zeit
+
+    from intercom.web import context as context_modul
+
+    client, _fake = app_client
+    kontext = client.app.state.ctx
+
+    monkeypatch.setattr(context_modul, "SHUTDOWN_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(kontext.ice, "shutdown", lambda: zeit.sleep(5.0))
+
+    begonnen = zeit.monotonic()
+    asyncio.run(kontext._abbau_der_threads())
+    assert zeit.monotonic() - begonnen < 2.0

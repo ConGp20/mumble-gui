@@ -288,8 +288,8 @@ class LiveState:
         self.jitter.clear()
         self.stats_seen.clear()
 
-    def _frischer_verlust(self, session: int) -> float | None:
-        """Verlust, sofern die Messung noch aktuell genug ist.
+    def loss_pct(self, session: int) -> float | None:
+        """Verlust, sofern die Messung noch aktuell genug ist -- sonst ``None``.
 
         Ein alter Wert ist schlimmer als gar keiner: er sieht aus wie eine
         Messung, ist aber eine Erinnerung. Nach :attr:`STATS_MAX_AGE_S` gilt er
@@ -342,7 +342,7 @@ class LiveState:
             row["channel_name"] = self.channel_name(user.channel)
             row["channel_path"] = self.path_of.get(user.channel, "")
             row["segment"] = self.networks.segment_for(user.address)
-            row["loss_pct"] = self._frischer_verlust(session)
+            row["loss_pct"] = self.loss_pct(session)
             row["jitter_ms"] = (
                 self.jitter.get(session) if row["loss_pct"] is not None else None
             )
@@ -356,7 +356,7 @@ class LiveState:
             row["channel_ok"] = expected is None or expected == row["channel_path"]
             row["vox_suspect"] = session in vox
             row["deviations"] = deviation_map.get(session, [])
-            row["alert"] = self._user_alert_level(user, self._frischer_verlust(session))
+            row["alert"] = self._user_alert_level(user, self.loss_pct(session))
             rows.append(row)
         rows.sort(key=lambda r: str(r["name"]).lower())
         return rows
@@ -381,7 +381,7 @@ class LiveState:
         for session, user in self.users.items():
             segment = self.networks.segment_for(user.address)
             buckets.setdefault(segment, []).append(
-                (user.ping, self._frischer_verlust(session))
+                (user.ping, self.loss_pct(session))
             )
 
         rows: list[dict[str, Any]] = []
@@ -461,7 +461,7 @@ class LiveState:
 
         for session, user in self.users.items():
             ping = user.ping
-            loss = self._frischer_verlust(session)
+            loss = self.loss_pct(session)
 
             if ping >= settings.alert_ping_ms:
                 found.append(

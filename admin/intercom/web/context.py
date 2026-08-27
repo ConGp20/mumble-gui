@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -35,6 +36,14 @@ from .auth import SessionManager
 from .state import LiveState
 
 log = logging.getLogger(__name__)
+
+#: Obergrenze fuer den blockierenden Teil des Herunterfahrens.
+#:
+#: Docker wartet nach ``SIGTERM`` voreingestellt zehn Sekunden auf das Ende des
+#: Prozesses und schickt dann ``SIGKILL``. Was danach noch offen ist, wird nie
+#: mehr erledigt -- deshalb liegt die Grenze darunter, damit hinterher noch
+#: Zeit bleibt, die SQLite-Datei sauber zu schliessen.
+SHUTDOWN_TIMEOUT_S = 8.0
 
 __all__ = ["AppContext"]
 
@@ -115,13 +124,51 @@ class AppContext:
         self._tasks.clear()
         self._nebenaufgaben.clear()
 
-        if self.monitor is not None:
-            with contextlib.suppress(Exception):
-                self.monitor.stop()
-        self.ice.shutdown()
+        await self._abbau_der_threads()
+
         if self.store is not None:
             with contextlib.suppress(Exception):
                 self.store.close()
+
+    async def _abbau_der_threads(self) -> None:
+        """Beendet Monitor-Bot und Ice-Verbindung, ohne den Loop einzufrieren.
+
+        Beides blockiert: ``MonitorBot.stop`` wartet auf zwei Thread-Joins (bis
+        zu 7 s), ``IceClient.close`` auf ``removeCallback`` und
+        ``communicator.destroy()``. Direkt im Loop ausgefuehrt steht damit
+        alles still, auch das, was uvicorn beim Herunterfahren noch erledigen
+        will -- offene SSE-Verbindungen schliessen zum Beispiel. Im
+        schlechtesten Fall summiert es sich auf mehr als die zehn Sekunden, die
+        Docker vor dem SIGKILL wartet; dann kommt der Store nie zum Schliessen.
+        """
+
+        fertig = threading.Event()
+
+        def abbau() -> None:
+            try:
+                if self.monitor is not None:
+                    with contextlib.suppress(Exception):
+                        self.monitor.stop()
+                with contextlib.suppress(Exception):
+                    self.ice.shutdown()
+            finally:
+                fertig.set()
+
+        # Ein eigener Daemon-Thread, nicht ``asyncio.to_thread``: der laeuft im
+        # Standard-Executor, und den wartet der Loop beim Schliessen ab
+        # (``loop.shutdown_default_executor``). Die Frist unten waere damit nur
+        # scheinbar eine -- gewartet wuerde trotzdem, nur eine Ebene tiefer.
+        threading.Thread(target=abbau, name="abbau", daemon=True).start()
+
+        frist = time.monotonic() + SHUTDOWN_TIMEOUT_S
+        while not fertig.is_set() and time.monotonic() < frist:
+            await asyncio.sleep(0.05)
+        if not fertig.is_set():
+            log.warning(
+                "Monitor-Bot und Ice-Verbindung waren nach %.0f s nicht abgebaut. "
+                "Der Prozess faehrt trotzdem herunter.",
+                SHUTDOWN_TIMEOUT_S,
+            )
 
     # ------------------------------------------------------------------ #
     #  Aufbau der Einzelteile
@@ -413,7 +460,11 @@ class AppContext:
                 channel_id=user.channel,
                 address=user.address,
                 ping_ms=user.ping,
-                loss_pct=self.live.loss.get(user.session, 0.0),
+                # loss_pct(), nicht live.loss: ohne frische Messung wird
+                # None gespeichert. Eine 0 waere eine Entwarnung, die niemand
+                # gemessen hat -- und in der Sparkline eine makellose Linie
+                # ueber genau die Zeit, in der nichts gemessen wurde.
+                loss_pct=self.live.loss_pct(user.session),
                 bandwidth_bps=user.bytes_per_sec * 8,
                 tcp_only=user.tcp_only,
             )

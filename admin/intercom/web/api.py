@@ -51,7 +51,8 @@ def me(request: Request, account: Account = Depends(require_user)) -> dict[str, 
 
 
 @router.get("/state")
-def state(request: Request, account: Account = Depends(require_user)) -> dict[str, Any]:
+async def state(request: Request, account: Account = Depends(require_user)) -> dict[str, Any]:
+    """Bewusst ``async``: siehe :func:`metrics` -- LiveState gehoert dem Loop."""
     context = ctx(request)
     snapshot = context.live.snapshot(context.enforcer.deviations)
     snapshot["health"] = context.health()
@@ -1202,7 +1203,7 @@ async def provision_export(
 
 
 @router.post("/provision/reload")
-def provision_reload(
+async def provision_reload(
     request: Request, account: Account = Depends(require_admin)
 ) -> dict[str, Any]:
     context = ctx(request)
@@ -1325,13 +1326,12 @@ def metrics_text(context: Any) -> str:
     lines.append(f"intercom_up {1 if context.connected else 0}")
 
     metric("intercom_server_uptime_seconds", "gauge", "Laufzeit des virtuellen Servers.")
-    uptime = 0
-    try:
-        if context.connected:
-            uptime = context.ice.sync.get_uptime()
-    except Exception:  # noqa: BLE001
-        uptime = 0
-    lines.append(f"intercom_server_uptime_seconds {uptime}")
+    # Aus dem Polling, nicht frisch geholt: ein Ice-Aufruf an dieser Stelle
+    # haengt am selben Threadpool wie alles andere. Genau das machte /metrics
+    # bei ausgelastetem Pool zu einem Endpunkt mit halber Minute Antwortzeit --
+    # ausgerechnet der, der die Ueberlastung melden soll. health() liest die
+    # Laufzeit aus demselben Grund schon immer nur aus.
+    lines.append(f"intercom_server_uptime_seconds {context._server_uptime}")
 
     metric("intercom_admin_uptime_seconds", "gauge", "Laufzeit des Admin-Prozesses.")
     lines.append(f"intercom_admin_uptime_seconds {int(time.time() - context.started_at)}")
@@ -1360,7 +1360,9 @@ def metrics_text(context: Any) -> str:
             f'segment="{_escape(live.networks.segment_for(user.address))}"'
         )
         lines.append(f"intercom_client_ping_ms{{{labels}}} {user.ping}")
-        loss = live.loss.get(session)
+        # loss_pct(), nicht live.loss: ein Wert von vor zehn Minuten waere in
+        # Prometheus eine gerade Linie, die aussieht wie eine Messung.
+        loss = live.loss_pct(session)
         if loss is not None:
             lines.append(f"intercom_client_loss_percent{{{labels}}} {loss}")
         lines.append(f"intercom_client_bandwidth_bps{{{labels}}} {user.bytes_per_sec * 8}")

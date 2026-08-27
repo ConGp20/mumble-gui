@@ -71,7 +71,7 @@ __all__ = [
 ]
 
 #: Stand, den :meth:`Store.migrate` herstellt.
-SCHEMA_VERSION: Final[int] = 1
+SCHEMA_VERSION: Final[int] = 2
 
 #: Wie lange auf einen fremden Schreiber gewartet wird, bevor SQLite aufgibt.
 #: Der Wert deckt einen laufenden ``prune`` auf einer grossen Datei ab.
@@ -137,6 +137,54 @@ _MIGRATIONS: Final[tuple[tuple[int, tuple[str, ...]], ...]] = (
             """,
         ),
     ),
+    (
+        2,
+        (
+            # loss_pct wird nullbar.
+            #
+            # "nicht gemessen" und "kein Verlust" sind zwei verschiedene
+            # Aussagen, und die zweite ist eine Entwarnung. Ohne Monitor-Bot --
+            # oder ohne dessen Ban-Recht am Wurzelkanal -- gibt es ueberhaupt
+            # keine Verlustzahlen; als 0 gespeichert zeichnete die Sparkline
+            # daraus eine makellose Nulllinie. sparkline() laesst Luecken
+            # bewusst als None stehen und app.js zeichnet sie als
+            # Unterbrechung; NOT NULL nahm beiden die Grundlage.
+            #
+            # SQLite kann NOT NULL nicht per ALTER entfernen -- deshalb der
+            # Umbau ueber eine Zwischentabelle. Reihenfolge: erst die alte
+            # Tabelle samt ihrer Indizes wegwerfen, dann die Indizes neu
+            # anlegen. Ein Index behaelt beim RENAME seinen Namen und haengt
+            # weiter an der alten Tabelle; CREATE INDEX IF NOT EXISTS waere
+            # sonst still ein Nichtstun.
+            "ALTER TABLE samples RENAME TO samples_alt",
+            """
+            CREATE TABLE samples (
+                ts            INTEGER NOT NULL,
+                session       INTEGER NOT NULL,
+                name          TEXT    NOT NULL,
+                userid        INTEGER NOT NULL,
+                channel_id    INTEGER NOT NULL,
+                address       TEXT    NOT NULL DEFAULT '',
+                ping_ms       REAL    NOT NULL DEFAULT 0,
+                loss_pct      REAL,
+                bandwidth_bps INTEGER NOT NULL DEFAULT 0,
+                tcp_only      INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            INSERT INTO samples (
+                ts, session, name, userid, channel_id, address,
+                ping_ms, loss_pct, bandwidth_bps, tcp_only
+            )
+            SELECT ts, session, name, userid, channel_id, address,
+                   ping_ms, loss_pct, bandwidth_bps, tcp_only
+            FROM samples_alt
+            """,
+            "DROP TABLE samples_alt",
+            "CREATE INDEX IF NOT EXISTS samples_ts ON samples (ts)",
+            "CREATE INDEX IF NOT EXISTS samples_name_ts ON samples (name, ts)",
+        ),
+    ),
 )
 
 _INSERT_SAMPLE: Final[str] = """
@@ -200,7 +248,9 @@ class Sample:
     channel_id: int
     address: str = ""
     ping_ms: float = 0.0
-    loss_pct: float = 0.0
+    #: ``None`` heisst "nicht gemessen" -- nicht "kein Verlust". Ohne
+    #: Monitor-Bot gibt es diese Zahl gar nicht.
+    loss_pct: float | None = None
     bandwidth_bps: int = 0
     tcp_only: bool = False
 
@@ -515,7 +565,7 @@ class Store:
                 int(row.channel_id),
                 row.address,
                 float(row.ping_ms),
-                float(row.loss_pct),
+                None if row.loss_pct is None else float(row.loss_pct),
                 int(row.bandwidth_bps),
                 int(row.tcp_only),
             )
@@ -593,7 +643,13 @@ class Store:
         ).fetchall()
         series: list[float | None] = [None] * points
         for row in rows:
-            series[row["fach"]] = float(row["wert"])
+            wert = row["wert"]
+            # AVG() ueber lauter NULL ist NULL: in dem Fach gibt es Messungen,
+            # aber keine dieser Spalte -- typisch fuer loss_pct ohne
+            # Monitor-Bot. Das Fach bleibt eine Luecke.
+            if wert is None:
+                continue
+            series[row["fach"]] = float(wert)
         return series
 
     def prune(self, retention_hours: int) -> int:
