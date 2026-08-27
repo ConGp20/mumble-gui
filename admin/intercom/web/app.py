@@ -11,6 +11,7 @@ einfaches HTTP auf ``LISTEN_PORT``.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -260,9 +261,15 @@ def main() -> int:
         port=settings.listen_port,
         log_level=settings.log_level.lower(),
         access_log=settings.log_level == "DEBUG",
-        # Der Synology-Reverse-Proxy setzt X-Forwarded-For.
+        # Der Synology-Reverse-Proxy setzt X-Forwarded-For. Vertraut wird der
+        # Angabe aber nur, wenn sie vom Loopback kommt -- der Proxy laeuft auf
+        # demselben NAS. Mit "*" wuerde uvicorn den Kopf JEDES Absenders
+        # uebernehmen, und ein Angreifer koennte sich mit jeder Anfrage eine
+        # neue Adresse geben und damit die Anmeldebremse aushebeln.
+        # Steht der Proxy auf einem anderen Host, gehoert dessen Adresse hier
+        # hinein (FORWARDED_ALLOW_IPS).
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1"),
     )
     return 0
 

@@ -913,3 +913,114 @@ def test_bot_verliert_verbindung_und_messwerte_verschwinden(app_client):
     kontext._handle_monitor_state("wartet")
     assert not kontext.live.loss, "Messwerte haetten verworfen werden muessen"
     assert not [a for a in kontext.live.alarms() if a.kind == "verlust"]
+
+
+# --------------------------------------------------------------------------- #
+#  Anmeldung: Haertung
+# --------------------------------------------------------------------------- #
+
+
+def test_umlaute_in_der_anmeldung_ergeben_401_statt_500(app_client):
+    """``hmac.compare_digest`` wirft bei Nicht-ASCII einen TypeError.
+
+    Ungefangen wurde daraus eine 500 -- und weil nur *bestehende* Konten
+    ueberhaupt bis zum Passwortvergleich kamen, verriet der Statuscode, welcher
+    Benutzername existiert. Ein Tippfehler mit Umlaut genuegte.
+    """
+    for benutzer, passwort in (
+        ("admin", "Käse123"),      # richtiger Name, Umlaut im Passwort
+        ("ädmin", "geheim"),       # Umlaut im Namen
+        ("viewer", "Käse"),        # zweites Konto
+        ("nixda", "Käse"),         # unbekannter Name
+        ("ページ", "パスワード"),      # gar kein Latin-1
+    ):
+        antwort = client_login(app_client, benutzer, passwort)
+        assert antwort.status_code == 401, (
+            f"{benutzer!r}/{passwort!r} ergab {antwort.status_code} statt 401"
+        )
+
+
+def client_login(app_client, benutzer: str, passwort: str):
+    client, _ = app_client
+    return client.post(
+        "/login",
+        data={"benutzer": benutzer, "passwort": passwort},
+        follow_redirects=False,
+    )
+
+
+def test_umlaute_im_passwort_funktionieren_trotzdem(fake_murmur, tmp_path):
+    """Gekappt werden darf nur der Fehlerfall -- ein Umlaut-Passwort muss gehen."""
+    from fastapi.testclient import TestClient
+
+    from intercom.web.app import create_app
+
+    config = tmp_path / "intercom.yaml"
+    config.write_text("version: 1\nchannels:\n  - name: Intercom\n", encoding="utf-8")
+    settings = fake_murmur.settings(
+        intercom_config=config,
+        data_dir=tmp_path,
+        provision_on_start=False,
+        admin_user="tönchef",
+        admin_password="Käse-Straße-42",
+    )
+    with TestClient(create_app(settings)) as client:
+        antwort = client.post(
+            "/login",
+            data={"benutzer": "tönchef", "passwort": "Käse-Straße-42"},
+            follow_redirects=False,
+        )
+        assert antwort.status_code == 303, "Umlaute duerfen die Anmeldung nicht blockieren"
+
+
+def test_audit_log_laesst_sich_nicht_von_aussen_vollschreiben(app_client):
+    """``/login`` schreibt vor jeder Authentisierung eine Audit-Zeile.
+
+    Ohne Laengengrenze konnte jeder ohne Anmeldung die Datenbank fluten -- und
+    es ist dieselbe Datei wie der Metrik-Verlauf. Laeuft sie voll, sind
+    waehrend der Veranstaltung Verlaufsgrafik und Protokoll tot.
+    """
+    from intercom.store.db import MAX_KURZFELD
+
+    client, _ = app_client
+    riese = "X" * 200_000
+
+    antwort = client_login(app_client, riese, "egal")
+    assert antwort.status_code in (401, 429)
+
+    _anmelden(client)
+    eintraege = client.get("/api/audit?action=auth.login").json()["entries"]
+    assert eintraege, "der Fehlversuch haette protokolliert werden muessen"
+    assert all(len(e["actor"]) <= MAX_KURZFELD for e in eintraege), (
+        "der Benutzername wurde ungekappt gespeichert"
+    )
+
+
+def test_anmeldebremse_greift_auch_bei_wechselnder_quelladresse(app_client):
+    """Die Je-IP-Bremse allein reicht nicht.
+
+    Hinter einem Reverse-Proxy stammt die Quell-IP aus einem Kopf, den der
+    Client mitschickt. Wer ihn faelschen kann, haette ohne Gesamtbremse gar
+    keine Bremse.
+    """
+    client, _ = app_client
+    kontext = client.app.state.ctx
+    sitzungen = kontext.sessions
+
+    for nummer in range(sitzungen.MAX_GESAMT + 5):
+        sitzungen.note_failure(f"10.0.0.{nummer % 250}")
+
+    assert sitzungen.blocked_for("10.99.99.99") > 0, (
+        "eine bisher unbekannte Adresse muesste jetzt trotzdem gebremst werden"
+    )
+    # Eine erfolgreiche Anmeldung raeumt beides ab.
+    sitzungen.clear_failures("10.99.99.99")
+    assert sitzungen.blocked_for("10.99.99.99") == 0
+
+
+def test_quellentabelle_waechst_nicht_unbegrenzt(app_client):
+    client, _ = app_client
+    sitzungen = client.app.state.ctx.sessions
+    for nummer in range(sitzungen.MAX_QUELLEN + 500):
+        sitzungen.note_failure(f"10.{nummer // 65536}.{nummer // 256 % 256}.{nummer % 256}")
+    assert len(sitzungen._failures) <= sitzungen.MAX_QUELLEN

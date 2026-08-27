@@ -154,6 +154,22 @@ _SAMPLE_COLUMNS: Final[str] = (
 _AUDIT_COLUMNS: Final[str] = "id, ts, actor, action, target, before, after, ok, error"
 
 
+#: Laengengrenzen fuer das Audit-Log. Kurzfelder sind Name, Aktion und Ziel;
+#: Langfelder das Vorher/Nachher als JSON. Grosszuegig genug, dass eine echte
+#: ACL-Aenderung vollstaendig hineinpasst.
+MAX_KURZFELD = 200
+MAX_LANGFELD = 20_000
+
+
+def _kappen(text: str, grenze: int) -> str:
+    """Kuerzt zu lange Werte und macht die Kuerzung sichtbar."""
+    if not text:
+        return ""
+    if len(text) <= grenze:
+        return text
+    return text[: grenze - 15] + "\u2026 [gekuerzt]"
+
+
 class StoreClosed(RuntimeError):
     """Zugriff auf einen bereits geschlossenen Store.
 
@@ -621,7 +637,21 @@ class Store:
         siehe :class:`AuditEntry`. Auch gescheiterte Versuche werden
         geschrieben (``ok=False`` mit ``error``): dass jemand etwas *versucht*
         hat, ist fuer die Nachschau so wichtig wie der Erfolg.
+
+        Alle Felder werden gekappt. Ein Teil davon stammt aus Eingaben, die
+        **vor** jeder Anmeldung entstehen -- der Benutzername eines
+        fehlgeschlagenen Logins etwa. Ohne Deckel liesse sich diese Datei von
+        aussen vollschreiben, und sie ist dieselbe wie der Metrik-Verlauf:
+        laeuft sie voll, sind waehrend der Veranstaltung Verlaufsgrafik **und**
+        Protokoll tot.
         """
+        actor = _kappen(actor, MAX_KURZFELD)
+        action = _kappen(action, MAX_KURZFELD)
+        target = _kappen(target, MAX_KURZFELD)
+        before = _kappen(before, MAX_LANGFELD)
+        after = _kappen(after, MAX_LANGFELD)
+        error = _kappen(error, MAX_KURZFELD)
+
         now = int(time.time())
         with self._transaction() as conn:
             cursor = conn.execute(

@@ -78,26 +78,50 @@ class SessionManager:
         )
         #: Fehlversuche je Quell-IP, gegen stumpfes Durchprobieren.
         self._failures: dict[str, list[float]] = {}
+        #: Fehlversuche insgesamt, unabhaengig von der Quelle. Zweite
+        #: Verteidigungslinie: die Quell-IP stammt hinter einem Reverse-Proxy
+        #: aus einem Kopf, den der Client mitschickt. Wer sie faelschen kann,
+        #: haette mit einer reinen Je-IP-Bremse gar keine.
+        self._failures_gesamt: list[float] = []
 
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _gleich(links: str, rechts: str) -> bool:
+        """Zeitkonstanter Vergleich, der auch Umlaute vertraegt.
+
+        ``hmac.compare_digest`` wirft bei Zeichenketten mit Nicht-ASCII einen
+        ``TypeError`` ("comparing strings with non-ASCII characters is not
+        supported"). Genau das passiert bei einem Tippfehler mit Umlaut im
+        Benutzernamen oder bei einem Passwort aus der .env, das jemand von Hand
+        gesetzt hat. Ungefangen wird daraus eine 500 statt einer Anmeldeseite --
+        und weil nur *bestehende* Konten ueberhaupt bis zum Passwortvergleich
+        kommen, verraet der Statuscode, welcher Benutzername existiert.
+        Auf Bytes verglichen gibt es das Problem nicht.
+        """
+        return hmac.compare_digest(links.encode("utf-8"), rechts.encode("utf-8"))
 
     def authenticate(self, username: str, password: str) -> Account | None:
         """Prueft die Zugangsdaten in konstanter Zeit.
 
-        ``hmac.compare_digest`` statt ``==``, damit die Laufzeit nichts ueber
-        das Passwort verraet. Beide Konten werden immer geprueft, damit auch
-        die Anzahl der Vergleiche nicht verraet, welcher Name existiert.
+        Zeitkonstant heisst hier auch: **ohne Kurzschluss**. Ein
+        ``name_ok and passwort_ok`` haette den Passwortvergleich uebersprungen,
+        sobald der Name nicht passt -- und damit ueber die Laufzeit verraten,
+        welche Benutzernamen es gibt. Beide Vergleiche laufen deshalb immer,
+        und beide Konten werden immer geprueft.
         """
         settings = self._settings
-        admin_ok = hmac.compare_digest(
-            username, settings.admin_user
-        ) and hmac.compare_digest(password, settings.admin_password)
+        gleich = self._gleich
 
-        viewer_ok = False
-        if settings.has_readonly_account:
-            viewer_ok = hmac.compare_digest(
-                username, settings.readonly_user or ""
-            ) and hmac.compare_digest(password, settings.readonly_password or "")
+        admin_name_ok = gleich(username, settings.admin_user)
+        admin_pass_ok = gleich(password, settings.admin_password)
+        admin_ok = admin_name_ok & admin_pass_ok
+
+        viewer_name_ok = gleich(username, settings.readonly_user or "")
+        viewer_pass_ok = gleich(password, settings.readonly_password or "")
+        viewer_ok = bool(
+            settings.has_readonly_account & (viewer_name_ok & viewer_pass_ok)
+        )
 
         if admin_ok:
             return Account(name=settings.admin_user, role="admin", csrf=secrets.token_urlsafe(32))
@@ -111,11 +135,30 @@ class SessionManager:
 
     # -- Bremse gegen Durchprobieren ---------------------------------------
 
+    #: Mehr verschiedene Quellen als das merken wir uns nicht. Ohne Deckel
+    #: waechst die Tabelle mit jeder erfundenen Adresse -- und erfinden kann
+    #: sie jeder, der den Weiterleitungskopf setzt.
+    MAX_QUELLEN = 4096
+    #: So viele Fehlversuche insgesamt in fuenf Minuten, dann bremst es fuer
+    #: alle. Grosszuegig genug, dass ein Techniker mit Zahlendreher nicht
+    #: ausgesperrt wird, eng genug gegen stumpfes Durchprobieren.
+    MAX_GESAMT = 60
+
     def note_failure(self, client_ip: str) -> None:
         now = time.monotonic()
         attempts = [t for t in self._failures.get(client_ip, []) if now - t < 300]
         attempts.append(now)
+
+        if client_ip not in self._failures and len(self._failures) >= self.MAX_QUELLEN:
+            # Aeltesten Eintrag verdraengen, statt unbegrenzt zu wachsen.
+            aeltester = min(
+                self._failures, key=lambda ip: self._failures[ip][-1] if self._failures[ip] else 0
+            )
+            self._failures.pop(aeltester, None)
         self._failures[client_ip] = attempts
+
+        self._failures_gesamt = [t for t in self._failures_gesamt if now - t < 300]
+        self._failures_gesamt.append(now)
 
     def blocked_for(self, client_ip: str) -> float:
         """Wie lange diese IP noch warten muss, in Sekunden.
@@ -126,7 +169,16 @@ class SessionManager:
         """
         now = time.monotonic()
         attempts = [t for t in self._failures.get(client_ip, []) if now - t < 300]
-        self._failures[client_ip] = attempts
+        if attempts:
+            self._failures[client_ip] = attempts
+        else:
+            self._failures.pop(client_ip, None)
+
+        self._failures_gesamt = [t for t in self._failures_gesamt if now - t < 300]
+        if len(self._failures_gesamt) >= self.MAX_GESAMT:
+            # Greift auch dann, wenn jemand die Quell-IP je Anfrage wechselt.
+            return max(0.0, 30.0 - (now - self._failures_gesamt[-1]))
+
         if len(attempts) < 5:
             return 0.0
         delay = min(30.0, 2.0 ** (len(attempts) - 5))
@@ -135,6 +187,7 @@ class SessionManager:
 
     def clear_failures(self, client_ip: str) -> None:
         self._failures.pop(client_ip, None)
+        self._failures_gesamt.clear()
 
     # -- Cookie -------------------------------------------------------------
 
@@ -230,14 +283,17 @@ async def _check_csrf(request: Request, account: Account) -> None:
 
 
 def client_ip(request: Request) -> str:
-    """Beste verfuegbare Quell-IP.
+    """Beste verfuegbare Quell-IP fuer die Anmeldebremse.
 
-    Hinter dem Synology-Reverse-Proxy steht die echte Adresse in
-    ``X-Forwarded-For``. Wir nehmen den ersten Eintrag -- weiter vorne stehende
-    Werte kann ein Client selbst setzen, aber fuer eine Anmeldebremse reicht das;
-    fuer eine Zugriffsentscheidung wuerde es nicht reichen.
+    ``X-Forwarded-For`` ist ein Kopf, den der Client mitschickt. uvicorn traegt
+    ihn nur dann in ``request.client`` ein, wenn der unmittelbare Absender in
+    ``forwarded_allow_ips`` steht -- deshalb steht dort der Loopback und nicht
+    ``*`` (siehe ``intercom.web.app.main``). Wer sich direkt mit dem Port
+    verbindet, kann seine Adresse damit nicht mehr frei waehlen.
+
+    Vollstaendig verlassen darf man sich darauf trotzdem nicht: laeuft der
+    Reverse-Proxy auf demselben Host, kommt jede Anfrage vom Loopback, und der
+    Proxy reicht durch, was der Client geschickt hat. Genau dafuer gibt es
+    zusaetzlich die Gesamtbremse in :class:`SessionManager`.
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "?"
