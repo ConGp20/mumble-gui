@@ -34,6 +34,9 @@ groups:
   - technik        # Ton, Netzwerk, Strom
   - kampfgericht   # Kampfgericht / Wettkampfleitung
   - leitung        # Produktionsleitung (darf alles)
+  # Eigene Gruppe nur fuer den Monitor-Bot. Warum sie sein muss, steht bei
+  # policies.ban -- kurz: ohne dieses Recht misst der Bot keinen Paketverlust.
+  - monitor
 
 # -----------------------------------------------------------------------------
 #  Wiederverwendbare ACL-Bausteine
@@ -203,7 +206,22 @@ policies:
   move_users:         [regie, leitung]
   mute_deafen:        [leitung]
   kick:               [leitung]
-  ban:                [leitung]
+  # ACHTUNG, das sieht falscher aus als es ist: der Monitor-Bot braucht Ban am
+  # Wurzelkanal, sonst bekommt er keine Paketzaehler. murmur entscheidet in
+  # Server::msgUserStats (src/murmur/Messages.cpp) so:
+  #
+  #   bool extend = (uSource == pDstServerUser)
+  #                 || hasPermission(uSource, qhChannels.value(0), ChanACL::Ban);
+  #   bool local  = extend || (pDstServerUser->cChannel == uSource->cChannel);
+  #
+  # und nur bei `local` fuellt er from_client/from_server. Ohne Ban saehe der
+  # Bot also ausschliesslich die Clients in seinem eigenen Kanal -- und damit
+  # bliebe die Verlustspalte fuer fast alle leer.
+  #
+  # Das Recht ist eine echte Befugnis, deshalb liegt es in einer eigenen Gruppe
+  # mit genau einem Mitglied (dem Bot) statt bei `regie`. Der Bot selbst bannt
+  # niemanden: er sendet nie etwas ausser UserStats-Abfragen.
+  ban:                [leitung, monitor]
   make_channel:       [leitung]
   register_users:     [leitung]
   # true => @all darf am obersten Kanal weder sprechen noch fluestern;
@@ -233,7 +251,7 @@ users:
   kg-1:         { groups: [kampfgericht], channel: "Intercom/Kampfgericht" }
   kg-2:         { groups: [kampfgericht], channel: "Intercom/Kampfgericht" }
   produktion:   { groups: [leitung, regie] }
-  monitor:      { groups: [regie],        channel: "Intercom/Regie" }   # Monitor-Bot
+  monitor:      { groups: [monitor],      channel: "Intercom/Regie" }   # Monitor-Bot
 
 # -----------------------------------------------------------------------------
 #  Netzsegmente

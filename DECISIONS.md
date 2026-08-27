@@ -239,5 +239,152 @@ laden.
    `mumble-server`-Container hoch. Er wird uebersprungen, wenn kein Docker
    erreichbar ist, und ist mit `-m integration` gezielt ausfuehrbar.
 
-**Offen.** Ebene 2 wurde in dieser Umgebung **nicht ausgefuehrt**. Auf dem NAS
-laeuft sie mit `docker compose exec mumble-admin pytest -m integration`.
+**Offen.** Ebene 2 wurde in dieser Umgebung **nicht ausgefuehrt**. Sie laeuft
+vom Entwicklungsrechner gegen den Testaufbau, nicht im Laufzeit-Image -- dort
+sind weder pytest noch die Testdateien enthalten, und das soll so bleiben:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+cd admin && python -m pytest -m integration -v
+docker compose -f docker-compose.test.yml down -v
+```
+
+
+---
+
+## D-011 - Gruppen und Richtlinien liegen am Wurzelkanal
+
+**Problem.** Die Vorgabe lautete, Gruppen am obersten Kanal des Baums
+(`Intercom`) anzulegen und die Richtlinien dort mit Apply-sub zu setzen.
+
+**Befund.** Fuer `kick`, `ban` und `register_users` funktioniert das nicht.
+`src/ACL.cpp`:
+
+```cpp
+// These permissions are only grantable from the root channel
+// as they affect the users globally.
+if (ch->iId == 0 && applyFromSelf) {
+    if (acl->pAllow & Kick) granted |= Kick;
+```
+
+Ein solcher Eintrag an `Intercom` waere wirkungslos -- und zwar lautlos. Dazu
+kommt: Gruppen vererben sich nur nach **unten**. Eine an `Intercom` definierte
+Gruppe ist an der Wurzel unbekannt, ein Wurzel-ACL koennte sie also gar nicht
+referenzieren.
+
+**Entscheidung.** Gruppen **und** Richtlinien liegen am Wurzelkanal (ID 0).
+Richtlinien, die im ganzen Baum gelten, bekommen `apply_here` + `apply_subs`;
+die drei Wurzel-Rechte bekommen nur `apply_here`, weil `applyFromSelf` verlangt
+wird. Bewahrt wird dabei der von murmur angelegte Eintrag `@admin -> Write`, den
+`setACL` sonst mitloeschen wuerde.
+
+**Konsequenz.** Gruppen gelten serverweit, nicht nur unter `Intercom`. In dieser
+Installation gibt es keinen zweiten Baum; gaebe es einen, waeren die Gruppen
+auch dort sichtbar.
+
+---
+
+## D-012 - `speak`-Gruppen bekommen Traverse und Enter mit
+
+**Problem.** Die Abbildung `speak: [regie]` erzeugt "@all deny Speak,
+@regie allow Speak". Mit einer Vorlage, die `Enter` entzieht (etwa
+`geschlossen`), entstuende ein Kanal, in dem `regie` sprechen duerfte, ihn aber
+nicht betreten kann -- also ein unbenutzbarer Kanal.
+
+**Entscheidung.** Gruppen aus `speak` erhalten zusaetzlich `Traverse | Enter`,
+Gruppen aus `whisper_in` und `listen_for` zusaetzlich `Traverse`. Wer sprechen
+soll, muss den Kanal betreten koennen; wer mithoeren oder hineinfluestern soll,
+muss ihn wenigstens sehen.
+
+**Warum das nichts kaputt macht.** murmur gewaehrt ohne jede ACL bereits
+`Traverse | Enter | Speak | Whisper | TextMessage | Listen` (`ACL.cpp`, `def`).
+Bei den Vorgabewerten aendert die Zugabe also nichts -- sie wirkt nur dort, wo
+eine Vorlage diese Rechte vorher entzogen hat. Dokumentiert in der
+Schema-Referenz der README.
+
+---
+
+## D-013 - Zusaetzlicher Schluessel `channels[].acl`
+
+**Problem.** `export` soll den Ist-Zustand als YAML im selben Schema
+zurueckschreiben, ausdruecklich auch fuer "ein per Hand geklicktes Setup". Aus
+rohen ACL-Bitmasken lassen sich `speak` / `whisper_in` / `listen_for` aber nicht
+in jedem Fall zurueckgewinnen -- eine handgeklickte ACL folgt keinem Muster.
+
+**Entscheidung.** Das Schema bekommt `channels[].acl`: rohe Eintraege in
+derselben Form wie in `acl_templates`, angewendet nach der Vorlage und vor den
+abgeleiteten Eintraegen.
+
+Der Exporter geht in drei Stufen vor: erst raet er die lesbare Form, dann laesst
+er die Vermutung durch **denselben** Generator laufen, den der Provisioner
+benutzt, und vergleicht Bit fuer Bit. Passt es nicht, versucht er es mit den
+Restbits von `@all` als explizitem Eintrag (das faengt den haeufigen Fall
+"Vorlage hat Traverse/Enter beigesteuert"). Passt es dann immer noch nicht,
+schreibt er alles roh.
+
+**Konsequenz.** Der Export ist **immer** verlustfrei, und fuer Konfigurationen
+aus dieser Datei kommt trotzdem die lesbare Form heraus. Der Name einer
+`acl_template` laesst sich dabei nicht rekonstruieren -- der Server speichert nur
+das Ergebnis, nicht die Herkunft.
+
+---
+
+## D-014 - `users[].channel` als reine Anzeige
+
+**Problem.** Der Auftrag verlangt den Alarm "Client nicht in seinem
+Soll-Kanal". Einen Soll-Kanal gab das Schema aber nicht her: `users` kannte nur
+`groups`, und aus einer Gruppenzugehoerigkeit laesst sich bei mehreren
+passenden Kanaelen kein eindeutiger Kanal ableiten.
+
+**Entscheidung.** `users[name].channel` als optionaler Pfad. Er wird **nur** fuer
+die Alarmleiste ausgewertet; der Provisioner fasst ihn nicht an und verschiebt
+niemanden automatisch. Waehrend eines laufenden Wettkampfs jemanden ungefragt in
+einen anderen Kanal zu ziehen, waere die gefaehrlichere Variante -- das GUI zeigt
+die Abweichung, die Entscheidung bleibt beim Menschen.
+
+---
+
+## D-015 - Der Monitor-Bot braucht `Ban` am Wurzelkanal
+
+**Problem.** In der ersten Fassung stand der Bot in der Gruppe `regie`. Damit
+haette er fuer fast alle Clients keinen Paketverlust gemessen -- und die Spalte
+waere leer geblieben, ohne dass irgendwo ein Fehler aufgetaucht waere.
+
+**Befund.** `Server::msgUserStats` in `src/murmur/Messages.cpp`:
+
+```cpp
+bool extend = (uSource == pDstServerUser)
+              || hasPermission(uSource, qhChannels.value(0), ChanACL::Ban);
+...
+bool local  = extend || (pDstServerUser->cChannel == uSource->cChannel);
+if (local) {
+    mpusss = msg.mutable_from_client();
+    mpusss->set_good(...); mpusss->set_lost(...);
+```
+
+Die Paketzaehler haengen an `local`. Ohne `Ban` am Wurzelkanal saehe der Bot
+ausschliesslich die Clients in seinem eigenen Kanal.
+
+**Entscheidung.** Eine eigene Gruppe `monitor` mit genau einem Mitglied, und
+`policies.ban: [leitung, monitor]`. Das Recht liegt bewusst **nicht** bei
+`regie`: es ist eine echte Befugnis und soll nicht an einer Personengruppe
+haengen, die es nie braucht. Der Bot selbst bannt niemanden -- er sendet nie
+etwas ausser `UserStats`-Abfragen, und das ist strukturell sichergestellt.
+
+**Alternative verworfen.** Den Bot in jeden Kanal zu schicken, waere die einzige
+Moeglichkeit ohne `Ban` -- mit einem Client geht das aber nicht gleichzeitig, und
+reihum zu wandern wuerde die Messung unbrauchbar zerhacken.
+
+---
+
+## D-016 - `.env` ist nicht versioniert
+
+**Problem.** `setup.sh` schreibt echte Secrets in die `.env`. Eine versionierte
+`.env` waere eine Falle: der naechste `git add -A` auf dem NAS wuerde sie
+mitnehmen.
+
+**Entscheidung.** Nur `.env.example` liegt im Repository, `.env` steht in der
+`.gitignore`. `setup.sh` erzeugt sie beim ersten Lauf aus der Vorlage und setzt
+`chmod 600`. In der Historie dieses Repositories standen zu keinem Zeitpunkt
+echte Secrets -- die eingecheckte Fassung enthielt ausschliesslich
+`ERSETZEN_*`-Platzhalter.
