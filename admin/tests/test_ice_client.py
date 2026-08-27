@@ -310,3 +310,156 @@ def test_abbau_haelt_die_sperre_nicht(fake_murmur, monkeypatch):
     weiter.set()
     schliesser.join(5.0)
     assert frei, "_lock wurde ueber communicator.destroy() hinweg gehalten"
+
+
+def test_kanal_ohne_vererbung_sieht_trotzdem_den_elternteil(ice_client, fake_murmur):
+    """murmur zeigt bei ``inherit=False`` weiter die Eintraege des Elternteils.
+
+    ``impl_Server_getACL`` steigt **immer** mindestens bis zum direkten
+    Elternteil auf -- ``if ((p == channel) || (p->bInheritACL))``. Erst dessen
+    ``bInheritACL`` entscheidet, ob es weiter nach oben geht. Der Haken selbst
+    kommt getrennt als drittes Feld zurueck; der ACL-Editor im Mumble-Client
+    zeigt damit an, was bei eingeschalteter Vererbung gelten wuerde.
+
+    Das ist nicht dasselbe wie ``ChanACL::effectivePermissions`` -- die prueft
+    ``bInheritACL`` auch am Kanal selbst und bricht dort ab.
+    """
+    from intercom.ice.types import ACLEntry, ChannelACL
+
+    eltern = ice_client.add_channel("Intercom", 0)
+    kind = ice_client.add_channel("Regie", eltern)
+
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=eltern,
+            acls=[ACLEntry(apply_here=True, apply_subs=True, allow=0, deny=0x2, group="all")],
+            groups=[],
+            inherit=True,
+        )
+    )
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=kind,
+            acls=[ACLEntry(apply_here=True, apply_subs=False, allow=0x2, deny=0, group="regie")],
+            groups=[],
+            inherit=False,
+        )
+    )
+
+    acl = ice_client.get_acl(kind)
+    assert acl.inherit is False
+    geerbt = [e for e in acl.acls if e.inherited]
+    assert [e.group for e in geerbt] == ["all"], acl.acls
+    assert [e.group for e in acl.own_acls()] == ["regie"]
+
+
+def test_vererbung_bricht_am_elternteil_ab(ice_client, fake_murmur):
+    """Steht der Haken beim *Elternteil* nicht, endet der Aufstieg dort."""
+    from intercom.ice.types import ACLEntry, ChannelACL
+
+    opa = ice_client.add_channel("Haus", 0)
+    eltern = ice_client.add_channel("Intercom", opa)
+    kind = ice_client.add_channel("Regie", eltern)
+
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=opa,
+            acls=[ACLEntry(apply_here=True, apply_subs=True, allow=0x1, deny=0, group="haus")],
+            groups=[],
+            inherit=True,
+        )
+    )
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=eltern,
+            acls=[ACLEntry(apply_here=True, apply_subs=True, allow=0, deny=0x2, group="all")],
+            groups=[],
+            inherit=False,
+        )
+    )
+
+    gruppen = {e.group for e in ice_client.get_acl(kind).acls if e.inherited}
+    assert gruppen == {"all"}, "der Aufstieg lief ueber den Elternteil hinaus"
+
+
+def test_gruppen_haengen_nicht_am_vererbungshaken(ice_client, fake_murmur):
+    """``bInheritACL`` steuert die ACLs, nicht die Gruppen.
+
+    murmur sammelt die Gruppen ueber ``Group::groupNames`` und
+    ``Group::getGroup``; die kennen nur ``inheritable`` und ``inherit`` der
+    Gruppe selbst. Eine vererbbare Gruppe des Elternteils bleibt deshalb auch
+    dann sichtbar, wenn der Kanal die ACL-Vererbung abgeschaltet hat.
+    """
+    from intercom.ice.types import ChannelACL, ChannelGroup
+
+    eltern = ice_client.add_channel("Intercom", 0)
+    kind = ice_client.add_channel("Regie", eltern)
+
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=eltern,
+            acls=[],
+            groups=[ChannelGroup(name="technik", inherit=True, inheritable=True, add=[7])],
+            inherit=True,
+        )
+    )
+    ice_client.set_channel_acl(
+        ChannelACL(channel_id=kind, acls=[], groups=[], inherit=False)
+    )
+
+    gruppen = {g.name: g for g in ice_client.get_acl(kind).groups}
+    assert "technik" in gruppen, "vererbbare Gruppe verschwand mit dem Haken"
+    assert gruppen["technik"].inherited is True
+    assert gruppen["technik"].members == [7]
+
+
+def test_nicht_vererbbare_gruppe_bleibt_beim_elternteil(ice_client, fake_murmur):
+    from intercom.ice.types import ChannelACL, ChannelGroup
+
+    eltern = ice_client.add_channel("Intercom", 0)
+    kind = ice_client.add_channel("Regie", eltern)
+
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=eltern,
+            acls=[],
+            groups=[ChannelGroup(name="intern", inherit=True, inheritable=False, add=[7])],
+            inherit=True,
+        )
+    )
+
+    assert "intern" not in {g.name for g in ice_client.get_acl(kind).groups}
+    assert "intern" in {g.name for g in ice_client.get_acl(eltern).groups}
+
+
+def test_eigene_gruppe_ergaenzt_die_geerbten_mitglieder(ice_client, fake_murmur):
+    """``add`` und ``remove`` wirken auf die Mitglieder des Elternteils."""
+    from intercom.ice.types import ChannelACL, ChannelGroup
+
+    eltern = ice_client.add_channel("Intercom", 0)
+    kind = ice_client.add_channel("Regie", eltern)
+
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=eltern,
+            acls=[],
+            groups=[ChannelGroup(name="technik", inherit=True, inheritable=True, add=[7, 8])],
+            inherit=True,
+        )
+    )
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=kind,
+            acls=[],
+            groups=[
+                ChannelGroup(name="technik", inherit=True, inheritable=True, add=[9], remove=[8])
+            ],
+            inherit=True,
+        )
+    )
+
+    gruppe = next(g for g in ice_client.get_acl(kind).groups if g.name == "technik")
+    assert gruppe.inherited is False
+    assert gruppe.members == [7, 9]
+    assert gruppe.add == [9]
+    assert gruppe.remove == [8]

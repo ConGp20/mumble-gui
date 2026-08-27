@@ -874,3 +874,56 @@ def test_verlinkungen_und_serverpasswort_konvergieren(ice_client):
 
     # Das Passwort steht unter dem Namen, unter dem murmur es auch herausgibt.
     assert ice_client.get_all_conf()["password"] == "stadion2026"
+
+
+def test_gescheitertes_setacl_meldet_nichts_als_angewendet(ice_client, config, monkeypatch):
+    """``[angewendet]`` war frueher eine Behauptung ueber einen Aufruf, der noch lief.
+
+    Eine fremde Gruppe verschwindet nicht durch einen eigenen Aufruf, sondern
+    dadurch, dass sie in der Liste fehlt, die ``setACL`` schreibt. Schlaegt
+    dieses ``setACL`` fehl, steht die Gruppe unveraendert im Server -- der
+    Bericht meldete sie trotzdem als geloescht.
+    """
+    from intercom.ice.types import ChannelGroup
+    from intercom.provision.planner import reconcile
+
+    _register_all(ice_client, config)
+    # Einmal sauber durchlaufen, damit nur noch die ACL-Aenderung offen ist.
+    reconcile(ice_client, config, prune=False, dry_run=False)
+    root = ice_client.get_acl(0)
+    root.groups.append(ChannelGroup(name="haustechnik", add=[1]))
+    ice_client.set_channel_acl(root)
+
+    def kaputt(acl):
+        raise RuntimeError("murmur mag nicht")
+
+    monkeypatch.setattr(ice_client, "set_channel_acl", kaputt)
+
+    plan = reconcile(ice_client, config, prune=True, dry_run=False)
+    geloescht = [c for c in plan.changes if c.target == "(Wurzel) @haustechnik"]
+    assert len(geloescht) == 1
+    assert geloescht[0].applied is False, "Loeschung wurde faelschlich gemeldet"
+    assert "murmur mag nicht" in geloescht[0].error
+    assert not [c for c in plan.changes if c.applied], plan.to_text()
+    assert "[angewendet]" not in plan.to_text()
+
+    # Gegenprobe am Server: die Gruppe steht noch da.
+    monkeypatch.undo()
+    assert "haustechnik" in {g.name for g in ice_client.get_acl(0).own_groups()}
+
+
+def test_erfolgreiches_prune_wird_als_angewendet_gemeldet(ice_client, config):
+    """Gegenprobe: geht das setACL durch, ist die Meldung berechtigt."""
+    from intercom.ice.types import ChannelGroup
+    from intercom.provision.planner import reconcile
+
+    _register_all(ice_client, config)
+    root = ice_client.get_acl(0)
+    root.groups.append(ChannelGroup(name="haustechnik", add=[1]))
+    ice_client.set_channel_acl(root)
+
+    plan = reconcile(ice_client, config, prune=True, dry_run=False)
+    geloescht = next(c for c in plan.changes if c.target == "(Wurzel) @haustechnik")
+    assert geloescht.applied is True
+    assert geloescht.error == ""
+    assert "haustechnik" not in {g.name for g in ice_client.get_acl(0).own_groups()}

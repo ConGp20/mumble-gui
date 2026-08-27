@@ -440,71 +440,150 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
 
     # -- Ice: ACL ------------------------------------------------------------
 
+    def _acl_kette(self, channel_id: int) -> list[_Channel]:
+        """Kanaele, aus denen ``getACL`` Eintraege sammelt -- aeusserster zuerst.
+
+        Wortgetreu nach ``impl_Server_getACL`` (MumbleServerIce.cpp)::
+
+            p = channel;
+            while (p) {
+                chans.push(p);
+                if ((p == channel) || (p->bInheritACL)) p = p->cParent;
+                else p = nullptr;
+            }
+
+        Die Bedingung ``(p == channel) ||`` ist der Punkt: der Aufstieg geht
+        **immer** mindestens bis zum direkten Elternteil, auch wenn der Kanal
+        selbst ``inherit_acl = False`` hat. Der Mumble-Client zeigt im
+        ACL-Editor genau deshalb an, was bei eingeschalteter Vererbung gelten
+        wuerde -- der Haken selbst kommt getrennt als drittes Rueckgabefeld.
+
+        Das ist bewusst *nicht* dieselbe Kette wie in
+        ``ChanACL::effectivePermissions``: die prueft ``p->bInheritACL`` auch
+        fuer den Kanal selbst und bricht dort ab.
+        """
+        kette: list[_Channel] = []
+        channel = self.channels.get(channel_id)
+        current = channel
+        while current is not None:
+            kette.append(current)
+            if current is channel or current.inherit_acl:
+                current = self.channels.get(current.parent) if current.parent >= 0 else None
+            else:
+                current = None
+        kette.reverse()
+        return kette
+
+    def _gruppen_namen(self, channel_id: int) -> set[str]:
+        """``Group::groupNames`` -- alle am Kanal sichtbaren Gruppennamen."""
+        namen: set[str] = set()
+        kette: list[_Channel] = []
+        current = self.channels.get(channel_id)
+        while current is not None:
+            kette.append(current)
+            current = self.channels.get(current.parent) if current.parent >= 0 else None
+        for channel in reversed(kette):
+            for name, group in channel.groups.items():
+                if channel.id != channel_id and not group.inheritable:
+                    namen.discard(name)
+                else:
+                    namen.add(name)
+        return namen
+
+    def _gruppe_suchen(self, channel_id: int, name: str) -> Any | None:
+        """``Group::getGroup`` -- die Gruppe, die an diesem Kanal gilt."""
+        current = self.channels.get(channel_id)
+        while current is not None:
+            group = current.groups.get(name)
+            if group is not None:
+                if current.id == channel_id:
+                    return group
+                return group if group.inheritable else None
+            current = self.channels.get(current.parent) if current.parent >= 0 else None
+        return None
+
+    def _gruppe_mitglieder(self, channel_id: int, name: str) -> set[int]:
+        """``Group::members`` -- ab dem Kanal aufwaerts, add/remove verrechnet."""
+        stapel: list[Any] = []
+        current = self.channels.get(channel_id)
+        eigen = current
+        while current is not None:
+            group = current.groups.get(name)
+            if group is not None:
+                if current is not eigen and not group.inheritable:
+                    break
+                stapel.append(group)
+                if not group.inherit:
+                    break
+            current = self.channels.get(current.parent) if current.parent >= 0 else None
+        mitglieder: set[int] = set()
+        for group in reversed(stapel):
+            mitglieder |= set(group.add)
+            mitglieder -= set(group.remove)
+        return mitglieder
+
     def getACL(self, channelid: int, current: Any = None) -> tuple[Any, Any, bool]:
-        """Eigene und geerbte Eintraege, geerbte zuerst und markiert."""
+        """Eigene und geerbte Eintraege, geerbte zuerst und markiert.
+
+        Wortgetreu nach ``impl_Server_getACL``. Insbesondere haengen die
+        Gruppen **nicht** an ``bInheritACL``: murmur sammelt sie ueber
+        ``Group::groupNames`` und ``Group::getGroup``, und die kennen nur
+        ``inheritable``/``inherit`` der Gruppe selbst.
+        """
         with self._lock:
             if channelid not in self.channels:
                 raise MumbleServer.InvalidChannelException()
             channel = self.channels[channelid]
 
             acls: list[Any] = []
-            groups: dict[str, Any] = {}
+            for ancestor in self._acl_kette(channelid):
+                eigener = ancestor.id == channelid
+                for acl in ancestor.acls:
+                    # Vom Kanal selbst alle Eintraege, von den Vorfahren nur
+                    # die vererbbaren.
+                    if not eigener and not acl.applySubs:
+                        continue
+                    copy = MumbleServer.ACL()
+                    copy.applyHere = acl.applyHere
+                    copy.applySubs = acl.applySubs
+                    copy.inherited = not eigener
+                    copy.userid = acl.userid
+                    copy.group = acl.group
+                    copy.allow = acl.allow
+                    copy.deny = acl.deny
+                    acls.append(copy)
 
-            if channel.inherit_acl:
-                for ancestor in self._ancestors(channelid):
-                    for acl in ancestor.acls:
-                        if not acl.applySubs:
-                            continue
-                        copy = MumbleServer.ACL()
-                        copy.applyHere = True
-                        copy.applySubs = acl.applySubs
-                        copy.inherited = True
-                        copy.userid = acl.userid
-                        copy.group = acl.group
-                        copy.allow = acl.allow
-                        copy.deny = acl.deny
-                        acls.append(copy)
-                    for name, group in ancestor.groups.items():
-                        if not group.inheritable:
-                            continue
-                        copy = MumbleServer.Group()
-                        copy.name = name
-                        copy.inherited = True
-                        copy.inherit = group.inherit
-                        copy.inheritable = group.inheritable
-                        copy.add = list(group.add)
-                        copy.remove = list(group.remove)
-                        copy.members = list(group.add)
-                        groups[name] = copy
-
-            for acl in channel.acls:
-                copy = MumbleServer.ACL()
-                copy.applyHere = acl.applyHere
-                copy.applySubs = acl.applySubs
-                copy.inherited = False
-                copy.userid = acl.userid
-                copy.group = acl.group
-                copy.allow = acl.allow
-                copy.deny = acl.deny
-                acls.append(copy)
-
-            for name, group in channel.groups.items():
-                inherited_members: list[int] = []
-                if group.inherit and name in groups:
-                    inherited_members = list(groups[name].members)
+            parent_id = channel.parent if channel.parent >= 0 else None
+            groups: list[Any] = []
+            for name in sorted(self._gruppen_namen(channelid)):
+                eigene = channel.groups.get(name)
+                geerbte = (
+                    self._gruppe_suchen(parent_id, name) if parent_id is not None else None
+                )
+                if eigene is None and geerbte is None:
+                    continue
+                quelle = eigene if eigene is not None else geerbte
                 copy = MumbleServer.Group()
-                copy.name = name
-                copy.inherited = False
-                copy.inherit = group.inherit
-                copy.inheritable = group.inheritable
-                copy.add = list(group.add)
-                copy.remove = list(group.remove)
-                members = set(inherited_members) | set(group.add)
-                members -= set(group.remove)
-                copy.members = sorted(members)
-                groups[name] = copy
+                copy.name = quelle.name
+                copy.inherit = quelle.inherit
+                copy.inheritable = quelle.inheritable
+                copy.add = []
+                copy.remove = []
+                mitglieder: set[int] = set()
+                if geerbte is not None and parent_id is not None:
+                    mitglieder = self._gruppe_mitglieder(parent_id, name)
+                if eigene is not None:
+                    copy.add = list(eigene.add)
+                    copy.remove = list(eigene.remove)
+                    copy.inherited = False
+                    mitglieder |= set(eigene.add)
+                    mitglieder -= set(eigene.remove)
+                else:
+                    copy.inherited = True
+                copy.members = sorted(mitglieder)
+                groups.append(copy)
 
-            return acls, list(groups.values()), channel.inherit_acl
+            return acls, groups, channel.inherit_acl
 
     def setACL(
         self,

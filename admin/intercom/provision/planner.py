@@ -23,7 +23,7 @@ angefasst -- auch nicht mit ``PROVISION_PRUNE``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -343,22 +343,45 @@ class Reconciler:
             return False
         return not (change.needs_prune and not self.prune)
 
-    def _execute(self, change: Change, action: Callable[[], None]) -> None:
-        """Fuehrt die Aenderung aus, wenn wir nicht im Trockenlauf sind."""
+    def _execute(
+        self,
+        change: Change,
+        action: Callable[[], None],
+        mitziehen: Sequence[Change] = (),
+    ) -> None:
+        """Fuehrt die Aenderung aus, wenn wir nicht im Trockenlauf sind.
+
+        ``mitziehen`` sind bereits gemeldete Aenderungen, die derselbe Aufruf
+        miterledigt -- typisch das Loeschen einer fremden Gruppe, das nur
+        dadurch geschieht, dass sie in der Liste fehlt, die ``setACL``
+        schreibt. Sie bekommen dasselbe Ergebnis wie ``change``: angewendet
+        nur, wenn der Aufruf durchging, sonst denselben Fehlertext.
+
+        Vorher trugen diese Aenderungen ``applied=not dry_run`` schon bei der
+        Meldung. Das war eine Aussage ueber einen Aufruf, der noch gar nicht
+        gelaufen war -- schlug ``setACL`` fehl, stand im Bericht trotzdem
+        ``[angewendet]``, waehrend die Gruppe unveraendert im Server steht.
+        """
         self._record(change)
         if not self._should_execute(change):
             return
         try:
             action()
-            change.applied = True
         except Exception as exc:  # noqa: BLE001 - im Report sichtbar machen
             change.error = str(exc)
+            for weitere in mitziehen:
+                weitere.error = str(exc)
             log.error(
                 "Provisioning: %s (%s) fehlgeschlagen: %s",
                 change.summary,
                 change.target,
                 exc,
             )
+            return
+        change.applied = True
+        for weitere in mitziehen:
+            if self._should_execute(weitere):
+                weitere.applied = True
 
     # ------------------------------------------------------------------ #
     #  Kanaele
@@ -590,33 +613,24 @@ class Reconciler:
         # Gruppen, die wir nicht verwalten, bleiben erhalten -- setACL wuerde
         # sie sonst mitloeschen, obwohl PROVISION_PRUNE aus ist.
         preserved: list[ChannelGroup] = []
+        # Aenderungen, die erst das setACL am Ende wirklich ausfuehrt.
+        mitziehen: list[Change] = []
         for group in current_groups:
             if group.name in managed_names:
                 continue
-            if self.prune and group.name not in META_GROUPS:
-                self._record(
-                    Change(
-                        kind="group_update",
-                        target=f"(Wurzel) @{group.name}",
-                        summary="Gruppe loeschen (steht nicht in groups:)",
-                        before=[_group_line(group)],
-                        destructive=True,
-                        needs_prune=True,
-                        applied=not self.dry_run,
-                    )
-                )
-                continue
             if group.name not in META_GROUPS:
-                self._record(
-                    Change(
-                        kind="group_update",
-                        target=f"(Wurzel) @{group.name}",
-                        summary="Gruppe loeschen (steht nicht in groups:)",
-                        before=[_group_line(group)],
-                        destructive=True,
-                        needs_prune=True,
-                    )
+                geloescht = Change(
+                    kind="group_update",
+                    target=f"(Wurzel) @{group.name}",
+                    summary="Gruppe loeschen (steht nicht in groups:)",
+                    before=[_group_line(group)],
+                    destructive=True,
+                    needs_prune=True,
                 )
+                self._record(geloescht)
+                if self.prune:
+                    mitziehen.append(geloescht)
+                    continue
             preserved.append(group)
 
         wanted_groups = list(desired.root_groups) + preserved
@@ -631,17 +645,17 @@ class Reconciler:
             entry for entry in current.own_acls() if entry.key() not in verwaltete_keys
         ]
         for entry in fremde_acls:
-            self._record(
-                Change(
-                    kind="acl_update",
-                    target=f"(Wurzel) {_acl_line(entry)}",
-                    summary="ACL-Eintrag loeschen (steht nicht in der YAML)",
-                    before=[_acl_line(entry)],
-                    destructive=True,
-                    needs_prune=True,
-                    applied=self.prune and not self.dry_run,
-                )
+            geloescht = Change(
+                kind="acl_update",
+                target=f"(Wurzel) {_acl_line(entry)}",
+                summary="ACL-Eintrag loeschen (steht nicht in der YAML)",
+                before=[_acl_line(entry)],
+                destructive=True,
+                needs_prune=True,
             )
+            self._record(geloescht)
+            if self.prune:
+                mitziehen.append(geloescht)
         if self.prune:
             fremde_acls = []
 
@@ -671,7 +685,7 @@ class Reconciler:
                 )
             )
 
-        self._execute(change, action)
+        self._execute(change, action, mitziehen)
 
     def _reconcile_channel_acls(self, desired: DesiredState) -> None:
         for want in desired.channels:
@@ -709,32 +723,23 @@ class Reconciler:
             # wuerde sie sonst auch ohne PROVISION_PRUNE mitloeschen.
             verwaltet = {g.name for g in want.groups}
             bewahrt = [g for g in current.own_groups() if g.name not in verwaltet]
+            # Auch hier gilt: geloescht wird eine Gruppe erst dadurch, dass sie
+            # im setACL am Ende fehlt. Bis dahin ist nichts angewendet.
+            mitziehen = []
+            for group in bewahrt:
+                geloescht = Change(
+                    kind="group_update",
+                    target=f"{want.path} @{group.name}",
+                    summary="Gruppe loeschen (steht nicht in der YAML)",
+                    before=[_group_line(group)],
+                    destructive=True,
+                    needs_prune=True,
+                )
+                self._record(geloescht)
+                if self.prune:
+                    mitziehen.append(geloescht)
             if self.prune:
-                for group in bewahrt:
-                    self._record(
-                        Change(
-                            kind="group_update",
-                            target=f"{want.path} @{group.name}",
-                            summary="Gruppe loeschen (steht nicht in der YAML)",
-                            before=[_group_line(group)],
-                            destructive=True,
-                            needs_prune=True,
-                            applied=not self.dry_run,
-                        )
-                    )
                 bewahrt = []
-            elif bewahrt:
-                for group in bewahrt:
-                    self._record(
-                        Change(
-                            kind="group_update",
-                            target=f"{want.path} @{group.name}",
-                            summary="Gruppe loeschen (steht nicht in der YAML)",
-                            before=[_group_line(group)],
-                            destructive=True,
-                            needs_prune=True,
-                        )
-                    )
 
             keep_groups = list(want.groups) + bewahrt
             acl_diff = self._diff_acls(current.own_acls(), want.acls)
@@ -767,7 +772,7 @@ class Reconciler:
                     )
                 )
 
-            self._execute(change, action)
+            self._execute(change, action, mitziehen)
 
     @staticmethod
     def _diff_acls(
