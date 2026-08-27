@@ -34,8 +34,8 @@ from dataclasses import dataclass, field
 from ..ice.permissions import BY_NAME
 from ..ice.types import ACLEntry, ChannelGroup
 from .schema import (
+    META_GROUPS,
     POLICY_PERMISSIONS,
-    PREDEFINED_GROUPS,
     ROOT_ONLY_POLICIES,
     ChannelSpec,
     IntercomConfig,
@@ -54,6 +54,8 @@ LISTEN = BY_NAME["Listen"].bit
 TRAVERSE = BY_NAME["Traverse"].bit
 ENTER = BY_NAME["Enter"].bit
 WRITE = BY_NAME["Write"].bit
+MAKE_TEMP_CHANNEL = BY_NAME["MakeTempChannel"].bit
+SELF_REGISTER = BY_NAME["SelfRegister"].bit
 
 
 @dataclass(slots=True)
@@ -244,10 +246,24 @@ def _root_acls(config: IntercomConfig) -> list[ACLEntry]:
     """
     entries: list[ACLEntry] = []
 
-    # murmur legt bei einem frischen Server '@admin -> Write' an der Wurzel an.
-    # setACL ersetzt alles, also schreiben wir es bewusst mit, sonst verliert
-    # der Betreiber seinen manuellen Admin-Weg.
+    # murmur legt bei einem frischen Server GENAU DREI Wurzel-ACLs an --
+    # src/murmur/ServerDB.cpp, Z. 1039-1069:
+    #
+    #   @admin  hier+Unterkanaele  Write
+    #   @auth   hier+Unterkanaele  MakeTempChannel
+    #   @all    nur hier           SelfRegister
+    #
+    # setACL ersetzt alles auf einmal. Wer nur @admin zurueckschreibt, nimmt
+    # angemeldeten Nutzern das Anlegen temporaerer Kanaele und jedem die
+    # Selbstregistrierung -- und zwar beim allerersten `apply` auf einem
+    # frischen Server. Darum stehen alle drei hier.
     entries.append(_entry("admin", WRITE, 0, apply_here=True, apply_subs=True))
+    entries.append(
+        _entry("auth", MAKE_TEMP_CHANNEL, 0, apply_here=True, apply_subs=True)
+    )
+    entries.append(
+        _entry("all", SELF_REGISTER, 0, apply_here=True, apply_subs=False)
+    )
 
     # Gastregel: @all darf im ganzen Baum weder sprechen noch fluestern; die
     # Kanaele geben es je Gruppe wieder frei.
@@ -316,7 +332,8 @@ def build_desired_state(
             state.unknown_users.append(user_name)
             continue
         for group_name in groups:
-            if group_name in PREDEFINED_GROUPS:
+            if group_name in META_GROUPS:
+                # Meta-Gruppen haben keine Mitgliederliste -- murmur rechnet sie aus.
                 continue
             members.setdefault(group_name, []).append(user_id)
 

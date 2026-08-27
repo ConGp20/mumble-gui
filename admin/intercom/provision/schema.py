@@ -23,6 +23,8 @@ import yaml
 from ..ice.permissions import BY_NAME, names_to_mask
 
 __all__ = [
+    "ADMIN_GROUP",
+    "META_GROUPS",
     "POLICY_PERMISSIONS",
     "PREDEFINED_GROUPS",
     "ROOT_ONLY_POLICIES",
@@ -39,17 +41,25 @@ __all__ = [
     "parse_config",
 ]
 
-#: Von murmur fest eingebaute Gruppen. Duerfen in speak/whisper_in/... benutzt,
-#: aber nicht in groups: neu definiert werden.
-#: Bedeutung (aus src/Group.cpp, Group::appliesToUser):
+#: Meta-Gruppen: murmur rechnet die Mitgliedschaft bei jeder Pruefung aus, es
+#: gibt keine Zeile dafuer in der Datenbank (src/Group.cpp, appliesToUser).
+#: Sie duerfen in speak/whisper_in/... benutzt, aber nicht definiert werden --
+#: und niemand kann jemanden "hinzufuegen".
 #:   all   jeder            auth  angemeldet (registriert)
 #:   in    im Kanal         out   nicht im Kanal
 #:   sub   in einem Unterkanal des ACL-Kanals
 #:   ~sub  wie sub, aber bezogen auf den ACL-Kanal statt den Zielkanal
-#:   admin die Admin-Gruppe
-PREDEFINED_GROUPS: frozenset[str] = frozenset(
-    {"all", "auth", "in", "out", "sub", "~sub", "admin"}
-)
+META_GROUPS: frozenset[str] = frozenset({"all", "auth", "in", "out", "sub", "~sub"})
+
+#: `admin` ist etwas anderes: murmur legt die Gruppe beim ersten Start
+#: tatsaechlich als Zeile am Wurzelkanal an (src/murmur/ServerDB.cpp,
+#: Z. 1072-1087) und ueberlaesst die Mitgliedschaft dem Betreiber. Sie ist
+#: darum ganz normal verwaltbar -- und muss es sein, sonst koennte `export`
+#: nicht festhalten, wer Administrator ist.
+ADMIN_GROUP: str = "admin"
+
+#: Alle Namen, die in ACL-Eintraegen vorkommen duerfen, ohne in groups: zu stehen.
+PREDEFINED_GROUPS: frozenset[str] = META_GROUPS | {ADMIN_GROUP}
 
 #: Richtlinie -> Recht. Diese Rechte wertet murmur ausschliesslich am
 #: Wurzelkanal aus (src/ACL.cpp: ``if (ch->iId == 0 && applyFromSelf)``).
@@ -449,14 +459,17 @@ def parse_config(data: Any, source: str = "<speicher>") -> IntercomConfig:
     config.groups = _as_list(data.get("groups"))
     seen_groups: set[str] = set()
     for index, group in enumerate(config.groups):
-        if group in PREDEFINED_GROUPS:
+        if group in META_GROUPS:
             issues.append(
                 Issue(
                     "error",
                     f"groups[{index}]",
-                    f"{group!r} ist eine von murmur fest eingebaute Gruppe und darf "
-                    "nicht neu definiert werden. Eingebaut sind: "
-                    + ", ".join(sorted(PREDEFINED_GROUPS)),
+                    f"{group!r} ist eine Meta-Gruppe: murmur rechnet die "
+                    "Mitgliedschaft bei jeder Pruefung selbst aus, es gibt "
+                    "nichts einzutragen. Meta-Gruppen sind: "
+                    + ", ".join(sorted(META_GROUPS))
+                    + f". ({ADMIN_GROUP!r} ist dagegen eine echte Gruppe und "
+                    "darf hier stehen.)",
                 )
             )
         if group in seen_groups:
@@ -700,13 +713,14 @@ def _validate_references(config: IntercomConfig, issues: list[Issue]) -> None:
 
     for user_name, groups in config.users.items():
         for group in groups:
-            if group in PREDEFINED_GROUPS:
+            if group in META_GROUPS:
                 issues.append(
                     Issue(
                         "error",
                         f"users.{user_name}.groups",
-                        f"{group!r} ist eine eingebaute Gruppe; murmur verwaltet ihre "
-                        "Mitgliedschaft selbst und ignoriert Eintraege.",
+                        f"{group!r} ist eine Meta-Gruppe; murmur rechnet die "
+                        "Mitgliedschaft selbst aus und ignoriert Eintraege. "
+                        f"({ADMIN_GROUP!r} laesst sich dagegen zuweisen.)",
                     )
                 )
             elif group not in known_groups:

@@ -306,10 +306,20 @@ def test_guests_listen_only_haengt_an_der_wurzel(ice_client, config):
     reconcile(ice_client, config, dry_run=False)
 
     root = ice_client.get_acl(0).own_acls()
-    guest = next(a for a in root if a.group == "all")
+    # Es gibt mehrere @all-Eintraege an der Wurzel: murmurs Vorgabe
+    # (SelfRegister) und unsere Gastregel. Gemeint ist die, die etwas verbietet.
+    guest = next(a for a in root if a.group == "all" and a.deny)
     assert guest.apply_subs is True, "gilt sonst nur am Wurzelkanal selbst"
     assert guest.deny & BY_NAME["Speak"].bit
     assert guest.deny & BY_NAME["Whisper"].bit
+
+    # murmurs Vorgaben duerfen dabei nicht verlorengehen -- setACL ersetzt alles.
+    vorgaben = {
+        (a.group, a.allow) for a in root
+    }
+    assert ("admin", BY_NAME["Write"].bit) in vorgaben
+    assert ("auth", BY_NAME["MakeTempChannel"].bit) in vorgaben
+    assert ("all", BY_NAME["SelfRegister"].bit) in vorgaben
 
 
 def test_root_only_rechte_stehen_an_der_wurzel_ohne_apply_sub(ice_client, config):
@@ -578,3 +588,122 @@ def test_fremde_kanalgruppe_ueberlebt_ohne_prune(ice_client, config):
     reconcile(ice_client, config, prune=True, dry_run=False)
     namen = {g.name for g in ice_client.get_acl(regie).own_groups()}
     assert "handarbeit" not in namen, "mit --prune haette sie weg sein muessen"
+
+
+# --------------------------------------------------------------------------- #
+#  murmurs Vorgabezustand
+# --------------------------------------------------------------------------- #
+
+
+def _murmur_vorgabe(client) -> int:
+    """Stellt den Zustand her, den murmur bei einem frischen Server anlegt.
+
+    ``src/murmur/ServerDB.cpp``, Z. 1039-1087: genau drei ACLs am Wurzelkanal
+    und die Gruppe ``admin``. Das Doppel startet mit leerem Wurzelkanal --
+    ohne diesen Aufbau sieht kein Test, was ein echter Server mitbringt.
+    """
+    from intercom.ice.types import ACLEntry, ChannelACL, ChannelGroup
+
+    # Bewusst ein Name, der NICHT in der Testkonfiguration steht: dieser Nutzer
+    # steht fuer jemanden, den der Betreiber vor dem ersten apply angelegt hat.
+    chef = client.register_user("alt-admin", cert_hash="e" * 40)
+    client.set_channel_acl(
+        ChannelACL(
+            channel_id=0,
+            acls=[
+                ACLEntry(apply_here=True, apply_subs=True, group="admin", allow=0x01, deny=0),
+                ACLEntry(apply_here=True, apply_subs=True, group="auth", allow=0x400, deny=0),
+                ACLEntry(apply_here=True, apply_subs=False, group="all", allow=0x80000, deny=0),
+            ],
+            groups=[ChannelGroup(name="admin", add=[chef])],
+        )
+    )
+    return chef
+
+
+def test_apply_nimmt_murmurs_vorgaben_nicht_weg(ice_client, config):
+    """setACL ersetzt alles -- was murmur mitbringt, muss mitgeschrieben werden.
+
+    Sonst verlieren angemeldete Nutzer beim allerersten ``apply`` das Anlegen
+    temporaerer Kanaele und alle die Selbstregistrierung.
+    """
+    from intercom.ice.permissions import BY_NAME
+    from intercom.provision.planner import reconcile
+
+    chef = _murmur_vorgabe(ice_client)
+    _register_all(ice_client, config)
+    reconcile(ice_client, config, dry_run=False)
+
+    root = ice_client.get_acl(0)
+    vorhanden = {(a.group, a.allow, a.apply_subs) for a in root.own_acls()}
+    assert ("admin", BY_NAME["Write"].bit, True) in vorhanden
+    assert ("auth", BY_NAME["MakeTempChannel"].bit, True) in vorhanden
+    assert ("all", BY_NAME["SelfRegister"].bit, False) in vorhanden
+
+    admin_gruppe = root.group("admin")
+    assert admin_gruppe is not None, "murmurs admin-Gruppe wurde geloescht"
+    assert chef in admin_gruppe.add, "die Mitgliedschaft ging verloren"
+
+
+def test_export_vom_echten_vorgabezustand_ist_wieder_einlesbar(ice_client, config):
+    """`intercom export > neu.yaml && intercom apply -c neu.yaml` muss gehen.
+
+    Der Exporter schrieb die Wurzelgruppe ``admin`` nach ``groups:`` und ihre
+    Mitglieder nach ``users:``; die Validierung wies beides als "eingebaut"
+    zurueck. Der dokumentierte Sicherungsweg endete damit auf jedem echten
+    Server mit Rueckgabewert 2. ``admin`` ist aber keine Meta-Gruppe, sondern
+    eine echte Zeile in der Datenbank, deren Mitgliedschaft der Betreiber
+    fuehrt -- sie gehoert in die Sicherung.
+    """
+    from intercom.provision.exporter import export_yaml
+    from intercom.provision.planner import reconcile
+    from intercom.provision.schema import parse_config
+
+    _murmur_vorgabe(ice_client)
+    _register_all(ice_client, config)
+    reconcile(ice_client, config, dry_run=False)
+
+    text = export_yaml(ice_client)
+    wieder = parse_config(yaml.safe_load(text))          # darf nicht werfen
+    assert "admin" in wieder.groups
+    assert "alt-admin" in wieder.users
+    assert "admin" in wieder.users["alt-admin"]
+
+
+def test_meta_gruppen_bleiben_verboten(ice_client):
+    """`all` und Verwandte haben keine Mitgliederliste -- das muss auffallen."""
+    from intercom.provision.schema import ConfigInvalid
+
+    for name in ("all", "auth", "sub"):
+        with pytest.raises(ConfigInvalid) as excinfo:
+            _load(f"""
+                version: 1
+                groups: [{name}]
+                channels:
+                  - name: Intercom
+            """)
+        assert "Meta-Gruppe" in str(excinfo.value)
+
+
+def test_fremder_wurzel_acl_ueberlebt_ohne_prune(ice_client, config):
+    """Ein von Hand gesetztes Recht fuer einen einzelnen Nutzer bleibt stehen."""
+    from intercom.ice.types import ACLEntry
+    from intercom.provision.planner import reconcile
+
+    chef = _murmur_vorgabe(ice_client)
+    _register_all(ice_client, config)
+
+    root = ice_client.get_acl(0)
+    root.acls.append(
+        ACLEntry(apply_here=True, apply_subs=False, userid=chef, allow=0x10, deny=0)
+    )
+    ice_client.set_channel_acl(root)
+
+    plan = reconcile(ice_client, config, prune=False, dry_run=False)
+    danach = ice_client.get_acl(0).own_acls()
+    assert any(a.userid == chef for a in danach), "fremder Eintrag wurde mitgeloescht"
+    assert any(c.needs_prune for c in plan.changes), "der Plan haette ihn melden muessen"
+
+    reconcile(ice_client, config, prune=True, dry_run=False)
+    danach = ice_client.get_acl(0).own_acls()
+    assert not any(a.userid == chef for a in danach), "mit --prune haette er weg sein muessen"

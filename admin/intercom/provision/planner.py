@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..ice.permissions import describe_mask
 from ..ice.types import ACLEntry, ChannelACL, ChannelGroup, MumbleChannel
 from .acl_map import DesiredChannel, DesiredState, build_desired_state
-from .schema import PREDEFINED_GROUPS, IntercomConfig, Issue
+from .schema import META_GROUPS, IntercomConfig, Issue
 
 if TYPE_CHECKING:
     from ..ice.client import IceClient
@@ -593,7 +593,7 @@ class Reconciler:
         for group in current_groups:
             if group.name in managed_names:
                 continue
-            if self.prune and group.name not in PREDEFINED_GROUPS:
+            if self.prune and group.name not in META_GROUPS:
                 self._record(
                     Change(
                         kind="group_update",
@@ -606,7 +606,7 @@ class Reconciler:
                     )
                 )
                 continue
-            if group.name not in PREDEFINED_GROUPS:
+            if group.name not in META_GROUPS:
                 self._record(
                     Change(
                         kind="group_update",
@@ -620,7 +620,32 @@ class Reconciler:
             preserved.append(group)
 
         wanted_groups = list(desired.root_groups) + preserved
-        wanted_acls = list(desired.root_acls)
+
+        # Dasselbe fuer die ACLs: setACL ersetzt auch sie vollstaendig. Ein
+        # Eintrag, den jemand von Hand angelegt hat -- etwa ein Recht fuer einen
+        # einzelnen Nutzer --, wuerde sonst beim ersten Lauf verschwinden.
+        # Er bleibt hinter den verwalteten stehen, behaelt damit das letzte
+        # Wort, und der Plan meldet ihn als loeschbar.
+        verwaltete_keys = {entry.key() for entry in desired.root_acls}
+        fremde_acls = [
+            entry for entry in current.own_acls() if entry.key() not in verwaltete_keys
+        ]
+        for entry in fremde_acls:
+            self._record(
+                Change(
+                    kind="acl_update",
+                    target=f"(Wurzel) {_acl_line(entry)}",
+                    summary="ACL-Eintrag loeschen (steht nicht in der YAML)",
+                    before=[_acl_line(entry)],
+                    destructive=True,
+                    needs_prune=True,
+                    applied=self.prune and not self.dry_run,
+                )
+            )
+        if self.prune:
+            fremde_acls = []
+
+        wanted_acls = list(desired.root_acls) + fremde_acls
 
         group_diff = self._diff_groups(current_groups, wanted_groups)
         acl_diff = self._diff_acls(current.own_acls(), wanted_acls)
