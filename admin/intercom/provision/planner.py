@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ..ice.permissions import describe_mask
 from ..ice.types import ACLEntry, ChannelACL, ChannelGroup, MumbleChannel
@@ -809,8 +809,19 @@ class Reconciler:
     #  Serverkonfiguration
     # ------------------------------------------------------------------ #
 
+    #: murmur benennt beim Schreiben um: `setConf("serverpassword", ...)` landet
+    #: in der Datenbank als `password` (src/murmur/ServerDB.cpp, Z. 2589-2592),
+    #: waehrend `getAllConf` die Tabelle roh liest. Ein Vergleich gegen den
+    #: urspruenglichen Namen findet also nie etwas -- der Plan stuende dauerhaft
+    #: auf rot, obwohl der Wert laengst gesetzt ist. Beide Namen wirken gleich
+    #: (Server::setLiveConf), wir benutzen deshalb durchgaengig den, unter dem
+    #: der Server ihn auch wieder herausgibt.
+    CONF_ALIASE: ClassVar[dict[str, str]] = {"serverpassword": "password"}
+
     def _reconcile_conf(self, desired: DesiredState) -> None:
-        wanted = dict(desired.conf)
+        wanted = {
+            self.CONF_ALIASE.get(key, key): value for key, value in desired.conf.items()
+        }
 
         if desired.default_channel_path:
             channel_id = self._path_to_id.get(desired.default_channel_path.strip("/"))

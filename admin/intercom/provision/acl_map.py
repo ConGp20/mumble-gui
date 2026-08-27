@@ -398,6 +398,21 @@ def build_desired_state(
     for top in config.channels:
         walk(top, None)
 
+    # Verlinkungen sind symmetrisch. murmur spiegelt sie beim Setzen
+    # (src/Channel.cpp: `l->qsPermLinks.insert(this)`) und `setChannelState`
+    # ersetzt die ganze Menge. Wer nur die selbst angegebene Richtung
+    # zurueckschreibt, reisst im selben Lauf die Gegenrichtung wieder ab, die
+    # der Partnerkanal gerade gesetzt hat -- der Abgleich kaeme nie zur Ruhe.
+    # Der Sollzustand ist deshalb die symmetrische Huelle.
+    nach_pfad = {kanal.path: kanal for kanal in state.channels}
+    for kanal in state.channels:
+        for ziel in kanal.links:
+            partner = nach_pfad.get(ziel)
+            if partner is not None and kanal.path not in partner.links:
+                partner.links.append(kanal.path)
+    for kanal in state.channels:
+        kanal.links = sorted(set(kanal.links))
+
     if config.server.welcometext is not None:
         state.conf["welcometext"] = config.server.welcometext
     state.conf.update(config.server.conf)

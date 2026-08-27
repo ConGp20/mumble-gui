@@ -822,3 +822,55 @@ def test_rohexport_mit_widerspruechlichen_eintraegen(ice_client):
         f"Speak wurde beim Umlauf verschluckt.\nvorher: {vorher}\n"
         f"danach: {[(a.group, hex(a.allow), hex(a.deny)) for a in danach]}"
     )
+
+
+def test_verlinkungen_und_serverpasswort_konvergieren(ice_client):
+    """Zwei Faelle, in denen der Server anders zurueckgibt als geschrieben wurde.
+
+    * murmur spiegelt Verlinkungen. Wer nur die selbst angegebene Richtung
+      schreibt, reisst im selben Lauf die Gegenrichtung ab, die der
+      Partnerkanal gerade gesetzt hat.
+    * ``setConf("serverpassword", ...)`` landet als ``password`` in der
+      Datenbank, ``getAllConf`` liefert die Tabelle roh.
+
+    Beides fuehrte dazu, dass ``apply`` bei JEDEM Lauf dieselbe Aenderung
+    schrieb und der Plan dauerhaft auf rot stand.
+    """
+    from intercom.provision.planner import Reconciler, reconcile
+
+    config = _load("""
+        version: 1
+        groups: [regie]
+        server:
+          serverpassword: stadion2026
+        channels:
+          - name: Intercom
+            children:
+              - name: Regie
+                links: ["Intercom/Kameras"]
+              - name: Kameras
+              - name: Technik
+                links: ["Intercom/Regie"]
+    """)
+
+    erster = reconcile(ice_client, config, dry_run=False)
+    assert not erster.failed, [c.error for c in erster.failed]
+
+    for lauf in (2, 3):
+        weiterer = reconcile(ice_client, config, dry_run=False)
+        assert weiterer.empty, f"Lauf {lauf} schreibt erneut:\n{weiterer.to_text()}"
+
+    # Die Verlinkung ist die symmetrische Huelle der Angaben.
+    paths = Reconciler._build_paths(ice_client.get_channels())
+    umgekehrt = {cid: pfad for pfad, cid in paths.items()}
+    verlinkt = {
+        umgekehrt[cid]: sorted(umgekehrt[x] for x in kanal.links)
+        for cid, kanal in ice_client.get_channels().items()
+        if kanal.links
+    }
+    assert verlinkt["Intercom/Regie"] == ["Intercom/Kameras", "Intercom/Technik"]
+    assert verlinkt["Intercom/Kameras"] == ["Intercom/Regie"]
+    assert verlinkt["Intercom/Technik"] == ["Intercom/Regie"]
+
+    # Das Passwort steht unter dem Namen, unter dem murmur es auch herausgibt.
+    assert ice_client.get_all_conf()["password"] == "stadion2026"

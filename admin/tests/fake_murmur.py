@@ -24,7 +24,7 @@ import contextlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import Ice  # type: ignore[import-not-found]
 import MumbleServer  # type: ignore[import-not-found]
@@ -217,10 +217,18 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
     def getAllConf(self, current: Any = None) -> dict[str, str]:
         return dict(self.conf)
 
+    #: murmur benennt genau einen Schluessel beim Schreiben um
+    #: (src/murmur/ServerDB.cpp, Z. 2589-2592):
+    #:     const QString &key = (k == "serverpassword") ? "password" : k;
+    #: `getAllConf` liest die Tabelle danach roh. Wer das nicht nachbildet,
+    #: sieht nicht, dass ein Abgleich gegen "serverpassword" nie konvergiert.
+    CONF_UMBENENNUNG: ClassVar[dict[str, str]] = {"serverpassword": "password"}
+
     def setConf(self, key: str, value: str, current: Any = None) -> None:
+        gespeichert = self.CONF_UMBENENNUNG.get(key, key)
         with self._lock:
-            self.conf[key] = value
-        self._log(f"Configuration {key} changed")
+            self.conf[gespeichert] = value
+        self._log(f"Configuration {gespeichert} changed")
 
     def setSuperuserPassword(self, pw: str, current: Any = None) -> None:
         self.superuser_password = pw
@@ -355,7 +363,25 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
             channel.parent = state.parent
             channel.description = state.description
             channel.position = state.position
-            channel.links = list(state.links)
+
+            # Verlinkungen sind symmetrisch. murmur traegt beim Verlinken auch
+            # die Gegenrichtung ein (src/Channel.cpp, Channel::link:
+            # `l->qsPermLinks.insert(this)`) und entfernt sie beim Trennen
+            # wieder. Ohne diese Spiegelung im Doppel bleibt unsichtbar, dass
+            # ein Abgleich, der nur die eigene Richtung schreibt, die
+            # Gegenrichtung des Partnerkanals abreisst und nie konvergiert.
+            vorher = set(channel.links)
+            nachher = set(state.links)
+            channel.links = sorted(nachher)
+            for ziel in nachher - vorher:
+                partner = self.channels.get(ziel)
+                if partner is not None and state.id not in partner.links:
+                    partner.links.append(state.id)
+                    partner.links.sort()
+            for ziel in vorher - nachher:
+                partner = self.channels.get(ziel)
+                if partner is not None and state.id in partner.links:
+                    partner.links.remove(state.id)
         self._fire("channelStateChanged", self._to_ice_channel(channel))
 
     def addChannel(self, name: str, parent: int, current: Any = None) -> int:
