@@ -75,6 +75,12 @@ class AppContext:
         #: asyncio haelt selbst nur eine schwache Referenz darauf.
         self._nebenaufgaben: set[asyncio.Task[None]] = set()
         self._provision_lock = asyncio.Lock()
+        #: PROVISION_ON_START ist noch offen. Bewusst kein "erster Versuch":
+        #: im Compose starten murmur und die Oberflaeche gleichzeitig, und
+        #: murmur braucht ein paar Sekunden, bis die Ice-Schnittstelle steht.
+        #: Der erste Verbindungsversuch scheitert also regelmaessig -- an ihn
+        #: darf das Provisionieren nicht gebunden sein.
+        self._provision_offen = settings.provision_on_start
 
     # ------------------------------------------------------------------ #
     #  Start und Ende
@@ -199,9 +205,25 @@ class AppContext:
                 self.banners.append(warning)
 
         await self._refresh(full=True)
-        if first and self.settings.provision_on_start and self.config is not None:
+        if self._provision_offen and self.config is not None:
+            self._provision_offen = False
+            if not first:
+                log.info(
+                    "murmur ist jetzt erreichbar -- PROVISION_ON_START wird "
+                    "nachgeholt."
+                )
             await self.provision(dry_run=False, actor="start")
         else:
+            if self._provision_offen:
+                # config is None: intercom.yaml ist unbrauchbar. Nicht still
+                # weglassen -- sonst laeuft der Server ohne die Kanaele, die
+                # das Stadion erwartet.
+                self._provision_offen = False
+                self.banners.append(
+                    "PROVISION_ON_START war gesetzt, aber intercom.yaml ist "
+                    "unbrauchbar -- es wurde nichts angelegt. Datei korrigieren "
+                    "und im Bereich Provisionierung von Hand anwenden."
+                )
             await self._arm_enforcer()
         return True
 

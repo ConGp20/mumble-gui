@@ -80,6 +80,10 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
         #: Nutzer -- genau wie m_channelListenerManager in murmur.
         self.listening: dict[int, set[int]] = {}
         self.superuser_password: str | None = None
+        #: Testhilfe: laesst ``getChannels`` so viele Sekunden haengen. Damit
+        #: laesst sich ein murmur nachstellen, der die Antwort schuldig
+        #: bleibt -- der Fall, den ``Ice.Override.Timeout`` nicht abfaengt.
+        self.haenge_getChannels_s: float = 0.0
 
     # -- Testhilfen (kein Teil der Ice-Schnittstelle) -----------------------
 
@@ -327,6 +331,8 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
     # -- Ice: Kanaele --------------------------------------------------------
 
     def getChannels(self, current: Any = None) -> dict[int, Any]:
+        if self.haenge_getChannels_s:
+            time.sleep(self.haenge_getChannels_s)
         return {cid: self._to_ice_channel(c) for cid, c in self.channels.items()}
 
     def _to_ice_channel(self, channel: _Channel) -> Any:

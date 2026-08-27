@@ -219,3 +219,123 @@ def test_unregistrierter_gast_bekommt_nichts(ice_client, fake_murmur, armed):
     enforcer.enforce_user(ice_client.get_state(session))
     assert ice_client.get_state(session).priority_speaker is False
     assert ice_client.get_listening_channels(session) == []
+
+
+def test_provision_on_start_wird_nachgeholt(fake_murmur):
+    """murmur ist beim Start oft noch nicht da -- das darf nichts verschlucken.
+
+    Im Compose starten beide Container gleichzeitig; bis murmur die
+    Ice-Schnittstelle geoeffnet hat, vergehen Sekunden. Der erste
+    Verbindungsversuch scheitert also regelmaessig. Haenge man
+    ``PROVISION_ON_START`` an genau diesen Versuch, wird im Normalfall nie
+    provisioniert -- und niemand merkt es.
+    """
+    import asyncio
+
+    from intercom.ice.errors import IceConnectionLost
+    from intercom.web.context import AppContext
+
+    ctx = AppContext(fake_murmur.settings(provision_on_start=True))
+    # Nur "nicht None" ist hier relevant; provision() ist ersetzt.
+    ctx.config = object()  # type: ignore[assignment]
+
+    erreichbar = False
+    provisioniert: list[str] = []
+    scharf: list[int] = []
+
+    async def fake_run(func, *args, **kwargs):
+        if not erreichbar:
+            raise IceConnectionLost("murmur ist noch nicht oben")
+        return None
+
+    async def fake_refresh(full=False):
+        return None
+
+    async def fake_provision(dry_run=False, actor="") -> None:
+        provisioniert.append(actor)
+
+    async def fake_arm() -> None:
+        scharf.append(1)
+
+    ctx.ice.run = fake_run  # type: ignore[method-assign]
+    ctx._refresh = fake_refresh  # type: ignore[method-assign]
+    ctx.provision = fake_provision  # type: ignore[method-assign]
+    ctx._arm_enforcer = fake_arm  # type: ignore[method-assign]
+
+    async def ablauf() -> None:
+        nonlocal erreichbar
+        assert await ctx._try_connect(first=True) is False
+        assert provisioniert == [], "ohne Verbindung darf nichts laufen"
+
+        erreichbar = True
+        assert await ctx._try_connect() is True
+
+    asyncio.run(ablauf())
+
+    assert provisioniert == ["start"], "PROVISION_ON_START wurde verschluckt"
+
+
+def test_provision_on_start_laeuft_nur_einmal(fake_murmur):
+    """Ein Reconnect im Betrieb darf nicht jedes Mal neu provisionieren."""
+    import asyncio
+
+    from intercom.web.context import AppContext
+
+    ctx = AppContext(fake_murmur.settings(provision_on_start=True))
+    ctx.config = object()  # type: ignore[assignment]
+
+    provisioniert: list[str] = []
+
+    async def fake_run(func, *args, **kwargs):
+        return None
+
+    async def fake_refresh(full=False):
+        return None
+
+    async def fake_provision(dry_run=False, actor="") -> None:
+        provisioniert.append(actor)
+
+    async def fake_arm() -> None:
+        return None
+
+    ctx.ice.run = fake_run  # type: ignore[method-assign]
+    ctx._refresh = fake_refresh  # type: ignore[method-assign]
+    ctx.provision = fake_provision  # type: ignore[method-assign]
+    ctx._arm_enforcer = fake_arm  # type: ignore[method-assign]
+
+    async def ablauf() -> None:
+        await ctx._try_connect(first=True)
+        await ctx._try_connect()
+        await ctx._try_connect()
+
+    asyncio.run(ablauf())
+
+    assert provisioniert == ["start"]
+
+
+def test_provision_on_start_meldet_kaputte_konfiguration(fake_murmur):
+    """Ohne brauchbare intercom.yaml wird nichts angelegt -- aber sichtbar."""
+    import asyncio
+
+    from intercom.web.context import AppContext
+
+    ctx = AppContext(fake_murmur.settings(provision_on_start=True))
+    ctx.config = None
+    ctx.config_error = "Zeile 12: kaputt"
+
+    async def fake_run(func, *args, **kwargs):
+        return None
+
+    async def fake_refresh(full=False):
+        return None
+
+    async def fake_arm() -> None:
+        return None
+
+    ctx.ice.run = fake_run  # type: ignore[method-assign]
+    ctx._refresh = fake_refresh  # type: ignore[method-assign]
+    ctx._arm_enforcer = fake_arm  # type: ignore[method-assign]
+
+    asyncio.run(ctx._try_connect(first=True))
+
+    assert any("PROVISION_ON_START" in b for b in ctx.banners)

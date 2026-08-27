@@ -65,6 +65,20 @@ __all__ = ["AsyncIceClient", "CallbackAdapter", "IceClient"]
 #: Name des Adapters fuer Rueckrufe. Muss zum Property-Praefix passen.
 _CALLBACK_ADAPTER = "IntercomCallback"
 
+#: Obergrenze fuer einen einzelnen Ice-Aufruf (Millisekunden).
+#:
+#: Wichtig: ``Ice.Override.Timeout`` taugt dafuer **nicht**. Das ist ein
+#: Endpunkt-Timeout und begrenzt nur einzelne Socket-Operationen; ein murmur,
+#: der die Antwort schuldig bleibt, laesst den Aufruf trotzdem beliebig lange
+#: haengen (gemessen: 12 s Aufruf bei ``Ice.Override.Timeout=3000``). Nur
+#: ``proxy.ice_invocationTimeout()`` bricht den Aufruf wirklich ab -- derselbe
+#: Test lieferte damit nach exakt 2 s eine ``InvocationTimeoutException``.
+#:
+#: Das ist keine Feinheit: der Threadpool von :class:`AsyncIceClient` hat vier
+#: Plaetze. Vier haengende Aufrufe legen sonst die gesamte Oberflaeche lahm,
+#: einschliesslich ``/healthz`` und ``/metrics``.
+INVOCATION_TIMEOUT_MS = 15_000
+
 #: Abbildung UserInfo-Enum -> Feldname in :class:`RegisteredUser`.
 _USERINFO_FIELDS: dict[Any, str] = {}
 
@@ -127,6 +141,15 @@ def _translate(exc: BaseException) -> Exception:
         )
     if isinstance(exc, (Ice.ConnectionLostException, Ice.CloseConnectionException)):
         return IceConnectionLost("Die Verbindung zu murmur wurde unterbrochen.")
+    if isinstance(exc, Ice.InvocationTimeoutException):
+        # Der Aufruf lief in INVOCATION_TIMEOUT_MS. Ob die Verbindung noch
+        # steht, wissen wir nicht -- murmur kann den Auftrag durchaus noch
+        # ausfuehren. Wir werten es trotzdem als Verbindungsverlust, damit
+        # _call() den Proxy verwirft und der Reconnect sauber neu aufsetzt.
+        sekunden = f"{INVOCATION_TIMEOUT_MS / 1000:g}".replace(".", ",")
+        return IceConnectionLost(
+            f"murmur hat den Aufruf nicht innerhalb von {sekunden} s beantwortet."
+        )
     if isinstance(exc, Ice.TimeoutException):
         return IceConnectionLost("murmur antwortet nicht (Zeitueberschreitung).")
     if isinstance(exc, Ice.ObjectNotExistException):
@@ -225,7 +248,14 @@ class IceClient:
         self._adapter: Any = None
         self._callback_proxy: Any = None
         self.callbacks = CallbackAdapter()
+        #: Schuetzt die Felder oben. Wird nur kurz gehalten -- insbesondere
+        #: nie ueber ``communicator.destroy()`` hinweg.
         self._lock = threading.RLock()
+        #: Serialisiert Auf- und Abbau gegeneinander, damit nicht zwei
+        #: Threads gleichzeitig einen Communicator bauen. Getrennt von
+        #: ``_lock``, weil der Aufbau Sekunden dauern darf, das Lesen der
+        #: Felder aber nicht warten soll.
+        self._setup_lock = threading.Lock()
         #: Klartext-Warnungen zur Slice-/Versionslage, fuer das Cockpit-Banner.
         self.version_warnings: list[str] = []
         self.server_version: ServerVersion | None = None
@@ -243,17 +273,22 @@ class IceClient:
 
         Idempotent: ein zweiter Aufruf auf einer stehenden Verbindung tut nichts.
         """
-        with self._lock:
-            if self.connected:
-                return
-            self._shutdown_communicator()
+        with self._setup_lock:
+            with self._lock:
+                if self.connected:
+                    return
+                alt = self._detach_communicator()
+            # Reste eines gescheiterten Versuchs abbauen -- nebenher, damit
+            # der Reconnect nicht darauf wartet, dass ein alter, haengender
+            # Aufruf endlich zurueckkommt.
+            self._destroy_communicator_bg(alt)
 
             props = Ice.createProperties()
             # Secret an jeden Aufruf haengen.
             props.setProperty("Ice.ImplicitContext", "Shared")
             # Ein toter murmur soll nach Sekunden auffallen, nicht nach Minuten.
             props.setProperty("Ice.Override.ConnectTimeout", "5000")
-            props.setProperty("Ice.Override.Timeout", "15000")
+            # Kein Ice.Override.Timeout -- siehe INVOCATION_TIMEOUT_MS oben.
             # Verbindung offen halten, sonst raeumt Ice sie ab und die
             # Rueckrufe versiegen still.
             props.setProperty("Ice.ACM.Client.Timeout", "30")
@@ -274,6 +309,11 @@ class IceClient:
                 communicator.getImplicitContext().put("secret", self._settings.ice_secret)
 
                 proxy = communicator.stringToProxy(self._settings.ice_proxy)
+                # Ab hier begrenzt jeder Aufruf sich selbst. checkedCast ist
+                # bereits ein entfernter Aufruf, die Grenze muss also vorher
+                # am Proxy haengen; die ice_*-Methoden liefern einen Proxy
+                # desselben Typs zurueck.
+                proxy = proxy.ice_invocationTimeout(INVOCATION_TIMEOUT_MS)
                 meta = MumbleServer.MetaPrx.checkedCast(proxy)
                 if meta is None:
                     raise IceConnectionLost(
@@ -287,38 +327,47 @@ class IceClient:
                         f"Virtueller Server {self._settings.ice_server_id} existiert "
                         "nicht. ICE_SERVER_ID pruefen (murmur zaehlt ab 1)."
                     )
+                # Ein per Aufruf zurueckgegebener Proxy erbt die Einstellungen
+                # des Aufrufers nicht -- er entsteht aus den Vorgaben des
+                # Communicators. Also erneut setzen.
+                server = server.ice_invocationTimeout(INVOCATION_TIMEOUT_MS)
             except Exception as exc:
-                communicator.destroy()
+                self._destroy_communicator(communicator)
                 raise _translate(exc) from exc
 
-            self._communicator = communicator
-            self._meta = meta
-            self._server = server
+            with self._lock:
+                self._communicator = communicator
+                self._meta = meta
+                self._server = server
 
             try:
-                self._check_versions()
-                self._install_callback()
+                self._check_versions(meta)
+                self._install_callback(communicator, server)
             except Exception:
                 # Versions- oder Callback-Probleme duerfen die Verbindung nicht
                 # verhindern -- lesend funktioniert das Cockpit trotzdem.
                 log.exception("Verbindung steht, aber die Nacharbeit ist gescheitert.")
 
-    def _install_callback(self) -> None:
-        adapter = self._communicator.createObjectAdapter(_CALLBACK_ADAPTER)
+    def _install_callback(self, communicator: Any, server: Any) -> None:
+        # communicator und server kommen als Parameter, nicht aus self:
+        # zwischen dem Veroeffentlichen und hier kann ein paralleler Aufruf
+        # die Verbindung schon wieder verworfen haben.
+        adapter = communicator.createObjectAdapter(_CALLBACK_ADAPTER)
         adapter.activate()
         proxy = adapter.addWithUUID(self.callbacks.servant)
         callback_proxy = MumbleServer.ServerCallbackPrx.uncheckedCast(proxy)
-        self._server.addCallback(callback_proxy)
-        self._adapter = adapter
-        self._callback_proxy = callback_proxy
+        server.addCallback(callback_proxy)
+        with self._lock:
+            self._adapter = adapter
+            self._callback_proxy = callback_proxy
         endpoints = ", ".join(str(e) for e in proxy.ice_getEndpoints())
         log.info("Ice-Callback registriert, eigener Adapter auf %s", endpoints)
 
-    def _check_versions(self) -> None:
+    def _check_versions(self, meta: Any) -> None:
         """Vergleicht Serverversion und Slice-Pruefsummen mit unserem Stand."""
         warnings: list[str] = []
 
-        major, minor, patch, text = self._meta.getVersion()
+        major, minor, patch, text = meta.getVersion()
         self.server_version = ServerVersion(major, minor, patch, text)
         expected = self._settings.expected_mumble_version
         if not self.server_version.matches_tag(expected):
@@ -331,7 +380,7 @@ class IceClient:
 
         # Pruefsummenvergleich: praeziser als die Versionsnummer.
         try:
-            remote = dict(self._meta.getSliceChecksums())
+            remote = dict(meta.getSliceChecksums())
         except Exception:
             remote = {}
             log.debug("getSliceChecksums nicht verfuegbar", exc_info=True)
@@ -361,25 +410,76 @@ class IceClient:
             log.warning("%s", warning)
 
     def close(self) -> None:
-        with self._lock:
-            if self._server is not None and self._callback_proxy is not None:
+        with self._setup_lock:
+            with self._lock:
+                server = self._server
+                callback_proxy = self._callback_proxy
+                alt = self._detach_communicator()
+            # Ab hier ist der Client fuer alle anderen Threads "nicht
+            # verbunden"; die folgenden Aufrufe duerfen also dauern.
+            if server is not None and callback_proxy is not None:
                 try:
-                    self._server.removeCallback(self._callback_proxy)
+                    server.removeCallback(callback_proxy)
                 except Exception:
                     log.debug("removeCallback fehlgeschlagen", exc_info=True)
-            self._shutdown_communicator()
+            self._destroy_communicator(alt)
 
-    def _shutdown_communicator(self) -> None:
+    def _detach_communicator(self) -> Any:
+        """Loest den Communicator aus dem Objekt und gibt ihn zurueck.
+
+        Nur unter ``self._lock`` aufrufen. Der teure Teil -- ``destroy()`` --
+        gehoert **ausserhalb** der Sperre in :meth:`_destroy_communicator`:
+        ``destroy()`` wartet auf laufende Aufrufe und den Abbau des
+        Threadpools und blockiert dabei so lange, wie der haengende Aufruf
+        braucht (gemessen: 11 s). Mit gehaltener Sperre steht in genau dieser
+        Zeit auch der Reconnect, der die Lage retten soll.
+        """
         self._server = None
         self._meta = None
         self._adapter = None
         self._callback_proxy = None
-        if self._communicator is not None:
-            try:
-                self._communicator.destroy()
-            except Exception:
-                log.debug("Communicator-Abbau fehlgeschlagen", exc_info=True)
-            self._communicator = None
+        alt = self._communicator
+        self._communicator = None
+        return alt
+
+    @staticmethod
+    def _destroy_communicator(communicator: Any) -> None:
+        """Baut einen abgeloesten Communicator ab. Ohne gehaltene Sperre."""
+        if communicator is None:
+            return
+        try:
+            communicator.destroy()
+        except Exception:
+            log.debug("Communicator-Abbau fehlgeschlagen", exc_info=True)
+
+    @classmethod
+    def _destroy_communicator_bg(cls, communicator: Any) -> None:
+        """Baut den Communicator in einem eigenen Thread ab.
+
+        ``destroy()`` wartet auf ausstehende Aufrufe. Gemessen: 4 s, nachdem
+        der Aufruf bereits in den Invocation-Timeout gelaufen war. Auf dem
+        Fehlerpfad von :meth:`_call` haenge sonst ein Thread des Pools genau
+        so lange fest wie der Aufruf, den wir gerade abgebrochen haben --
+        der Abbruch waere umsonst gewesen.
+
+        Der Communicator ist zu diesem Zeitpunkt bereits abgekoppelt; niemand
+        greift mehr darauf zu. Der Thread ist ein Daemon: haengt Ice beim
+        Abbau, blockiert das den Prozessende nicht.
+        """
+        if communicator is None:
+            return
+        threading.Thread(
+            target=cls._destroy_communicator,
+            args=(communicator,),
+            name="ice-abbau",
+            daemon=True,
+        ).start()
+
+    def _drop_connection(self) -> None:
+        """Verwirft die Verbindung: Felder unter Sperre, Abbau nebenher."""
+        with self._lock:
+            alt = self._detach_communicator()
+        self._destroy_communicator_bg(alt)
 
     def _srv(self) -> Any:
         server = self._server
@@ -399,8 +499,7 @@ class IceClient:
             translated = _translate(exc)
             if isinstance(translated, IceConnectionLost):
                 log.warning("Verbindung zu murmur verloren: %s", translated)
-                with self._lock:
-                    self._shutdown_communicator()
+                self._drop_connection()
             raise translated from exc
 
     # ------------------------------------------------------------------ #

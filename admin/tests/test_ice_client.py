@@ -245,3 +245,68 @@ def test_ohne_verbindung_klare_meldung(fake_murmur):
     client = IceClient(fake_murmur.settings())
     with pytest.raises(IceNotConnected):
         client.get_users()
+
+
+def test_haengender_aufruf_wird_abgebrochen(fake_murmur, monkeypatch):
+    """Ein murmur, der nicht antwortet, darf keinen Thread festhalten.
+
+    Das ist der Grund fuer ``ice_invocationTimeout``: ``Ice.Override.Timeout``
+    ist ein Endpunkt-Timeout und greift hier nachweislich nicht -- ein Aufruf
+    lief damit gemessen 12 s durch, obwohl 3 s eingestellt waren.
+    """
+    from intercom.ice import client as client_modul
+    from intercom.ice.errors import IceConnectionLost
+
+    monkeypatch.setattr(client_modul, "INVOCATION_TIMEOUT_MS", 800)
+    client = client_modul.IceClient(fake_murmur.settings())
+    client.connect()
+    try:
+        fake_murmur.server.haenge_getChannels_s = 5.0
+        begonnen = time.monotonic()
+        with pytest.raises(IceConnectionLost) as excinfo:
+            client.get_channels()
+        gedauert = time.monotonic() - begonnen
+
+        assert gedauert < 3.0, f"Aufruf lief {gedauert:.1f} s statt 0,8 s"
+        assert "0 s" in str(excinfo.value) or "nicht" in str(excinfo.value)
+        # Der tote Proxy ist weg, der Reconnect-Task kann uebernehmen.
+        assert not client.connected
+    finally:
+        fake_murmur.server.haenge_getChannels_s = 0.0
+        client.close()
+
+
+def test_abbau_haelt_die_sperre_nicht(fake_murmur, monkeypatch):
+    """``communicator.destroy()`` darf ``_lock`` nicht ueber Sekunden halten.
+
+    ``destroy()`` wartet auf laufende Aufrufe. Blockiert es mit gehaltener
+    Sperre, steht genau in dem Moment auch der Reconnect, der die Verbindung
+    retten soll.
+    """
+    from intercom.ice.client import IceClient
+
+    client = IceClient(fake_murmur.settings())
+    client.connect()
+
+    im_abbau = threading.Event()
+    weiter = threading.Event()
+    echt = IceClient._destroy_communicator
+
+    def langsam(communicator):
+        im_abbau.set()
+        assert weiter.wait(5.0), "Test haengt"
+        echt(communicator)
+
+    monkeypatch.setattr(IceClient, "_destroy_communicator", staticmethod(langsam))
+
+    schliesser = threading.Thread(target=client.close, daemon=True)
+    schliesser.start()
+    assert im_abbau.wait(5.0), "close() kam nicht bis zum Abbau"
+
+    # Waehrend der Abbau haengt, muss die Sperre frei sein.
+    frei = client._lock.acquire(timeout=1.0)
+    if frei:
+        client._lock.release()
+    weiter.set()
+    schliesser.join(5.0)
+    assert frei, "_lock wurde ueber communicator.destroy() hinweg gehalten"
