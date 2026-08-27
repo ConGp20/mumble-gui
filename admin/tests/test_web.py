@@ -802,3 +802,114 @@ def test_ueberlebt_einen_serverneustart_und_verbindet_neu(tmp_path):
                 zweiter.stop()
     finally:
         erster.stop()
+
+
+# --------------------------------------------------------------------------- #
+#  Verlustmessung: Intervall statt Sitzungsmittel
+# --------------------------------------------------------------------------- #
+
+
+def _stats(session: int, ts: float, gut: int, verloren: int):
+    """Eine UserStats-Momentaufnahme mit kumulativen Zaehlern."""
+    from intercom.monitor.stats import UserStatsSample
+
+    return UserStatsSample(
+        ts=ts,
+        session=session,
+        name="kam-1",
+        from_client_good=gut,
+        from_client_lost=verloren,
+        udp_ping_avg_ms=20.0,
+        udp_packets=gut,
+    )
+
+
+def test_verlust_wird_als_intervallrate_gemeldet_nicht_als_sitzungsmittel(app_client):
+    """Der Fall, um den es geht.
+
+    Die Paketzaehler in ``UserStats`` sind kumulativ seit Verbindungsbeginn.
+    Wer sie direkt anzeigt, zeigt den Mittelwert der ganzen Sitzung: nach zwei
+    Stunden sauberem Betrieb verschwindet ein akuter Ausfall darin restlos --
+    zwei Drittel der Sprache weg, und die Alarmschwelle bleibt still.
+    """
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("kam-1", userid=1, address="10.20.10.7")
+    _warte_auf_client(client, "kam-1")
+
+    kontext = client.app.state.ctx
+    from intercom.monitor.stats import LossTracker
+
+    kontext._loss = LossTracker()
+
+    # Zwei Stunden sauber: 360 000 Pakete, 20 verloren.
+    kontext._handle_stats(_stats(session, 0.0, 360_000, 20))
+    # Naechstes Intervall: 300 Pakete erwartet, 200 davon verloren.
+    kontext._handle_stats(_stats(session, 5.0, 360_100, 220))
+
+    zeile = next(r for r in kontext.live.user_rows() if r["session"] == session)
+    assert zeile["loss_pct"] is not None
+    assert zeile["loss_pct"] > 50, (
+        f"Es wird der Sitzungsmittelwert angezeigt ({zeile['loss_pct']} %) "
+        "statt der Rate im Intervall."
+    )
+    stufen = [a.level for a in kontext.live.alarms() if a.kind == "verlust"]
+    assert "kritisch" in stufen, "ein Ausfall dieser Groesse muss alarmieren"
+
+
+def test_erster_messwert_erzeugt_noch_keine_rate(app_client):
+    """Ohne Vorgaenger gibt es keine Differenz -- und darum keine Falschmeldung."""
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("kam-1", userid=1)
+    _warte_auf_client(client, "kam-1")
+
+    kontext = client.app.state.ctx
+    from intercom.monitor.stats import LossTracker
+
+    kontext._loss = LossTracker()
+    kontext._handle_stats(_stats(session, 0.0, 100_000, 5_000))
+
+    zeile = next(r for r in kontext.live.user_rows() if r["session"] == session)
+    assert zeile["loss_pct"] is None, "der erste Abruf darf keine Rate liefern"
+    assert not [a for a in kontext.live.alarms() if a.kind == "verlust"]
+
+
+def test_alter_messwert_alarmiert_nicht_mehr(app_client):
+    """Stirbt der Bot, darf sein letzter Wert nicht unbegrenzt weiteralarmieren.
+
+    Ein Verlust von vor zehn Minuten ist keine Aussage ueber jetzt. Er sieht
+    aber aus wie eine Messung -- das ist schlimmer als gar kein Wert.
+    """
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("kam-1", userid=1)
+    _warte_auf_client(client, "kam-1")
+
+    live = client.app.state.ctx.live
+    live.note_stats(session, 40.0, 5.0)
+    assert next(r for r in live.user_rows() if r["session"] == session)["loss_pct"] == 40.0
+    assert [a for a in live.alarms() if a.kind == "verlust"]
+
+    # Messung kuenstlich altern lassen.
+    live.stats_seen[session] -= live.STATS_MAX_AGE_S + 1
+
+    zeile = next(r for r in live.user_rows() if r["session"] == session)
+    assert zeile["loss_pct"] is None, "veralteter Wert wird weiter angezeigt"
+    assert zeile["jitter_ms"] is None
+    assert not [a for a in live.alarms() if a.kind == "verlust"]
+
+
+def test_bot_verliert_verbindung_und_messwerte_verschwinden(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    session = fake.server.connect_user("kam-1", userid=1)
+    _warte_auf_client(client, "kam-1")
+
+    kontext = client.app.state.ctx
+    kontext.live.note_stats(session, 40.0, 5.0)
+    assert kontext.live.loss
+
+    kontext._handle_monitor_state("wartet")
+    assert not kontext.live.loss, "Messwerte haetten verworfen werden muessen"
+    assert not [a for a in kontext.live.alarms() if a.kind == "verlust"]

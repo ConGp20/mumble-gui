@@ -204,6 +204,12 @@ class LiveState:
     #: So viele aufeinander folgende Messungen ohne Leerlauf gelten als Dauersenden.
     VOX_STREAK = 30
 
+    #: Aelter als das darf ein Messwert des Monitor-Bots nicht sein, um noch
+    #: angezeigt zu werden oder einen Alarm auszuloesen. Stirbt der Bot, stuende
+    #: sonst der letzte Wert unbegrenzt und alarmierte weiter -- ein Verlust von
+    #: vor zehn Minuten ist keine Aussage ueber jetzt.
+    STATS_MAX_AGE_S = 60.0
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.hub = EventHub()
@@ -269,6 +275,25 @@ class LiveState:
         self.jitter[session] = jitter_ms
         self.stats_seen[session] = time.time()
 
+    def clear_stats(self) -> None:
+        """Alle Messwerte des Bots verwerfen -- wenn er die Verbindung verliert."""
+        self.loss.clear()
+        self.jitter.clear()
+        self.stats_seen.clear()
+
+    def _frischer_verlust(self, session: int) -> float | None:
+        """Verlust, sofern die Messung noch aktuell genug ist.
+
+        Ein alter Wert ist schlimmer als gar keiner: er sieht aus wie eine
+        Messung, ist aber eine Erinnerung. Nach :attr:`STATS_MAX_AGE_S` gilt er
+        als unbekannt, das Cockpit zeigt wieder ``–`` und die Alarmschwelle
+        schlaegt nicht mehr darauf an.
+        """
+        gesehen = self.stats_seen.get(session)
+        if gesehen is None or time.time() - gesehen > self.STATS_MAX_AGE_S:
+            return None
+        return self.loss.get(session)
+
     def note_activity(self) -> None:
         """Zaehlt die VOX-Verdachtsreihen fort. Einmal je Polling-Durchlauf."""
         now = time.time()
@@ -310,8 +335,10 @@ class LiveState:
             row["channel_name"] = self.channel_name(user.channel)
             row["channel_path"] = self.path_of.get(user.channel, "")
             row["segment"] = self.networks.segment_for(user.address)
-            row["loss_pct"] = self.loss.get(session)
-            row["jitter_ms"] = self.jitter.get(session)
+            row["loss_pct"] = self._frischer_verlust(session)
+            row["jitter_ms"] = (
+                self.jitter.get(session) if row["loss_pct"] is not None else None
+            )
             row["stats_age"] = (
                 round(time.time() - self.stats_seen[session], 1)
                 if session in self.stats_seen
@@ -322,7 +349,7 @@ class LiveState:
             row["channel_ok"] = expected is None or expected == row["channel_path"]
             row["vox_suspect"] = session in vox
             row["deviations"] = deviation_map.get(session, [])
-            row["alert"] = self._user_alert_level(user, self.loss.get(session))
+            row["alert"] = self._user_alert_level(user, self._frischer_verlust(session))
             rows.append(row)
         rows.sort(key=lambda r: str(r["name"]).lower())
         return rows
@@ -346,7 +373,9 @@ class LiveState:
         buckets: dict[str, list[tuple[float, float | None]]] = {}
         for session, user in self.users.items():
             segment = self.networks.segment_for(user.address)
-            buckets.setdefault(segment, []).append((user.ping, self.loss.get(session)))
+            buckets.setdefault(segment, []).append(
+                (user.ping, self._frischer_verlust(session))
+            )
 
         rows: list[dict[str, Any]] = []
         for segment, values in buckets.items():
@@ -425,7 +454,7 @@ class LiveState:
 
         for session, user in self.users.items():
             ping = user.ping
-            loss = self.loss.get(session)
+            loss = self._frischer_verlust(session)
 
             if ping >= settings.alert_ping_ms:
                 found.append(

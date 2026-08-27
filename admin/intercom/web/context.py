@@ -51,6 +51,10 @@ class AppContext:
 
         self.store: Any = None
         self.monitor: Any = None
+        #: Rechnet die kumulativen Paketzaehler in die Rate je Intervall um.
+        #: Er gehoert hierher und nicht in den Bot: er ist nicht thread-sicher,
+        #: und hier laeuft alles im asyncio-Loop. Siehe MonitorBot-Docstring.
+        self._loss: Any = None
 
         self.config: IntercomConfig | None = None
         self.config_error: str = ""
@@ -147,7 +151,12 @@ class AppContext:
             )
             return
         try:
-            self.monitor = MonitorBot(self.settings, on_stats=self._on_stats)
+            from ..monitor.stats import LossTracker
+
+            self._loss = LossTracker()
+            self.monitor = MonitorBot(
+                self.settings, on_stats=self._on_stats, on_state=self._on_monitor_state
+            )
             self.monitor.start()
         except Exception as exc:
             self.monitor = None
@@ -234,6 +243,8 @@ class AppContext:
                 self._spawn(self._enforce(payload))
         elif event == "user_disconnected":
             self.live.drop_user(payload.session)
+            if self._loss is not None:
+                self._loss.forget(payload.session)
         elif event in {"channel_created", "channel_removed", "channel_state_changed"}:
             self._spawn(self._refresh(full=True))
             return
@@ -258,8 +269,47 @@ class AppContext:
             return
         loop.call_soon_threadsafe(self._handle_stats, sample)
 
+    def _on_monitor_state(self, state: str) -> None:
+        """Zustandswechsel des Bots -- kommt aus dessen Aufseher-Thread."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._handle_monitor_state, state)
+
+    def _handle_monitor_state(self, state: str) -> None:
+        if state == "verbunden" and self._loss is not None:
+            # Waehrend der Trennung sind die Zaehler der Clients weitergelaufen
+            # und Session-IDs koennen neu vergeben sein. Jede gemerkte
+            # Momentaufnahme ist damit wertlos.
+            self._loss.reset()
+        elif state in {"wartet", "fehler", "gestoppt"}:
+            # Ohne Bot gibt es keine frischen Messwerte. Die alten stehen zu
+            # lassen hiesse, mit einem Wert von vor zehn Minuten zu alarmieren.
+            self.live.clear_stats()
+
     def _handle_stats(self, sample: Any) -> None:
-        self.live.note_stats(sample.session, sample.loss_pct, sample.jitter_ms)
+        """Kumulative Zaehler -> Rate im Intervall.
+
+        ``sample.loss_pct`` waere der Mittelwert der GANZEN Sitzung. Ein Client,
+        der in der ersten Minute 30 % verloren hat und seitdem sauber laeuft,
+        stuende nach drei Stunden immer noch im Alarm -- und ein akuter Ausfall
+        verschwaende im Mittel einer langen Sitzung. Fuer die Anzeige zaehlt
+        allein die Differenz zum letzten Abruf.
+        """
+        if self._loss is None:
+            return
+        intervall = self._loss.update(sample)
+        if not intervall.has_rate:
+            # Erster Abruf oder Zaehler zurueckgesprungen: ein Intervall wird
+            # geopfert, damit der naechste Wert stimmt.
+            return
+        verlust = intervall.loss_pct
+        if verlust is None:
+            # In diesem Intervall lief kein einziges Paket -- typisch fuer einen
+            # Client, der auf TCP zurueckgefallen ist. "unbekannt" ist die
+            # richtige Aussage, nicht "0 %".
+            return
+        self.live.note_stats(sample.session, verlust, sample.jitter_ms)
 
     async def _enforce(self, user: Any) -> None:
         try:
