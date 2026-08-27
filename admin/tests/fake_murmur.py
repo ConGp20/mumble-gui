@@ -728,9 +728,14 @@ class FakeMurmur:
         self,
         secret: str = "test-secret",
         version: tuple[int, int, int, str] = (1, 5, 735, "1.5.735"),
+        port: int = 0,
     ) -> None:
         self.secret = secret
         self.version = version
+        #: 0 = freien Port waehlen lassen. Ein fester Port wird gebraucht, wenn
+        #: ein Test einen Serverneustart nachstellen will: der neue Server muss
+        #: denselben Endpunkt belegen, sonst faende der Admin ihn nie wieder.
+        self._wunsch_port = port
         self.server = FakeServer()
         self._communicator: Any = None
         self._adapter: Any = None
@@ -744,7 +749,9 @@ class FakeMurmur:
 
     def start(self) -> FakeMurmur:
         props = Ice.createProperties()
-        props.setProperty("FakeMurmur.Endpoints", "tcp -h 127.0.0.1 -p 0")
+        props.setProperty(
+            "FakeMurmur.Endpoints", f"tcp -h 127.0.0.1 -p {self._wunsch_port}"
+        )
         props.setProperty("Ice.MessageSizeMax", "8192")
         props.setProperty("Ice.Warn.Connections", "0")
         init_data = Ice.InitializationData()

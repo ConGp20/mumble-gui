@@ -395,6 +395,23 @@ als Verdacht gekennzeichnet, nicht als Feststellung.
 * **Mumble iOS** – PTT und Kanalwechsel; Funktionsumfang liegt zwischen den
   beiden.
 
+### Verhalten bei einem Serverneustart
+
+Faellt murmur weg, bleibt das Cockpit stehen: `/healthz` liefert weiter 200
+(sonst wuerde der Docker-Healthcheck den Admin-Container wegen eines fremden
+Dienstes neu starten, und beide kreisen umeinander), die Seiten zeigen den
+letzten bekannten Stand, und ein Banner nennt den Grund. Die Verbindung wird im
+Hintergrund mit wachsendem Abstand erneut versucht.
+
+**Nach dem Wiederverbinden wird nicht erneut provisioniert.**
+`PROVISION_ON_START` heisst Containerstart, nicht Serverneustart. Ein
+Netzaussetzer waehrend des Wettkampfs darf nicht dazu fuehren, dass die ACLs
+neu geschrieben werden und dabei eine bewusste Aenderung von vor fuenf Minuten
+verlorengeht. Ist die Serverdatenbank tatsaechlich weg, zeigt der Plan die
+Abweichung sofort — ein Klick auf „Anwenden" holt den Zustand zurueck.
+
+Abgesichert durch `test_ueberlebt_einen_serverneustart_und_verbindet_neu`.
+
 ### Slice- und Versionsabgleich
 
 Beim Start werden zwei Dinge geprueft: `Meta.getVersion()` gegen
@@ -527,7 +544,7 @@ koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
 cd admin
 python3.11 -m pip install -e ".[dev]"
 ./scripts/build_slice.sh v1.5.735 slice     # Slice holen und uebersetzen
-python -m pytest -q                          # 161 Tests
+python -m pytest -q                          # 162 Tests
 python -m ruff check .
 python -m mypy intercom
 ```

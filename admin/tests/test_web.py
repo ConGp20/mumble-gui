@@ -703,3 +703,102 @@ def test_lesende_post_routen_schreiben_wirklich_nicht(app_client):
         "registriert": dict(fake.server.registered),
     }
     assert nachher == vorher, "eine als lesend gefuehrte Route hat geschrieben"
+
+
+# --------------------------------------------------------------------------- #
+#  Serverneustart im laufenden Betrieb
+# --------------------------------------------------------------------------- #
+
+
+def test_ueberlebt_einen_serverneustart_und_verbindet_neu(tmp_path):
+    """Der wahrscheinlichste Zwischenfall ueberhaupt.
+
+    Faellt murmur weg -- Containerneustart, kurzer Netzaussetzer --, muss das
+    Cockpit stehen bleiben und sich von selbst wieder fangen. Insbesondere darf
+    ``/healthz`` weiter 200 liefern: der Docker-Healthcheck haengt daran, und
+    ein Admin-Container, der wegen eines fremden Dienstes neu startet, wuerde
+    mit murmur um die Wette kreisen.
+
+    Ebenso wichtig ist, was **nicht** passiert: nach dem Wiederverbinden wird
+    nicht erneut provisioniert. ``PROVISION_ON_START`` heisst Containerstart,
+    nicht Serverneustart. Ein Netzaussetzer waehrend des Wettkampfs darf nicht
+    dazu fuehren, dass die ACLs neu geschrieben werden und dabei eine bewusste
+    Aenderung von vor fuenf Minuten verlorengeht.
+    """
+    import socket
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from intercom.web.app import create_app
+    from tests.fake_murmur import FakeMurmur
+
+    sonde = socket.socket()
+    sonde.bind(("127.0.0.1", 0))
+    port = sonde.getsockname()[1]
+    sonde.close()
+
+    config = tmp_path / "intercom.yaml"
+    config.write_text(
+        "version: 1\ngroups: [regie]\nchannels:\n  - name: Intercom\n", encoding="utf-8"
+    )
+
+    erster = FakeMurmur(port=port)
+    erster.start()
+    try:
+        settings = erster.settings(
+            intercom_config=config,
+            data_dir=tmp_path,
+            provision_on_start=True,
+            admin_password="geheim",
+            poll_interval_ms=250,
+        )
+        with TestClient(create_app(settings)) as client:
+            _anmelden(client)
+            assert client.get("/healthz").json()["ice"]["connected"] is True
+            assert any(c.name == "Intercom" for c in erster.server.channels.values())
+
+            # --- murmur faellt weg -------------------------------------------
+            erster.stop()
+            frist = time.monotonic() + 10
+            while time.monotonic() < frist:
+                if not client.get("/healthz").json()["ice"]["connected"]:
+                    break
+                time.sleep(0.1)
+
+            gesundheit = client.get("/healthz")
+            assert gesundheit.status_code == 200, "Healthcheck darf nicht kippen"
+            assert gesundheit.json()["ice"]["connected"] is False
+            assert "mumble-server" in gesundheit.json()["ice"]["error"]
+            # Das Cockpit bleibt bedienbar und zeigt den letzten bekannten Stand.
+            assert client.get("/").status_code == 200
+            assert client.get("/api/state").status_code == 200
+
+            # --- murmur kommt zurueck, mit leerer Datenbank -------------------
+            zweiter = FakeMurmur(port=port)
+            zweiter.start()
+            try:
+                frist = time.monotonic() + 20
+                while time.monotonic() < frist:
+                    if client.get("/healthz").json()["ice"]["connected"]:
+                        break
+                    time.sleep(0.2)
+                assert client.get("/healthz").json()["ice"]["connected"] is True, (
+                    "Wiederverbinden ist gescheitert"
+                )
+
+                # Nicht erneut provisioniert: der frische Server hat nur die Wurzel.
+                assert set(zweiter.server.channels) == {0}, (
+                    "nach dem Wiederverbinden wurde ungefragt provisioniert"
+                )
+                # Aber der Plan zeigt die Abweichung sofort an -- eine Klick, und
+                # der Betreiber holt sie zurueck.
+                plan = client.post(
+                    "/api/provision/plan", headers={"X-CSRF-Token": _csrf(client)}
+                ).json()
+                assert plan["empty"] is False
+                assert any(c["kind"] == "channel_create" for c in plan["changes"])
+            finally:
+                zweiter.stop()
+    finally:
+        erster.stop()
