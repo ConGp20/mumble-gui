@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "intercom-admin"
 version = "1.0.0"
 description = "Administration, Provisionierung und Ueberwachung des Stadion-Intercoms"
-readme = "../README.md"
+# Kein readme = "../README.md": der Docker-Bau-Kontext ist ./admin, ein Pfad
+# darueber liegt ausserhalb und waere beim Bau nicht vorhanden. setuptools
+# uebergeht die fehlende Datei heute stillschweigend -- darauf sollte sich der
+# Bau aber nicht verlassen. Die README liegt im Projektstamm.
 requires-python = ">=3.11,<3.12"
 # Die Obergrenze ist keine Vorsicht, sondern gemessen: zeroc-ice 3.7.11 hat auf
 # PyPI kein Wheel fuer 3.11 und wird aus dem Quelltext gebaut; fuer 3.12+ ist
