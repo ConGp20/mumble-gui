@@ -584,7 +584,12 @@ async def acl_preview(
     body: ACLPayload,
     account: Account = Depends(require_user),
 ) -> dict[str, Any]:
-    """Diff-Ansicht vor dem Speichern."""
+    """Diff-Ansicht vor dem Speichern.
+
+    POST nur wegen des Rumpfs -- die Route **schreibt nichts** und steht darum
+    auch dem Nur-Lese-Konto offen. Abgesichert durch
+    ``test_lesende_post_routen_schreiben_wirklich_nicht``.
+    """
     context = ctx(request)
     try:
         current = await context.ice.get_acl(channel_id)
@@ -622,7 +627,10 @@ def acl_template(
     body: dict[str, Any] = Body(...),
     account: Account = Depends(require_user),
 ) -> dict[str, Any]:
-    """Baut die ACL-Liste einer Vorlage, ohne sie zu schreiben."""
+    """Baut die ACL-Liste einer Vorlage, ohne sie zu schreiben.
+
+    Reine Funktion, kein Serverzugriff. POST nur wegen des Rumpfs.
+    """
     key = str(body.get("key", ""))
     groups = [str(g) for g in body.get("groups", [])]
     try:

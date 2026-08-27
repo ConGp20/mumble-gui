@@ -617,3 +617,89 @@ def test_event_hub_ohne_abonnenten_serialisiert_nichts():
         assert hub.dropped == 0
 
     asyncio.run(lauf())
+
+
+# --------------------------------------------------------------------------- #
+#  Absicherung der Routen
+# --------------------------------------------------------------------------- #
+
+#: POST-Routen, die absichtlich nichts veraendern und darum dem Nur-Lese-Konto
+#: offenstehen. Sie benutzen POST nur, weil sie einen Rumpf entgegennehmen.
+#: Wer hier etwas eintraegt, muss belegen koennen, dass die Route wirklich
+#: nichts schreibt.
+LESENDE_POST_ROUTEN = {
+    "/api/channels/{channel_id}/acl/preview",   # rechnet nur den Diff aus
+    "/api/channels/{channel_id}/acl/template",  # reine Funktion, kein Serverzugriff
+    "/api/provision/plan",                      # Trockenlauf, dry_run=True
+}
+
+
+def test_jede_schreibende_route_verlangt_admin():
+    """Wache gegen die stille Luecke.
+
+    Eine neue Route, bei der jemand ``require_admin`` vergisst, waere im Betrieb
+    nicht zu bemerken: der Nur-Lese-Zugang koennte sie benutzen, und niemand
+    wuerde es sehen. Dieser Test geht alle Routen durch, statt sich auf
+    Aufmerksamkeit beim Nachlesen zu verlassen.
+    """
+    from intercom.web.api import router
+
+    ungeschuetzt: list[tuple[str, str, str]] = []
+    for route in router.routes:
+        methoden = set(getattr(route, "methods", []) or [])
+        wachen = {
+            getattr(abhaengigkeit.call, "__name__", "")
+            for abhaengigkeit in route.dependant.dependencies
+        }
+        wache = (
+            "require_admin"
+            if "require_admin" in wachen
+            else ("require_user" if "require_user" in wachen else "keine")
+        )
+
+        veraendernd = bool(methoden & {"POST", "PUT", "PATCH", "DELETE"})
+        if veraendernd and route.path in LESENDE_POST_ROUTEN:
+            veraendernd = False
+
+        erwartet = "require_admin" if veraendernd else "require_user"
+        if wache != erwartet and not (wache == "require_admin" and not veraendernd):
+            ungeschuetzt.append((",".join(sorted(methoden)), route.path, wache))
+
+    assert not ungeschuetzt, "Routen ohne passende Wache: " + repr(ungeschuetzt)
+
+
+def test_lesende_post_routen_schreiben_wirklich_nicht(app_client):
+    """Belegt die Ausnahmeliste oben, statt sie zu behaupten."""
+    client, fake = app_client
+    _anmelden(client, "viewer", "lesen")
+    csrf = _csrf(client)
+
+    vorher = {
+        "kanaele": {c.id: (c.name, c.description, c.position) for c in fake.server.channels.values()},
+        "acls": {c.id: [(a.group, a.allow, a.deny) for a in c.acls] for c in fake.server.channels.values()},
+        "conf": dict(fake.server.conf),
+        "registriert": dict(fake.server.registered),
+    }
+
+    regie = next(c.id for c in fake.server.channels.values() if c.name == "Regie")
+    assert client.post(
+        f"/api/channels/{regie}/acl/preview",
+        json={"acls": [], "groups": [], "inherit": True},
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 200
+    assert client.post(
+        f"/api/channels/{regie}/acl/template",
+        json={"key": "ring", "groups": ["regie"]},
+        headers={"X-CSRF-Token": csrf},
+    ).status_code == 200
+    assert client.post(
+        "/api/provision/plan", headers={"X-CSRF-Token": csrf}
+    ).status_code == 200
+
+    nachher = {
+        "kanaele": {c.id: (c.name, c.description, c.position) for c in fake.server.channels.values()},
+        "acls": {c.id: [(a.group, a.allow, a.deny) for a in c.acls] for c in fake.server.channels.values()},
+        "conf": dict(fake.server.conf),
+        "registriert": dict(fake.server.registered),
+    }
+    assert nachher == vorher, "eine als lesend gefuehrte Route hat geschrieben"
