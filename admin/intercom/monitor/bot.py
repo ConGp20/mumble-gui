@@ -55,6 +55,7 @@ import ssl
 import threading
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,16 @@ _LOOP_RATE_S = 0.05
 #: Untergrenze fuer das Abfrageintervall. Darunter erzeugt das Abfragen mehr
 #: Last als Erkenntnis -- dieselbe Begruendung wie bei ``POLL_INTERVAL_MS``.
 _MIN_INTERVAL_S = 0.25
+
+#: So lange muss eine Verbindung getragen haben, bevor der Backoff-Zaehler
+#: zurueckgesetzt wird.
+#:
+#: Der haeufigste Dauerfehler ist einer, bei dem die Anmeldung *gelingt* und
+#: murmur den Bot gleich danach wieder loswird -- Name schon vergeben,
+#: Zertifikat abgelehnt, Ban. Wird der Zaehler direkt nach dem Verbinden
+#: genullt, wartet der naechste Versuch wieder nur die Grundzeit, und der Bot
+#: haemmert im Sekundentakt gegen den Server, statt sich zurueckzuziehen.
+_STABIL_S = 30.0
 
 try:
     import pymumble_py3
@@ -400,6 +411,17 @@ if PYMUMBLE_AVAILABLE:
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(frozen=True, slots=True)
+class _Merkmale:
+    """Was sich waehrend einer Sitzung nicht mehr aendert."""
+
+    certificate_count: int
+    cert_hash: str
+    address: str
+    version: str
+    opus: bool
+
+
 class MonitorBot:
     """Haelt einen stummen Mumble-Client im Server und liefert ``UserStats``.
 
@@ -472,6 +494,9 @@ class MonitorBot:
         self._cert_hash = ""
         self._attempt = 0
         self._random = random.Random()
+        #: Session -> die Felder, die nur die Vollantwort enthaelt.
+        #: Siehe :meth:`_merge_merkmale`.
+        self._merkmale: dict[int, _Merkmale] = {}
 
     # ------------------------------------------------------------------ #
     #  Zustand
@@ -570,10 +595,10 @@ class MonitorBot:
     def _run(self) -> None:
         while not self._stop.is_set():
             self._attempt += 1
+            begonnen = time.monotonic()
             try:
                 self._set_state(STATE_CONNECTING)
                 mumble = self._connect()
-                self._attempt = 0
                 self._set_state(STATE_CONNECTED)
                 self._prepare(mumble)
                 self._poll_loop(mumble)
@@ -585,6 +610,15 @@ class MonitorBot:
                 # pymumble-Thread laeuft aber schon.
                 self._close_client(self._mumble)
                 self._mumble = None
+                # Nach einem Reconnect vergibt murmur neue Sitzungsnummern;
+                # die alten Merkmale gehoeren zu niemandem mehr.
+                with self._lock:
+                    self._merkmale.clear()
+
+            # Erst jetzt, und nur wenn die Verbindung wirklich getragen hat --
+            # siehe _STABIL_S.
+            if time.monotonic() - begonnen >= _STABIL_S:
+                self._attempt = 0
 
             if self._stop.is_set():
                 break
@@ -646,14 +680,36 @@ class MonitorBot:
         return mumble
 
     def _prepare(self, mumble: Any) -> None:
-        """Stumm, taub, und in den vorgesehenen Kanal."""
+        """Stumm, taub, und in den vorgesehenen Kanal.
+
+        Die Kommandos gehen bewusst nicht ueber ``User.mute()``,
+        ``User.deafen()`` und ``Channel.move_in()``: die rufen
+        ``execute_command`` mit ``blocking=True`` auf, und das wartet
+        **ohne Zeitlimit** auf eine Sperre, die nur der pymumble-Thread
+        loesen kann (``Mumble.execute_command`` -> ``lock.acquire()``,
+        freigegeben erst in ``commands.answer()``). Stirbt der Thread
+        dazwischen -- und genau dann sind wir hier, naemlich direkt nach dem
+        Verbindungsaufbau -- haengt der Aufseher-Thread fuer immer, und mit
+        ihm ``stop()`` und das Herunterfahren des Containers. Dieselbe
+        Begruendung wie bei :meth:`_request_stats`.
+
+        Stumm und taub in *einer* Nachricht: murmur wertet beide Felder aus
+        demselben ``UserState`` aus, zwei Nachrichten sind nur zwei Chancen,
+        dass eine davon unterwegs verlorengeht.
+        """
         myself = mumble.users.myself
         if myself is None:
             raise ConnectionError(
                 "Der Server hat kein ServerSync geschickt -- eigene Session unbekannt."
             )
-        myself.mute()
-        myself.deafen()
+        session = int(myself["session"])
+        mumble.execute_command(
+            messages.ModUserState(
+                session,
+                {"session": session, "self_mute": True, "self_deaf": True},
+            ),
+            blocking=False,
+        )
 
         path = self._settings.monitor_channel
         channel_id = resolve_channel_path(mumble.channels, path)
@@ -671,7 +727,9 @@ class MonitorBot:
                 self._last_error = message
             return
         if myself.get_property("channel_id") != channel_id:
-            mumble.channels[channel_id].move_in()
+            mumble.execute_command(
+                messages.MoveCmd(session, channel_id), blocking=False
+            )
 
     def _poll_loop(self, mumble: Any) -> None:
         interval = max(self._settings.monitor_stats_interval_ms / 1000.0, _MIN_INTERVAL_S)
@@ -681,6 +739,12 @@ class MonitorBot:
             and mumble.connected == _CONN_CONNECTED
         ):
             sessions = self._sessions(mumble)
+            # Getrennte Clients aus dem Merkmalsspeicher werfen. murmur vergibt
+            # Sitzungsnummern aufsteigend; ohne das waere es ein Eintrag pro
+            # Verbindung, solange der Bot laeuft.
+            with self._lock:
+                for veraltet in set(self._merkmale) - set(sessions):
+                    self._merkmale.pop(veraltet, None)
             if not sessions:
                 self._stop.wait(interval)
                 continue
@@ -711,13 +775,19 @@ class MonitorBot:
             return []
 
     def _request_stats(self, mumble: Any, session: int) -> None:
+        # Beim ersten Mal die Vollantwort, danach nur noch die Zahlen --
+        # siehe _merge_merkmale.
+        with self._lock:
+            nur_zahlen = session in self._merkmale
         try:
             # blocking=False mit Absicht: die blockierende Fassung wartet ohne
             # Zeitlimit auf eine Sperre, die nur der pymumble-Thread loesen
             # kann. Stirbt der zwischen Pruefung und Aufruf, haengt der
             # Aufseher-Thread fuer immer -- und mit ihm stop(). Die Antwort
             # kommt ohnehin asynchron ueber den Rueckruf.
-            mumble.execute_command(_UserStatsCmd(session), blocking=False)
+            mumble.execute_command(
+                _UserStatsCmd(session, stats_only=nur_zahlen), blocking=False
+            )
         except Exception as exc:  # noqa: BLE001 - eine tote Session ist kein Grund aufzugeben
             log.debug("UserStats fuer Session %s nicht angefragt: %s", session, exc)
 
@@ -733,8 +803,10 @@ class MonitorBot:
         und damit die Verbindung.
         """
         try:
-            sample = UserStatsSample.from_protobuf(
-                message, name=self._name_of(int(message.session))
+            sample = self._merge_merkmale(
+                UserStatsSample.from_protobuf(
+                    message, name=self._name_of(int(message.session))
+                )
             )
         except Exception:
             log.exception("UserStats-Antwort nicht lesbar")
@@ -746,6 +818,49 @@ class MonitorBot:
             callback(sample)
         except Exception:
             log.exception("on_stats hat eine Ausnahme geworfen")
+
+    def _merge_merkmale(self, sample: UserStatsSample) -> UserStatsSample:
+        """Ergaenzt die Felder, die nur in der Vollantwort stehen.
+
+        Zertifikatskette, Adresse, Clientversion und Codec stehen fuer eine
+        Sitzung fest, sobald der Client verbunden ist. Sie bei *jeder* Abfrage
+        mitzuschicken kostet die vollstaendige DER-Kette je Client und
+        Intervall -- bei dreissig Clients alle fuenf Sekunden der mit Abstand
+        groesste Posten der ganzen Ueberwachung, fuer Daten, die sich nicht
+        aendern. Deshalb: einmal voll fragen, merken, danach ``stats_only``.
+
+        Selbstheilend: gemerkt wird nur, was auch angekommen ist. Fehlt dem Bot
+        das Recht ``Ban`` am Wurzelkanal, liefert murmur diese Felder gar
+        nicht -- dann bleibt das Woerterbuch leer und weiter voll gefragt.
+        Bekommt der Bot das Recht spaeter, greift es sofort.
+
+        Laeuft im pymumble-Thread, ``_request_stats`` im Aufseher-Thread --
+        daher die Sperre.
+        """
+        neu = _Merkmale(
+            certificate_count=sample.certificate_count,
+            cert_hash=sample.cert_hash,
+            address=sample.address,
+            version=sample.version,
+            opus=sample.opus,
+        )
+        if neu.certificate_count or neu.address or neu.version:
+            with self._lock:
+                self._merkmale[sample.session] = neu
+            return sample
+
+        with self._lock:
+            gemerkt = self._merkmale.get(sample.session)
+        if gemerkt is None:
+            return sample
+        return replace(
+            sample,
+            certificate_count=gemerkt.certificate_count,
+            cert_hash=gemerkt.cert_hash,
+            address=gemerkt.address,
+            version=gemerkt.version,
+            opus=gemerkt.opus,
+        )
 
     def _handle_permission_denied(self, message: Any) -> None:
         """murmur verweigert etwas -- fast immer fehlende Rechte fuer UserStats."""

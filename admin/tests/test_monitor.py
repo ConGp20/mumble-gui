@@ -17,6 +17,7 @@ Zufallsgenerator.
 from __future__ import annotations
 
 import ipaddress
+import itertools
 import ssl
 import struct
 import threading
@@ -745,3 +746,205 @@ def test_zustandsrueckruf_darf_ausnahmen_werfen(settings):
     bot = bot_module.MonitorBot(settings, on_state=kaputt)
     bot._set_state(bot_module.STATE_CONNECTING)
     assert bot.state == bot_module.STATE_CONNECTING
+
+
+# --------------------------------------------------------------------------- #
+#  Verbindungsschleife und UserStats-Sparsamkeit
+# --------------------------------------------------------------------------- #
+
+
+def test_backoff_faellt_erst_wenn_die_verbindung_getragen_hat(settings, monkeypatch):
+    """Anmeldung gelingt, murmur wirft sofort wieder raus -- der haeufigste Fall.
+
+    Name schon vergeben, Zertifikat abgelehnt, Ban: die Anmeldung *klappt*, die
+    Verbindung endet Sekundenbruchteile spaeter. Wurde der Zaehler direkt nach
+    dem Verbinden genullt, wartete der naechste Versuch wieder die Grundzeit --
+    der Bot haemmert im Sekundentakt gegen den Server.
+    """
+    bot = bot_module.MonitorBot(settings)
+    gefragt: list[int] = []
+
+    def fake_backoff(attempt, **kwargs):
+        gefragt.append(attempt)
+        return 0.0
+
+    monkeypatch.setattr(bot_module, "backoff_delay", fake_backoff)
+
+    runden = 0
+
+    def fake_connect():
+        nonlocal runden
+        runden += 1
+        if runden >= 4:
+            bot._stop.set()
+        return object()
+
+    monkeypatch.setattr(bot, "_connect", fake_connect)
+    monkeypatch.setattr(bot, "_prepare", lambda mumble: None)
+    monkeypatch.setattr(bot, "_poll_loop", lambda mumble: None)
+    monkeypatch.setattr(bot, "_close_client", lambda mumble: None)
+
+    bot._run()
+
+    assert gefragt == [1, 2, 3], "der Zaehler wurde zu frueh zurueckgesetzt"
+
+
+def test_backoff_faellt_nach_einer_stabilen_verbindung(settings, monkeypatch):
+    """Gegenprobe: hat die Verbindung getragen, faengt das Warten wieder klein an."""
+    bot = bot_module.MonitorBot(settings)
+    gefragt: list[int] = []
+
+    def fake_backoff(attempt, **kwargs):
+        gefragt.append(attempt)
+        return 0.0
+
+    monkeypatch.setattr(bot_module, "backoff_delay", fake_backoff)
+
+    # Die Uhr laeuft schneller als der Test: jede Runde altert um 100 s,
+    # deutlich mehr als _STABIL_S.
+    uhr = itertools.count(0.0, 100.0)
+    monkeypatch.setattr(bot_module.time, "monotonic", lambda: next(uhr))
+
+    runden = 0
+
+    def fake_connect():
+        nonlocal runden
+        runden += 1
+        if runden >= 3:
+            bot._stop.set()
+        return object()
+
+    monkeypatch.setattr(bot, "_connect", fake_connect)
+    monkeypatch.setattr(bot, "_prepare", lambda mumble: None)
+    monkeypatch.setattr(bot, "_poll_loop", lambda mumble: None)
+    monkeypatch.setattr(bot, "_close_client", lambda mumble: None)
+
+    bot._run()
+
+    # Zweite Runde wartet wieder die Grundzeit statt das Doppelte.
+    assert gefragt == [1, 1]
+
+
+class _KanalErsatz(dict):
+    """Kanal, wie pymumble ihn haelt -- plus die Methoden, die wir nicht wollen."""
+
+    def move_in(self, session=None):
+        raise AssertionError("move_in() blockiert ohne Zeitlimit")
+
+
+class _IchErsatz(dict):
+    def get_property(self, key):
+        return self.get(key)
+
+    def mute(self):
+        raise AssertionError("mute() blockiert ohne Zeitlimit")
+
+    def deafen(self):
+        raise AssertionError("deafen() blockiert ohne Zeitlimit")
+
+
+class _UserErsatz(dict):
+    myself = None
+
+
+class _MumbleErsatz:
+    def __init__(self, channel_id=0):
+        self.users = _UserErsatz()
+        self.users.myself = _IchErsatz(session=42, channel_id=channel_id)
+        self.channels = {
+            0: _KanalErsatz({"channel_id": 0, "name": "Root"}),
+            1: _KanalErsatz({"channel_id": 1, "name": "Intercom", "parent": 0}),
+            2: _KanalErsatz({"channel_id": 2, "name": "Regie", "parent": 1}),
+        }
+        self.kommandos = []
+
+    def execute_command(self, cmd, blocking=True):
+        self.kommandos.append((cmd, blocking))
+        return None
+
+
+@needs_pymumble
+def test_prepare_wartet_auf_nichts(settings):
+    """``execute_command(blocking=True)`` wartet ohne Zeitlimit auf den pymumble-Thread.
+
+    Stirbt der, haengt der Aufseher-Thread fuer immer -- und mit ihm ``stop()``
+    und das Herunterfahren des Containers. ``_prepare`` laeuft direkt nach dem
+    Verbindungsaufbau, also genau dann, wenn der Thread am ehesten stirbt.
+    """
+    bot = bot_module.MonitorBot(settings)
+    mumble = _MumbleErsatz(channel_id=0)
+
+    bot._prepare(mumble)
+
+    assert [blocking for _, blocking in mumble.kommandos] == [False, False]
+    stumm, umzug = (cmd for cmd, _ in mumble.kommandos)
+    assert stumm.parameters == {"session": 42, "self_mute": True, "self_deaf": True}
+    assert umzug.parameters == {"session": 42, "channel_id": 2}
+
+
+@needs_pymumble
+def test_prepare_zieht_nicht_um_wenn_der_bot_schon_richtig_steht(settings):
+    bot = bot_module.MonitorBot(settings)
+    mumble = _MumbleErsatz(channel_id=2)
+
+    bot._prepare(mumble)
+
+    assert len(mumble.kommandos) == 1
+
+
+def _probe(session=5, **felder):
+    from intercom.monitor.stats import UserStatsSample
+
+    grund = {
+        "ts": 1000.0,
+        "session": session,
+        "certificate_count": 0,
+        "cert_hash": "",
+        "address": "",
+        "version": "",
+        "opus": False,
+    }
+    grund.update(felder)
+    return UserStatsSample(**grund)
+
+
+def test_unveraenderliche_felder_werden_nur_einmal_geholt(settings):
+    """Die Zertifikatskette bei jeder Abfrage mitzuschicken ist reine Last."""
+    bot = bot_module.MonitorBot(settings)
+
+    voll = bot._merge_merkmale(
+        _probe(certificate_count=2, cert_hash="ab12", address="10.20.10.5", version="1.5.735")
+    )
+    assert voll.cert_hash == "ab12"
+    assert 5 in bot._merkmale
+
+    # Ab jetzt fragt der Bot nur noch die Zahlen ab ...
+    mumble = _MumbleErsatz()
+    bot._request_stats(mumble, 5)
+    cmd, blocking = mumble.kommandos[0]
+    assert blocking is False
+    assert cmd.parameters["stats_only"] is True
+
+    # ... und die Antwort ohne Zertifikat wird wieder vervollstaendigt.
+    knapp = bot._merge_merkmale(_probe(tcp_ping_avg_ms=12.0))
+    assert knapp.cert_hash == "ab12"
+    assert knapp.certificate_count == 2
+    assert knapp.address == "10.20.10.5"
+    assert knapp.version == "1.5.735"
+    assert knapp.tcp_ping_avg_ms == 12.0
+
+
+def test_ohne_ban_recht_wird_weiter_voll_gefragt(settings):
+    """Fehlt dem Bot ``Ban`` am Wurzelkanal, liefert murmur die Felder nie.
+
+    Dann darf sich der Bot nicht auf eine leere Antwort einschwoeren -- sonst
+    bekaeme er die Daten auch nach dem Nachruesten des Rechts nie zu sehen.
+    """
+    bot = bot_module.MonitorBot(settings)
+
+    bot._merge_merkmale(_probe(tcp_ping_avg_ms=9.0))
+    assert bot._merkmale == {}
+
+    mumble = _MumbleErsatz()
+    bot._request_stats(mumble, 5)
+    assert mumble.kommandos[0][0].parameters["stats_only"] is False

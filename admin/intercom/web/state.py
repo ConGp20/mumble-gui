@@ -245,7 +245,14 @@ class LiveState:
 
     def set_users(self, users: dict[int, MumbleUser]) -> None:
         self.users = users
-        for session in set(self.loss) - set(users):
+        # Ueber alle Sitzungs-Woerterbuecher aufraeumen, nicht nur ueber
+        # self.loss: der VOX-Verdacht entsteht in note_activity fuer *jeden*
+        # Client, auch ohne Monitor-Bot. Ist der Bot aus (MONITOR_ENABLED=false)
+        # oder liefert er nichts, bleibt self.loss leer -- und mit ihr als Mass
+        # wurde nie etwas geloescht. murmur vergibt Sitzungsnummern
+        # aufsteigend, also waere das ein Eintrag pro Verbindung, fuer immer.
+        bekannt = set(self.loss) | set(self.jitter) | set(self.stats_seen) | set(self._vox)
+        for session in bekannt - set(users):
             self.loss.pop(session, None)
             self.jitter.pop(session, None)
             self.stats_seen.pop(session, None)

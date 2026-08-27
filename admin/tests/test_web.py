@@ -1024,3 +1024,46 @@ def test_quellentabelle_waechst_nicht_unbegrenzt(app_client):
     for nummer in range(sitzungen.MAX_QUELLEN + 500):
         sitzungen.note_failure(f"10.{nummer // 65536}.{nummer // 256 % 256}.{nummer % 256}")
     assert len(sitzungen._failures) <= sitzungen.MAX_QUELLEN
+
+
+def test_vox_verdacht_wird_auch_ohne_monitor_aufgeraeumt(fake_murmur):
+    """Das Aufraeumen hing an ``self.loss`` -- die falsche Liste.
+
+    Der VOX-Verdacht entsteht fuer *jeden* Client, der Paketverlust dagegen nur,
+    wenn der Monitor-Bot laeuft. Ist er aus (``MONITOR_BOT_ENABLED=false``),
+    bleibt ``self.loss`` leer, und mit ihr als Mass wurde nie etwas geloescht.
+    murmur vergibt Sitzungsnummern aufsteigend: ein Eintrag pro Verbindung,
+    fuer die gesamte Laufzeit des Containers.
+    """
+    from intercom.ice.types import MumbleUser
+    from intercom.web.state import LiveState
+
+    live = LiveState(fake_murmur.settings(monitor_enabled=False))
+
+    def klient(session: int) -> MumbleUser:
+        return MumbleUser(
+            session=session, userid=session, name=f"kam-{session}", channel=0
+        )
+
+    for runde in range(1, 21):
+        live.set_users({runde: klient(runde)})
+        live.note_activity()
+
+    assert set(live._vox) == {20}, "der VOX-Speicher waechst mit jeder Verbindung"
+
+
+def test_vox_verdacht_ueberlebt_solange_der_client_verbunden_ist(fake_murmur):
+    """Gegenprobe: aufgeraeumt wird nur, was wirklich weg ist."""
+    from intercom.ice.types import MumbleUser
+    from intercom.web.state import LiveState
+
+    live = LiveState(fake_murmur.settings(monitor_enabled=False))
+    bleibt = MumbleUser(session=7, userid=7, name="regie-1", channel=0)
+    geht = MumbleUser(session=8, userid=8, name="kam-1", channel=0)
+
+    live.set_users({7: bleibt, 8: geht})
+    live.note_activity()
+    assert set(live._vox) == {7, 8}
+
+    live.set_users({7: bleibt})
+    assert set(live._vox) == {7}
