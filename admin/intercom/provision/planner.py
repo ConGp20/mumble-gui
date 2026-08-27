@@ -276,8 +276,17 @@ class Reconciler:
         live_channels = self.client.get_channels()
         self._path_to_id = self._build_paths(live_channels)
 
+        # Alle Namen einsammeln, die aufgeloest werden muessen: aus users: UND
+        # aus channels[].groups[]. Wer das vergisst, legt die Gruppe an, aber
+        # ohne Mitglieder -- und zwar lautlos.
+        namen: list[str] = list(self.config.users)
+        for kanal in self.config.all_channels():
+            for gruppe in kanal.groups:
+                namen.extend(gruppe.add)
+                namen.extend(gruppe.remove)
+
         desired = build_desired_state(
-            self.config, self.client.get_user_ids(list(self.config.users))
+            self.config, self.client.get_user_ids(sorted(set(namen)))
         )
         self.plan.unknown_users = desired.unknown_users
         self.plan.priority_map = {
@@ -670,18 +679,52 @@ class Reconciler:
                 )
                 continue
 
-            # Gruppen an Unterkanaelen verwalten wir nicht; bestehende bleiben.
-            keep_groups = current.own_groups()
+            # Gruppen, die der Kanal selbst fuehrt und die NICHT in der YAML
+            # stehen, bleiben erhalten -- setACL ersetzt alle Gruppen und
+            # wuerde sie sonst auch ohne PROVISION_PRUNE mitloeschen.
+            verwaltet = {g.name for g in want.groups}
+            bewahrt = [g for g in current.own_groups() if g.name not in verwaltet]
+            if self.prune:
+                for group in bewahrt:
+                    self._record(
+                        Change(
+                            kind="group_update",
+                            target=f"{want.path} @{group.name}",
+                            summary="Gruppe loeschen (steht nicht in der YAML)",
+                            before=[_group_line(group)],
+                            destructive=True,
+                            needs_prune=True,
+                            applied=not self.dry_run,
+                        )
+                    )
+                bewahrt = []
+            elif bewahrt:
+                for group in bewahrt:
+                    self._record(
+                        Change(
+                            kind="group_update",
+                            target=f"{want.path} @{group.name}",
+                            summary="Gruppe loeschen (steht nicht in der YAML)",
+                            before=[_group_line(group)],
+                            destructive=True,
+                            needs_prune=True,
+                        )
+                    )
+
+            keep_groups = list(want.groups) + bewahrt
             acl_diff = self._diff_acls(current.own_acls(), want.acls)
-            if not acl_diff:
+            group_diff = self._diff_groups(current.own_groups(), keep_groups)
+            if not acl_diff and not group_diff:
                 continue
 
             change = Change(
                 kind="acl_update",
                 target=want.path,
-                summary="ACLs aendern",
-                before=[line for line, _ in acl_diff if line],
-                after=[line for _, line in acl_diff if line],
+                summary="ACLs aendern" if acl_diff else "Gruppen aendern",
+                before=[line for line, _ in acl_diff if line]
+                + [line for line, _ in group_diff if line],
+                after=[line for _, line in acl_diff if line]
+                + [line for _, line in group_diff if line],
             )
 
             def action(

@@ -214,6 +214,7 @@ In ACL-Eintraegen versteht murmur zusaetzlich Praefixe:
 | `position` | Sortierung (kleiner = weiter oben). |
 | `acl_template` | Name aus `acl_templates`. Wird **zuerst** angewendet. |
 | `acl` | Rohe ACL-Eintraege, gleiche Form wie in `acl_templates`. Danach angewendet. |
+| `groups` | Eigene Gruppen **dieses** Kanals (Name, Mitglieder als Namen, optional `inherit`/`inheritable`). Die Gruppen aus `groups:` auf oberster Ebene liegen dagegen am Wurzelkanal. |
 | `speak` | Gruppen, die hier sprechen duerfen. |
 | `whisper_in` | Gruppen, die hierher fluestern duerfen. |
 | `listen_for` | Gruppen, die den Kanal mithoeren duerfen. |
@@ -280,6 +281,28 @@ IDs. Unbekannte Namen landen im Provisioning-Report, statt still zu verschwinden
 `channel` ist optional und rein fuer die Alarmleiste: steht der Client nicht
 dort, faellt es im Cockpit auf. **Verschoben wird niemand automatisch** —
 waehrend eines Wettkampfs waere das gefaehrlich.
+
+### Kanaleigene Gruppen
+
+```yaml
+channels:
+  - name: Intercom
+    children:
+      - name: Kameras
+        groups:
+          - name: kamera-lokal
+            add: [kam-1, kam-2]
+        speak: [kamera-lokal]
+```
+
+Mitglieder stehen als **Namen**, nicht als IDs: Nutzer-IDs vergibt der Server
+und waeren auf einem anderen Server bedeutungslos. Aufgeloest wird erst beim
+Anwenden — ein nicht registrierter Name landet im Provisioning-Report.
+
+Gruppen, die an einem Kanal existieren und **nicht** in der YAML stehen, bleiben
+beim Anwenden erhalten; der Plan zeigt sie als „wuerde geloescht" an und
+`PROVISION_PRUNE` entfernt sie. Genauso wie an der Wurzel — `setACL` ersetzt
+immer alle Gruppen eines Kanals auf einmal.
 
 ### `networks` und `devices`
 
@@ -504,7 +527,7 @@ koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
 cd admin
 python3.11 -m pip install -e ".[dev]"
 ./scripts/build_slice.sh v1.5.735 slice     # Slice holen und uebersetzen
-python -m pytest -q                          # 159 Tests
+python -m pytest -q                          # 161 Tests
 python -m ruff check .
 python -m mypy intercom
 ```

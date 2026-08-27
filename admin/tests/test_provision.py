@@ -57,6 +57,16 @@ def _snapshot(client) -> dict:
                 (a.group, a.userid, a.apply_here, a.apply_subs, a.allow, a.deny)
                 for a in acl.own_acls()
             ],
+            # Eigene Gruppen des Kanals gehoeren in den Abzug: sonst faellt beim
+            # Aequivalenztest nicht auf, wenn der Export sie verliert.
+            "groups": {
+                g.name: (
+                    g.inherit,
+                    g.inheritable,
+                    sorted(registered.get(uid, f"?{uid}") for uid in g.add),
+                )
+                for g in acl.own_groups()
+            },
         }
     for group in client.get_acl(0).own_groups():
         result["groups"][group.name] = sorted(
@@ -490,3 +500,81 @@ def test_fremde_wurzelgruppe_ueberlebt_ohne_prune(ice_client, config):
     names = {g.name for g in ice_client.get_acl(0).own_groups()}
     assert "haustechnik" in names, "fremde Gruppe wurde mitgeloescht"
     assert "regie" in names
+
+
+def test_kanalgruppen_ueberleben_den_export(ice_client, fake_murmur):
+    """Regression: eine Gruppe an einem UNTERKANAL darf nicht verlorengehen.
+
+    Der Exporter sammelte Gruppen frueher nur am Wurzelkanal. Ein von Hand am
+    Unterkanal angelegter Ring verschwand damit aus der Sicherung -- die
+    ACL-Eintraege zeigten nach dem Wiedereinspielen auf eine Gruppe, die es
+    nicht mehr gab. Aufgefallen ist das nicht beim Anwenden auf denselben
+    Server (dort bleiben unbekannte Gruppen stehen), sondern erst beim
+    Einspielen auf einen frischen.
+    """
+    from intercom.ice.client import IceClient
+    from intercom.ice.types import ACLEntry, ChannelACL, ChannelGroup
+    from intercom.provision.exporter import export_yaml
+    from intercom.provision.planner import reconcile
+    from intercom.provision.schema import parse_config
+    from tests.fake_murmur import FakeMurmur
+
+    uid = ice_client.register_user("kam-7", cert_hash="d" * 40)
+    top = ice_client.add_channel("Intercom", 0)
+    sub = ice_client.add_channel("Kameras", top)
+    ice_client.set_channel_acl(
+        ChannelACL(
+            channel_id=sub,
+            acls=[
+                ACLEntry(
+                    apply_here=True, apply_subs=False, group="kamera-lokal",
+                    allow=0x08, deny=0,
+                )
+            ],
+            groups=[ChannelGroup(name="kamera-lokal", add=[uid])],
+        )
+    )
+    original = _snapshot(ice_client)
+    assert original["channels"]["Intercom/Kameras"]["groups"], "Aufbau misslungen"
+
+    exported = export_yaml(ice_client)
+    assert "kamera-lokal" in exported, "Gruppe fehlt im YAML-Text"
+
+    with FakeMurmur() as zweiter_server:
+        zweiter = IceClient(zweiter_server.settings())
+        zweiter.connect()
+        try:
+            zweiter.register_user("kam-7", cert_hash="d" * 40)
+            plan = reconcile(zweiter, parse_config(yaml.safe_load(exported)), dry_run=False)
+            assert not plan.failed, [c.error for c in plan.failed]
+            assert _snapshot(zweiter) == original, (
+                "Kanalgruppe hat den Umlauf nicht ueberlebt:\n" + exported
+            )
+        finally:
+            zweiter.close()
+
+
+def test_fremde_kanalgruppe_ueberlebt_ohne_prune(ice_client, config):
+    """Wie an der Wurzel: setACL ersetzt alle Gruppen eines Kanals."""
+    from intercom.ice.types import ChannelGroup
+    from intercom.provision.planner import Reconciler, reconcile
+
+    _register_all(ice_client, config)
+    reconcile(ice_client, config, dry_run=False)
+
+    paths = Reconciler._build_paths(ice_client.get_channels())
+    regie = paths["Intercom/Regie"]
+    acl = ice_client.get_acl(regie)
+    acl.groups.append(ChannelGroup(name="handarbeit", add=[]))
+    ice_client.set_channel_acl(acl)
+
+    plan = reconcile(ice_client, config, prune=False, dry_run=False)
+    namen = {g.name for g in ice_client.get_acl(regie).own_groups()}
+    assert "handarbeit" in namen, "fremde Kanalgruppe wurde mitgeloescht"
+    assert any(c.needs_prune and "handarbeit" in c.target for c in plan.changes), (
+        "der Plan haette sie als loeschbar melden muessen"
+    )
+
+    reconcile(ice_client, config, prune=True, dry_run=False)
+    namen = {g.name for g in ice_client.get_acl(regie).own_groups()}
+    assert "handarbeit" not in namen, "mit --prune haette sie weg sein muessen"

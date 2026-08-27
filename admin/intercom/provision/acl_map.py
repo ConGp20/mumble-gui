@@ -301,6 +301,14 @@ def build_desired_state(
     """
     state = DesiredState()
 
+    # Namen aus channels[].groups muessen ebenfalls aufgeloest werden; ein
+    # unbekannter Name landet wie bei users: im Report statt still zu fehlen.
+    for spec in config.all_channels():
+        for gruppe in spec.groups:
+            for name in [*gruppe.add, *gruppe.remove]:
+                if user_ids.get(name, -1) < 0 and name not in state.unknown_users:
+                    state.unknown_users.append(name)
+
     members: dict[str, list[int]] = {group: [] for group in config.groups}
     for user_name, groups in sorted(config.users.items()):
         user_id = user_ids.get(user_name, -1)
@@ -335,7 +343,18 @@ def build_desired_state(
                 position=spec.position,
                 links=[link.strip("/") for link in spec.links],
                 acls=_channel_acls(spec, config),
-                groups=[],  # Gruppen leben ausschliesslich an der Wurzel.
+                groups=[
+                    ChannelGroup(
+                        name=gruppe.name,
+                        inherit=gruppe.inherit,
+                        inheritable=gruppe.inheritable,
+                        add=sorted({user_ids[n] for n in gruppe.add if user_ids.get(n, -1) >= 0}),
+                        remove=sorted(
+                            {user_ids[n] for n in gruppe.remove if user_ids.get(n, -1) >= 0}
+                        ),
+                    )
+                    for gruppe in spec.groups
+                ],
                 inherit=True,
                 priority_groups=list(spec.priority),
                 listen_to=[target.strip("/") for target in spec.listen_to],

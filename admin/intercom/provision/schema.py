@@ -28,6 +28,7 @@ __all__ = [
     "ROOT_ONLY_POLICIES",
     "ChannelSpec",
     "ConfigInvalid",
+    "GroupSpec",
     "IntercomConfig",
     "Issue",
     "NetworkSpec",
@@ -123,6 +124,22 @@ class TemplateEntry:
 
 
 @dataclass(slots=True)
+class GroupSpec:
+    """Eine Gruppe an einem Kanal.
+
+    Mitglieder stehen hier als **Namen**, nicht als IDs: Nutzer-IDs vergibt der
+    Server, sie waeren auf einem anderen Server bedeutungslos. Aufgeloest wird
+    erst beim Anwenden -- genauso wie bei ``users:``.
+    """
+
+    name: str
+    inherit: bool = True
+    inheritable: bool = True
+    add: list[str] = field(default_factory=list)
+    remove: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ServerSpec:
     defaultchannel: str | None = None
     welcometext: str | None = None
@@ -161,6 +178,9 @@ class ChannelSpec:
     #: Eintraegen angewendet. Der Exporter benutzt sie, um ein von Hand
     #: geklicktes Setup verlustfrei abzubilden.
     acl: list[TemplateEntry] = field(default_factory=list)
+    #: Eigene Gruppen dieses Kanals. Gruppen aus ``groups:`` liegen dagegen am
+    #: Wurzelkanal und vererben sich von dort nach unten.
+    groups: list[GroupSpec] = field(default_factory=list)
     speak: list[str] = field(default_factory=list)
     whisper_in: list[str] = field(default_factory=list)
     listen_for: list[str] = field(default_factory=list)
@@ -295,6 +315,33 @@ def _parse_acl_entries(
     return parsed
 
 
+def _parse_channel_groups(
+    raw_groups: Any, issues: list[Issue], where: str
+) -> list[GroupSpec]:
+    """Liest ``channels[].groups`` -- eigene Gruppen eines Kanals."""
+    parsed: list[GroupSpec] = []
+    if raw_groups is None:
+        return parsed
+    if not isinstance(raw_groups, list):
+        issues.append(Issue("error", where, "Liste erwartet."))
+        return parsed
+    for index, raw_group in enumerate(raw_groups):
+        spot = f"{where}[{index}]"
+        if not isinstance(raw_group, dict) or not raw_group.get("name"):
+            issues.append(Issue("error", spot, "Abbildung mit 'name:' erwartet."))
+            continue
+        parsed.append(
+            GroupSpec(
+                name=str(raw_group["name"]),
+                inherit=bool(raw_group.get("inherit", True)),
+                inheritable=bool(raw_group.get("inheritable", True)),
+                add=_as_list(raw_group.get("add")),
+                remove=_as_list(raw_group.get("remove")),
+            )
+        )
+    return parsed
+
+
 def _parse_channel(raw: Any, parent_path: str, issues: list[Issue], where: str) -> ChannelSpec:
     if not isinstance(raw, dict):
         issues.append(Issue("error", where, "Kanal muss eine Abbildung mit 'name:' sein."))
@@ -323,6 +370,7 @@ def _parse_channel(raw: Any, parent_path: str, issues: list[Issue], where: str) 
         temporary=bool(raw.get("temporary", False)),
         acl_template=raw.get("acl_template") or None,
         acl=_parse_acl_entries(raw.get("acl"), issues, f"{where}.acl"),
+        groups=_parse_channel_groups(raw.get("groups"), issues, f"{where}.groups"),
         speak=_as_list(raw.get("speak")),
         whisper_in=_as_list(raw.get("whisper_in")),
         listen_for=_as_list(raw.get("listen_for")),

@@ -257,6 +257,27 @@ def export_state(
         ):
             if value:
                 node[key_name] = value
+        # Eigene Gruppen des Kanals. Ohne sie ginge beim Sichern verloren, was
+        # jemand von Hand an einem Unterkanal angelegt hat -- die ACL-Eintraege
+        # wuerden auf eine Gruppe zeigen, die es nach dem Wiedereinspielen nicht
+        # mehr gibt. Mitglieder als NAMEN, weil Nutzer-IDs serverspezifisch sind.
+        eigene_gruppen = [
+            {
+                "name": gruppe.name,
+                **({"inherit": False} if not gruppe.inherit else {}),
+                **({"inheritable": False} if not gruppe.inheritable else {}),
+                "add": [registered[uid] for uid in gruppe.add if uid in registered],
+                **(
+                    {"remove": [registered[uid] for uid in gruppe.remove if uid in registered]}
+                    if gruppe.remove
+                    else {}
+                ),
+            }
+            for gruppe in acl.own_groups()
+        ]
+        if eigene_gruppen:
+            node["groups"] = eigene_gruppen
+
         if channel.links:
             node["links"] = sorted(
                 id_to_path[link] for link in channel.links if link in id_to_path
