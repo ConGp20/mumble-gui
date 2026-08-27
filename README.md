@@ -96,6 +96,14 @@ pymumble bringen eigene Threads mit — deren Ereignisse werden mit
 `call_soon_threadsafe` in den Loop gehoben, Ice-Aufrufe laufen ueber einen
 kleinen Threadpool. Begruendung: DECISIONS.md, D-009.
 
+Daraus folgt eine Regel fuer die Endpunkte: **wer `LiveState` anfasst, ist eine
+Koroutine** (`async def`, laeuft im Loop), **wer SQLite anfasst, bleibt
+synchron** (`def`, landet in FastAPIs Threadpool, wo Blockieren richtig ist).
+Ein Ice-Aufruf darf in einer Koroutine nur ueber `await ctx.ice.run(...)`
+passieren. Siehe DECISIONS.md, D-018. Jeder einzelne Ice-Aufruf ist zusaetzlich
+auf 15 s begrenzt — nicht ueber `Ice.Override.Timeout`, das dafuer nachweislich
+nicht taugt, sondern ueber `ice_invocationTimeout` (D-017).
+
 **Warum zwei Datenquellen?** Ice liefert pro Client `udpPing`, `tcpPing`,
 `bytespersec` und `tcponly` — aber **keinen Paketverlust**. Ein `getUserStats`
 gibt es in der Slice nicht. `good/late/lost/resync` stehen ausschliesslich in

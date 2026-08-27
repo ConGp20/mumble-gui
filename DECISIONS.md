@@ -388,3 +388,128 @@ mitnehmen.
 `chmod 600`. In der Historie dieses Repositories standen zu keinem Zeitpunkt
 echte Secrets -- die eingecheckte Fassung enthielt ausschliesslich
 `ERSETZEN_*`-Platzhalter.
+
+---
+
+## D-017 - `ice_invocationTimeout` statt `Ice.Override.Timeout`
+
+**Problem.** Ein murmur, der die Antwort schuldig bleibt, darf keinen Thread aus
+dem Pool von `AsyncIceClient` festhalten. Der Pool hat vier Plaetze; vier
+haengende Aufrufe legen die gesamte Oberflaeche still, `/healthz` und `/metrics`
+eingeschlossen.
+
+**Befund.** `Ice.Override.Timeout` leistet das nicht. Es ist ein
+*Endpunkt*-Timeout und begrenzt einzelne Socket-Operationen, nicht die Dauer
+eines Aufrufs. Nachgemessen gegen einen Servant, der absichtlich haengt:
+
+```
+Ice.Override.Timeout=3000      -> Antwort nach 12,0 s (kein Abbruch)
+proxy.ice_invocationTimeout(2000) -> InvocationTimeoutException nach 2,0 s
+```
+
+**Entscheidung.** `INVOCATION_TIMEOUT_MS = 15_000` am Meta- **und** am
+Server-Proxy. Der von `getServer()` zurueckgegebene Proxy erbt die Einstellung
+des Aufrufers nicht -- er entsteht aus den Vorgaben des Communicators und
+bekommt sie deshalb noch einmal ausdruecklich.
+
+`Ice.InvocationTimeoutException` wird als Verbindungsverlust gewertet, obwohl
+murmur den Auftrag durchaus noch ausfuehren kann: der Proxy wird verworfen und
+der Reconnect setzt sauber neu auf. Ein Proxy, dessen Zustand wir nicht kennen,
+ist schlechter als gar keiner.
+
+**Nachtrag zum Abbau.** `communicator.destroy()` wartet auf ausstehende
+Aufrufe -- gemessen 11 s mit gehaltenem `_lock`, in denen auch der Reconnect an
+derselben Sperre stand. Der Abbau ist jetzt vom Ablegen der Felder getrennt
+(Felder unter Sperre, `destroy()` ohne), und auf dem Fehlerpfad laeuft
+`destroy()` in einem eigenen Daemon-Thread: es wartet dort auf genau den Aufruf,
+den wir eben abgebrochen haben (gemessen 4 s Nachlauf).
+
+---
+
+## D-018 - Synchron oder Koroutine: wer `LiveState` liest, laeuft im Loop
+
+**Problem.** FastAPI schiebt eine *synchrone* Pfadfunktion in einen Threadpool.
+`LiveState` gehoert aber dem asyncio-Loop -- die Ice-Rueckrufe heben ihre
+Ereignisse mit `call_soon_threadsafe` genau dorthin. Wer aus einem fremden
+Thread ueber `live.users` laeuft, waehrend der Loop einen Client eintraegt,
+faengt sich `RuntimeError: dictionary changed size during iteration`, also einen
+500er -- bevorzugt dann, wenn viel los ist.
+
+**Entscheidung.** Die Regel ist nicht "alles async", sondern:
+
+| Endpunkt liest/schreibt | Form |
+|---|---|
+| `LiveState` | `async def` -- laeuft im Loop, dazwischen kommt nichts |
+| SQLite (`store`) | `def` -- blockiert, gehoert in den Threadpool |
+| nur Konstanten | egal, bleibt `def` |
+
+Betroffen waren `/state`, `/metrics`, `/healthz` und `/provision/reload`. Eine
+Sperre in `LiveState` waere die Alternative gewesen -- sie haette die Regel
+"gehoert dem Loop" aufgeweicht und jede Leseoperation verteuert, ohne einen
+Fehler zu verhindern, den die Regel ohnehin ausschliesst.
+
+Voraussetzung ist, dass in diesen Endpunkten nichts blockiert. `/metrics` holte
+die Serverlaufzeit per Ice; ausgerechnet der Endpunkt, der eine Ueberlastung
+melden soll, war damit der erste, der daran haengenblieb (gemessen 30 s). Er
+liest sie jetzt aus dem Polling, so wie `health()` es laengst tut.
+
+---
+
+## D-019 - `samples.loss_pct` ist nullbar (Schema 2)
+
+**Problem.** "Nicht gemessen" und "kein Verlust" sind zwei verschiedene
+Aussagen, und nur die zweite ist eine Entwarnung. Ohne Monitor-Bot -- oder ohne
+dessen `Ban`-Recht am Wurzelkanal -- gibt es ueberhaupt keine Verlustzahlen.
+
+**Befund.** `app.js` zeichnet Luecken in einer Sparkline seit jeher als
+Unterbrechung, und `Store.sparkline` laesst sie bewusst als `None` stehen. Die
+Spalte war aber `NOT NULL DEFAULT 0`: der fehlende Wert wurde beim Schreiben zu
+einer 0 und in der Kurve zu einer makellosen Nulllinie -- genau die Entwarnung,
+die niemand gemessen hat.
+
+**Entscheidung.** Schema-Schritt 2 macht `loss_pct` nullbar. SQLite kann
+`NOT NULL` nicht per `ALTER` entfernen, deshalb der Umbau ueber eine
+Zwischentabelle. Reihenfolge: erst die alte Tabelle samt ihrer Indizes
+wegwerfen, dann die Indizes neu anlegen -- ein Index behaelt beim `RENAME`
+seinen Namen und haengt weiter an der alten Tabelle, `CREATE INDEX IF NOT
+EXISTS` waere sonst still ein Nichtstun.
+
+`AVG()` ueber lauter `NULL` ist `NULL`; `sparkline()` vertraegt das jetzt. Vorher
+waere es ein 500er auf `/history` gewesen, sobald ein Fach nur unbemessene
+Zeilen enthielt.
+
+---
+
+## D-020 - `UserStats` einmal voll, danach nur die Zahlen
+
+**Problem.** Zertifikatskette, Adresse, Clientversion und Codec stehen fuer eine
+Sitzung fest, sobald der Client verbunden ist. Sie kamen bei *jeder* Abfrage
+mit: bei dreissig Clients alle fuenf Sekunden die vollstaendige DER-Kette je
+Client -- der mit Abstand groesste Posten der ganzen Ueberwachung, fuer Daten,
+die sich nicht aendern.
+
+**Entscheidung.** Einmal voll fragen, merken, danach `stats_only=true`. Die
+gemerkten Felder werden in die knappen Antworten zurueckgemischt, das Cockpit
+sieht keinen Unterschied.
+
+Selbstheilend gebaut: gemerkt wird nur, was auch angekommen ist. Fehlt dem Bot
+das Recht `Ban` am Wurzelkanal, liefert murmur diese Felder gar nicht -- dann
+bleibt der Speicher leer und es wird weiter voll gefragt, und ein spaeter
+erteiltes Recht greift sofort. Der Speicher wird bei jedem Polling-Durchlauf
+gegen die verbundenen Sessions abgeglichen und beim Reconnect geleert.
+
+---
+
+## D-021 - Backoff faellt erst nach einer getragenen Verbindung
+
+**Problem.** Der Verbindungszaehler des Monitor-Bots wurde direkt nach dem
+erfolgreichen Verbinden genullt. Der haeufigste Dauerfehler ist aber einer, bei
+dem die Anmeldung *gelingt* und murmur den Bot gleich danach wieder loswird --
+Name schon vergeben, Zertifikat abgelehnt, Ban. Der naechste Versuch wartete
+damit wieder nur die Grundzeit, und der Bot haemmerte im Sekundentakt gegen den
+Server.
+
+**Entscheidung.** Zurueckgesetzt wird erst, wenn die Verbindung `_STABIL_S`
+(30 s) getragen hat. Dieselbe Ueberlegung wie bei `PROVISION_ON_START`: an einen
+Zeitpunkt zu binden, was an einem Ergebnis haengen muss, geht im Normalbetrieb
+schief, nicht im Sonderfall.
