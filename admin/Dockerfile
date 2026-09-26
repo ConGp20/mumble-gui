@@ -27,6 +27,22 @@ RUN apt-get update \
 
 WORKDIR /build
 
+# Optionale eigene Zertifizierungsstellen -- fuer Netze, in denen ein Proxy TLS
+# aufbricht. Das Verzeichnis ist im Regelfall leer, dann tut das hier nichts;
+# `update-ca-certificates` nimmt nur `*.crt`. Siehe admin/ca/README.md.
+#
+# Das wirkt AUSSCHLIESSLICH in dieser Stufe. Die Laufzeitstufe laedt nichts mehr
+# aus dem Netz (`pip install --no-index` aus den fertigen Wheels), bekommt die
+# Zertifikate also nicht -- ein Bau hinter einem Firmenproxy erzeugt dasselbe
+# Image wie ein Bau ohne.
+#
+# PIP_CERT ist noetig, weil pip nicht den Systemspeicher benutzt, sondern das
+# mitgelieferte Bundle von certifi. Der Wert ist der Systemspeicher selbst und
+# damit auch ohne eigene CA richtig.
+COPY ca/ /usr/local/share/ca-certificates/intercom-extra/
+RUN update-ca-certificates
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt
+
 # zeroc-ice zuerst und in einer eigenen Schicht: es ist mit Abstand das
 # teuerste Stueck und darf nicht bei jeder Code-Aenderung neu uebersetzt werden.
 RUN pip wheel --no-binary :all: --wheel-dir /wheels "zeroc-ice==3.7.11"
@@ -56,6 +72,25 @@ COPY pyproject.toml /build/pyproject.toml
 COPY intercom/ /build/intercom/
 RUN pip wheel --wheel-dir /wheels /build
 
+# Jetzt installieren, und zwar in einen abgesetzten Baum, den die Laufzeitstufe
+# als Ganzes uebernimmt.
+#
+# Die Wheels werden direkt ueber ihren Dateinamen installiert, nicht ueber den
+# Paketnamen. Grund: pymumble haengt als direkte Git-URL in den Metadaten, und
+# bei einer Aufloesung ueber den Paketnamen wuerde pip diese URL erneut
+# anfassen -- dann braeuchte auch das Laufzeit-Image git und Netz. `pip wheel`
+# hat oben bereits den vollstaendigen Abhaengigkeitsbaum gebaut; hier wird er
+# nur noch ausgepackt.
+#
+# --ignore-installed ist Pflicht: zeroc-ice ist in dieser Stufe schon
+# installiert (slice2py braucht es, siehe oben). Ohne das meldet pip
+# "Requirement already satisfied" und legt es NICHT unter /install ab -- das
+# Laufzeit-Image waere dann ohne Ice, und zwar lautlos, denn alle anderen
+# Pakete sind da. Aufgefallen ist es nur, weil die Importpruefung unten
+# tatsaechlich importiert.
+RUN pip install --no-cache-dir --no-deps --ignore-installed \
+      --root=/install --prefix=/usr/local /wheels/*.whl
+
 # --- Stufe 2: Laufzeit --------------------------------------------------------
 FROM ${PYTHON_IMAGE} AS runtime
 
@@ -80,16 +115,20 @@ RUN groupadd --gid 10000 intercom \
 # findet `import intercom.web.app` das Modul MumbleServer nicht.
 COPY --from=builder /opt/intercom/slice /opt/intercom/slice
 
-COPY --from=builder /wheels /wheels
-# Die Wheels werden direkt ueber ihren Dateinamen installiert, nicht ueber den
-# Paketnamen. Grund: pymumble haengt als direkte Git-URL in den Metadaten, und
-# bei einer Aufloesung ueber den Paketnamen wuerde pip diese URL erneut
-# anfassen -- dann braeuchte auch das Laufzeit-Image git und Netz. `pip wheel`
-# hat in der Builder-Stufe bereits den vollstaendigen Abhaengigkeitsbaum
-# gebaut; hier wird er nur noch ausgepackt.
-RUN pip install --no-cache-dir --no-deps /wheels/*.whl \
- && rm -rf /wheels \
- && printf '/opt/intercom/slice\n' \
+# Die fertig installierten Pakete aus der Builder-Stufe uebernehmen, nicht die
+# Wheels. Ein `COPY /wheels` waere eine eigene Schicht von rund 50 MB, die im
+# Image bleibt -- ein spaeteres `rm -rf /wheels` gibt den Platz nicht zurueck,
+# es legt nur eine Tilgung darueber. Auf einem NAS ist das der Unterschied
+# zwischen 554 MB und rund 500 MB, fuer nichts.
+#
+# `--root=/install --prefix=/usr/local` in der Builder-Stufe erzeugt genau den
+# Baum, der hier hingehoert, deshalb genuegt ein Kopieren nach `/`. Beide Stufen
+# benutzen dasselbe Basisimage; die Python-Version stimmt also zwangsweise.
+COPY --from=builder /install/ /
+
+# Die Pruefungen bleiben: ein Image, in dem der Import scheitert, soll beim Bau
+# auffallen und nicht beim ersten Start im Stadion.
+RUN printf '/opt/intercom/slice\n' \
       > "$(python -c 'import site; print(site.getsitepackages()[0])')/intercom-slice.pth" \
  && python -c "import MumbleServer, Ice; print('Slice:', len(Ice.sliceChecksums), 'Pruefsummen')" \
  && python -c "import intercom.cli, intercom.web.app; print('Paket installiert')" \

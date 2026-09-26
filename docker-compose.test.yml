@@ -24,8 +24,13 @@ services:
       MUMBLE_CONFIG_ICE: '"tcp -h 0.0.0.0 -p 6502"'
       MUMBLE_CONFIG_ICESECRETWRITE: ${MUMBLE_TEST_SECRET:-test-secret}
       MUMBLE_CONFIG_PORT: "64739"
+      # Nur Namen, die in /etc/mumble/bare_config.ini des Images vorkommen,
+      # werden akzeptiert -- der Einstiegspunkt bricht sonst mit
+      # "Unable to find config corresponding to variable" ab. Ein "loglevel"
+      # gibt es in murmur nicht; die Ausfuehrlichkeit steuert allein, wohin
+      # geloggt wird. Ohne logfile schreibt murmur nach stdout, und genau das
+      # wollen wir hier.
       MUMBLE_CONFIG_OBFUSCATE: "false"
-      MUMBLE_CONFIG_LOGLEVEL: "1"
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/6502' || exit 1"]
       interval: 3s

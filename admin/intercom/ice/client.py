@@ -578,6 +578,30 @@ class IceClient:
         raw = self._call(lambda: self._srv().getLog(first, last))
         return [LogEntry.from_ice(entry) for entry in raw]
 
+    def get_effective_conf(self) -> dict[str, str]:
+        """Die Werte, mit denen der Server tatsaechlich laeuft.
+
+        Keiner der beiden Ice-Aufrufe liefert das allein, und ihre Namen fuehren
+        in die Irre:
+
+        * ``Server::getAllConf`` liest ``SELECT key, value FROM config WHERE
+          server_id = ?`` -- **nur** was jemand zur Laufzeit per ``setConf``
+          geaendert hat. Auf einem frischen Server steht dort ausser dem selbst
+          erzeugten ``certificate`` nichts.
+        * ``Meta::getDefaultConf`` liefert ``qmConfig``, gebaut von
+          ``MetaParams`` aus der **ini-Datei** plus den eingebauten Vorgaben.
+          Beim Docker-Image also genau das, was die ``MUMBLE_CONFIG_*``-
+          Variablen der Compose geschrieben haben. "Default" heisst hier
+          nicht "Werkseinstellung".
+
+        Wirksam ist damit: Datenbankeintrag, wenn vorhanden, sonst Dateiwert.
+        Wer nur ``getAllConf`` nimmt, verliert auf einem ueber die Compose
+        eingerichteten Server praktisch die gesamte Konfiguration.
+        """
+        aus_datei = self.get_default_conf()
+        aus_datei.update(self.get_all_conf())
+        return aus_datei
+
     def get_all_conf(self) -> dict[str, str]:
         return self._call(lambda: dict(self._srv().getAllConf()))
 

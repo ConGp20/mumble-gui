@@ -17,15 +17,22 @@
     <div class="tabellenrahmen">
       <table class="dicht">
         <thead>
-          <tr><th>Schluessel</th><th>Wert</th><th>Vorgabe</th><th>Compose</th><th></th><th></th></tr>
+          <tr><th>Schluessel</th><th>Wirksam</th><th>Herkunft</th><th>Faellt zurueck auf</th><th>Compose</th><th></th><th></th></tr>
         </thead>
         <tbody>
           <template x-for="z in gefilterteConf" :key="z.key">
             <tr :data-stufe="z.env_mismatch ? 'warnung' : (z.overridden ? 'ok' : '')">
               <td class="mono" x-text="z.key"></td>
-              <td class="mono" x-text="z.value || '–'"></td>
-              <td class="mono text-leise" x-text="z.default || '–'"></td>
-              <td class="mono text-leise" x-text="z.env_value || '–'"></td>
+              <td class="mono" x-text="kurz(z.value)" :title="z.value"></td>
+              <td>
+                <span class="abzeichen" :class="z.source === 'datenbank' ? 'ok' : 'stumm'"
+                      :title="z.source === 'datenbank'
+                        ? 'Zur Laufzeit per Ice gesetzt -- steht in der Datenbank des Servers und folgt der Compose nicht mehr'
+                        : 'Aus mumble_server_config.ini bzw. den eingebauten Vorgaben -- beim Docker-Image also aus der Compose'"
+                      x-text="z.source === 'datenbank' ? 'Datenbank' : 'Datei'"></span>
+              </td>
+              <td class="mono text-leise" x-text="z.source === 'datenbank' ? kurz(z.default) : '–'"></td>
+              <td class="mono text-leise" x-text="kurz(z.env_value)"></td>
               <td>
                 <template x-if="z.restart_required">
                   <span class="abzeichen stumm" title="Wirkt erst nach Serverneustart">Neustart</span>
@@ -94,6 +101,7 @@
 function serverSeite() {
   return {
     I: window.Intercom,
+    kurz: window.Intercom.kurz,
     conf: [], confFilter: "", nurAbweichend: false,
     logZeilen: [], gesamt: 0, muster: "", live: false, tail: null, logFehler: "",
 
@@ -108,7 +116,8 @@ function serverSeite() {
     get gefilterteConf() {
       const s = this.confFilter.trim().toLowerCase();
       return this.conf.filter(z => {
-        if (this.nurAbweichend && !z.overridden && !z.env_mismatch) return false;
+        if (this.nurAbweichend && !z.overridden && !z.env_mismatch &&
+            z.source !== "datenbank") return false;
         if (!s) return true;
         return z.key.toLowerCase().indexOf(s) !== -1 ||
                String(z.value).toLowerCase().indexOf(s) !== -1;

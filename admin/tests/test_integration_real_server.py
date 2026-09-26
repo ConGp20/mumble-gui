@@ -310,12 +310,65 @@ def test_konfiguration_lesen_und_schreiben(echter_client):
 
 
 @needs_real_server
-def test_ice_secret_ist_nicht_lesbar(echter_client):
-    """murmur gibt das Secret nicht heraus -- WriteOnlyException."""
+def test_write_only_gilt_nur_fuer_key_und_passphrase(echter_client):
+    """Die Annahme "Secrets sind write-only" stimmt nur fuer zwei Schluessel.
+
+    Gegen den echten Server nachgemessen und in ``MumbleServerIce.cpp``
+    belegt -- ``impl_Server_getConf`` prueft wortwoertlich zwei Namen::
+
+        if (key == "key" || key == "passphrase")
+            cb->ice_exception(WriteOnlyException());
+
+    ``icesecretwrite`` ist keiner davon. Der Aufruf gelingt und liefert einen
+    **leeren String**, weil das Secret in der ini-Datei steht und nicht in der
+    ``config``-Tabelle, aus der ``ServerDB::getConf`` liest. Wer hier eine
+    Ausnahme erwartet, faellt entweder auf die Nase oder -- schlimmer -- haelt
+    den leeren String fuer "kein Secret gesetzt".
+    """
     from intercom.ice.errors import IceCallFailed
 
-    with pytest.raises(IceCallFailed):
-        echter_client.get_conf("icesecretwrite")
+    for schluessel in ("key", "passphrase"):
+        with pytest.raises(IceCallFailed):
+            echter_client.get_conf(schluessel)
+
+    assert echter_client.get_conf("icesecretwrite") == ""
+    # Und in getAllConf kommt er ueberhaupt nicht vor.
+    assert "icesecretwrite" not in echter_client.get_all_conf()
+
+
+@needs_real_server
+def test_getallconf_ist_nicht_die_wirksame_konfiguration(echter_client):
+    """"Default" heisst bei murmur nicht "Werkseinstellung".
+
+    ``Server::getAllConf`` liest nur die ``config``-Tabelle, also was jemand
+    zur Laufzeit per ``setConf`` geaendert hat. ``Meta::getDefaultConf``
+    liefert ``qmConfig``, und das baut ``MetaParams`` aus der **ini-Datei**
+    plus den eingebauten Vorgaben -- beim Docker-Image also aus den
+    ``MUMBLE_CONFIG_*``-Variablen der Compose.
+
+    Der Test haelt das an einem Wert fest, der beides auseinanderhaelt: die
+    Compose setzt hier Port 64739, murmurs eingebaute Vorgabe ist 64738.
+    """
+    ueberschrieben = echter_client.get_all_conf()
+    aus_datei = echter_client.get_default_conf()
+
+    # Der Port steht in der Datei, nicht in der Datenbank ...
+    assert "port" not in ueberschrieben
+    assert aus_datei["port"] == "64739", "kommt aus MUMBLE_CONFIG_PORT der Compose"
+    # ... und 64738 waere die eingebaute Vorgabe, die hier gerade NICHT gilt.
+    assert aus_datei["port"] != "64738"
+
+    # Ein per Ice gesetzter Wert landet dagegen in der Datenbank und
+    # ueberschattet die Datei.
+    vorher_datei = aus_datei.get("welcometext", "")
+    echter_client.set_conf("welcometext", "Aus der Datenbank")
+    try:
+        assert echter_client.get_all_conf()["welcometext"] == "Aus der Datenbank"
+        # Die Datei-Ebene bleibt davon unberuehrt -- darauf faellt der Server
+        # zurueck, wenn der Datenbankeintrag verschwindet.
+        assert echter_client.get_default_conf().get("welcometext", "") == vorher_datei
+    finally:
+        echter_client.set_conf("welcometext", "")
 
 
 @needs_real_server
@@ -323,3 +376,85 @@ def test_serverlog_kommt_an(echter_client):
     assert echter_client.get_log_len() >= 0
     eintraege = echter_client.get_log(0, 10)
     assert all(e.timestamp > 0 for e in eintraege)
+
+
+@needs_real_server
+def test_export_verliert_die_konfiguration_aus_der_datei_nicht(echter_client):
+    """Der Export las ``getAllConf`` -- und das sind nur die Datenbankwerte.
+
+    Auf einem Server, der ueber ``MUMBLE_CONFIG_*`` der Compose eingerichtet
+    wurde, stehen ``welcometext`` und ``defaultchannel`` in der ini-Datei und
+    **nicht** in der ``config``-Tabelle. Der Export hat sie damit stillschweigend
+    verloren -- ein Ruecksichern haette sie auf die Vorgaben zurueckgesetzt.
+    """
+    aus_datenbank = echter_client.get_all_conf()
+    wirksam = echter_client.get_effective_conf()
+
+    # Der Port kommt hier aus der Datei, nicht aus der Datenbank.
+    assert "port" not in aus_datenbank
+    assert wirksam["port"] == "64739"
+    # Datenbankwerte ueberschatten die Datei.
+    echter_client.set_conf("textmessagelength", "1234")
+    try:
+        assert echter_client.get_effective_conf()["textmessagelength"] == "1234"
+    finally:
+        echter_client.set_conf("textmessagelength", "")
+
+
+@needs_real_server
+def test_eingeschraenkter_export_bleibt_einlesbar(echter_client):
+    """``roots=`` darf keine YAML erzeugen, die auf fremde Kanaele zeigt.
+
+    ``server.defaultchannel`` wurde ungeprueft mitgeschrieben. Zeigte er auf
+    einen Kanal ausserhalb des exportierten Teilbaums, verwies die YAML auf
+    einen Kanal, den sie selbst nicht anlegt -- ``parse_config`` lehnte sie mit
+    "Kanal gibt es nicht" ab. Das Abnahmekriterium "Export ist wieder
+    einlesbar" war damit genau dann verletzt, wenn ein Vorgabekanal gesetzt war.
+    """
+    import textwrap
+
+    import yaml
+
+    from intercom.provision.exporter import export_yaml
+    from intercom.provision.planner import reconcile
+    from intercom.provision.schema import parse_config
+
+    quelle = textwrap.dedent("""
+        version: 1
+        groups: [itestaussen]
+        channels:
+          - name: ITest-Aussen
+            children:
+              - name: Vorgabe
+          - name: ITest-Innen
+            children:
+              - name: Regie
+                speak: [itestaussen]
+    """)
+    reconcile(echter_client, parse_config(yaml.safe_load(quelle)), dry_run=False)
+
+    kanaele = echter_client.get_channels()
+    ziel = next(
+        cid
+        for cid, k in kanaele.items()
+        if k.name == "Vorgabe" and kanaele.get(k.parent, k).name == "ITest-Aussen"
+    )
+    vorher = echter_client.get_conf("defaultchannel")
+    echter_client.set_conf("defaultchannel", str(ziel))
+    try:
+        # Export nur des ANDEREN Teilbaums -- der Vorgabekanal liegt draussen.
+        text = export_yaml(echter_client, roots=["ITest-Innen"])
+        assert "defaultchannel" not in yaml.safe_load(text).get("server", {})
+        assert "Nicht uebernommen" in text, "das Weglassen muss sichtbar sein"
+        assert "ITest-Aussen/Vorgabe" in text
+
+        # Und die Hauptsache: wieder einlesbar.
+        wieder = parse_config(yaml.safe_load(text))
+        assert [c.name for c in wieder.channels] == ["ITest-Innen"]
+
+        # Liegt der Vorgabekanal drinnen, wird er uebernommen.
+        drin = export_yaml(echter_client, roots=["ITest-Aussen"])
+        assert yaml.safe_load(drin)["server"]["defaultchannel"] == "ITest-Aussen/Vorgabe"
+        parse_config(yaml.safe_load(drin))
+    finally:
+        echter_client.set_conf("defaultchannel", vorher)

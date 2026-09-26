@@ -1036,36 +1036,79 @@ RESTART_REQUIRED: frozenset[str] = frozenset(
 )
 
 
+def _normalisiere_conf_name(name: str) -> str:
+    """Wie der Einstiegspunkt des mumble-server-Images Namen vergleicht.
+
+    Dort: ``uppercase="${1^^}"; echo "${uppercase//_/}"`` -- Grossbuchstaben,
+    Unterstriche weg. Noetig, weil murmur dieselbe Einstellung an drei Stellen
+    unterschiedlich schreibt: ``Meta::getDefaultConf`` liefert ``registername``,
+    die ``bare_config.ini`` des Images nennt sie ``registerName``, und in der
+    Compose steht ``MUMBLE_CONFIG_REGISTERNAME``.
+    """
+    return name.upper().replace("_", "")
+
+
 @router.get("/conf")
 async def conf_read(request: Request, account: Account = Depends(require_user)) -> dict[str, Any]:
-    """Ist-Werte gegen die Vorgaben, mit Markierung der Abweichungen."""
+    """Wirksame Werte, ihre Herkunft und die Abweichungen zur Compose.
+
+    Die Namen der beiden Ice-Aufrufe fuehren in die Irre, deshalb hier
+    ausgeschrieben -- nachgemessen an murmur 1.5.735 und belegt in
+    ``MumbleServerIce.cpp`` und ``Meta.cpp``:
+
+    * ``Server::getAllConf`` liest ``SELECT key, value FROM config WHERE
+      server_id = ?`` -- **nur** was jemand zur Laufzeit per ``setConf``
+      geaendert hat. Auf einem frisch aufgesetzten Server steht dort ausser dem
+      selbst erzeugten Zertifikat nichts.
+    * ``Meta::getDefaultConf`` liefert ``qmConfig``, und das baut ``MetaParams``
+      aus der **ini-Datei** plus den eingebauten Vorgaben. Beim Docker-Image ist
+      das genau der Stand, den die ``MUMBLE_CONFIG_*``-Variablen der Compose
+      geschrieben haben. "Default" heisst hier also *nicht* "murmurs Werkseinstellung".
+
+    Der wirksame Wert ist damit: Datenbank, wenn dort ein Eintrag steht, sonst
+    Datei. Wer stattdessen ``getAllConf`` als Ist-Wert anzeigt, behauptet fuer
+    jede Einstellung aus der Compose "nicht gesetzt" -- und die Warnung
+    "Compose und Live laufen auseinander" kann strukturell nie ausloesen,
+    weil der Ist-Wert fuer genau diese Schluessel immer leer ist.
+    """
     context = ctx(request)
     try:
-        current = await context.ice.get_all_conf()
-        defaults = await context.ice.get_default_conf()
+        ueberschrieben = await context.ice.get_all_conf()
+        aus_datei = await context.ice.get_default_conf()
     except IceError as exc:
         raise _fail(exc) from exc
 
     import os
 
+    # MUMBLE_CONFIG_* der Compose, normalisiert nachschlagbar.
+    aus_compose = {
+        _normalisiere_conf_name(name[len("MUMBLE_CONFIG_") :]): (name, wert)
+        for name, wert in os.environ.items()
+        if name.startswith("MUMBLE_CONFIG_")
+    }
+
     rows = []
-    for key in sorted(set(current) | set(defaults)):
-        value = current.get(key, "")
-        default = defaults.get(key, "")
-        env_key = f"MUMBLE_CONFIG_{key.upper()}"
-        env_value = os.environ.get(env_key)
+    for key in sorted(set(ueberschrieben) | set(aus_datei)):
+        live = key in ueberschrieben
+        value = ueberschrieben[key] if live else aus_datei.get(key, "")
+        env_key, env_value = aus_compose.get(_normalisiere_conf_name(key), ("", None))
         rows.append(
             {
                 "key": key,
                 "value": value,
-                "default": default,
-                "overridden": bool(value) and value != default,
+                "source": "datenbank" if live else "datei",
+                # Der Wert, auf den der Server zurueckfaellt, wenn man den
+                # Datenbankeintrag loescht.
+                "default": aus_datei.get(key, ""),
+                # Zur Laufzeit ueberschrieben: folgt der Compose nicht mehr.
+                "overridden": live and value != aus_datei.get(key, ""),
                 "restart_required": key in RESTART_REQUIRED,
-                "env_key": env_key,
+                "env_key": env_key or f"MUMBLE_CONFIG_{key.upper()}",
                 "env_value": env_value,
-                # Die Compose setzt den Wert, der Server meldet einen anderen:
-                # meist ein Wert, der spaeter von Hand geaendert wurde.
-                "env_mismatch": bool(env_value) and bool(value) and env_value != value,
+                # Die Compose sagt etwas anderes als der Server tatsaechlich
+                # benutzt -- fast immer eine spaetere Aenderung von Hand, die
+                # den naechsten `up -d` ueberlebt und niemandem auffaellt.
+                "env_mismatch": env_value is not None and env_value.strip('"') != value,
             }
         )
     return {"rows": rows, "restart_required": sorted(RESTART_REQUIRED)}

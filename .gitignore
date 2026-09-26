@@ -22,3 +22,8 @@ __pycache__/
 
 # Beim Image-Bau geladen, nicht im Repository.
 /admin/static/vendor/
+
+# Eigene Zertifizierungsstellen sind umgebungsspezifisch und gehoeren nicht
+# ins Repository -- nur die Beschreibung, wie man sie ablegt.
+admin/ca/*
+!admin/ca/README.md

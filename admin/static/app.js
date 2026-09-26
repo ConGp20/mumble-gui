@@ -104,6 +104,19 @@
      unterbrechen die Linie, statt sie auf 0 zu ziehen -- eine Linie, die auf
      null faellt, sieht aus wie ein perfekter Wert und ist damit das
      gefaehrlichste Diagramm ueberhaupt. */
+  /* Einzeiler fuer eine Tabellenzelle. murmurs getAllConf liefert unter
+     "certificate" ein vollstaendiges PEM ueber mehrere Zeilen -- ungekuerzt
+     zerreisst das die Konfigurationstabelle. Gekuerzt wird in der Mitte, damit
+     Anfang und Ende erkennbar bleiben; der volle Wert steht im title. */
+  function kurz(wert, max) {
+    if (wert === null || wert === undefined || wert === "") { return "\u2013"; }
+    var text = String(wert).replace(/\s+/g, " ").trim();
+    max = max || 60;
+    if (text.length <= max) { return text; }
+    var kopf = Math.ceil((max - 3) / 2);
+    return text.slice(0, kopf) + "..." + text.slice(text.length - (max - 3 - kopf));
+  }
+
   function sparkline(werte, opts) {
     opts = opts || {};
     var breite = opts.breite || 200;
@@ -325,6 +338,7 @@
     fmtDatum: fmtDatum,
     heatColor: heatColor,
     stufe: stufe,
+    kurz: kurz,
     sparkline: sparkline,
     dataTable: dataTable,
     lade: lade,

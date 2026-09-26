@@ -384,6 +384,30 @@ Ebenfalls korrigiert: die Slice heisst `PermissionRegisterSelf` (nicht
 | Dauerhafte Gruppenmitgliedschaft ueber `addUserToGroup` | Ausdruecklich temporaer und an die Sitzung gebunden. Der Provisioner benutzt ausschliesslich `setACL`. |
 | Paketverlust | Kein `getUserStats` in der Slice — dafuer gibt es den Monitor-Bot. |
 
+### `getAllConf` ist nicht die wirksame Konfiguration
+
+Die Namen der beiden Ice-Aufrufe fuehren in die Irre. Gegen murmur 1.5.735
+nachgemessen, belegt in `MumbleServerIce.cpp` und `Meta.cpp`:
+
+| Aufruf | Was wirklich drinsteht |
+|---|---|
+| `Server::getAllConf` | `SELECT key, value FROM config WHERE server_id = ?` — **nur** was jemand zur Laufzeit per `setConf` geaendert hat. Auf einem frischen Server steht dort ausser dem selbst erzeugten `certificate` **nichts**. |
+| `Meta::getDefaultConf` | `qmConfig`, gebaut von `MetaParams` aus der **ini-Datei** plus den eingebauten Vorgaben. Beim Docker-Image ist das genau der Stand, den die `MUMBLE_CONFIG_*`-Variablen der Compose geschrieben haben. |
+
+„Default" heisst also **nicht** „murmurs Werkseinstellung". Der wirksame Wert
+ist: Datenbank, wenn dort ein Eintrag steht, sonst Datei. Die Ansicht
+*Server → Konfiguration* zeigt deshalb drei Spalten — `Wirksam`, `Herkunft`
+(Datenbank/Datei) und `Faellt zurueck auf` — statt eines irrefuehrenden
+Ist/Soll-Vergleichs. Eine Zeile mit Herkunft **Datenbank** ist der interessante
+Fall: dieser Wert wurde live geaendert und folgt der Compose nicht mehr, ueberlebt
+aber jeden `docker compose up -d`.
+
+Ebenfalls nachgemessen: **write-only ist nur `key` und `passphrase`.**
+`impl_Server_getConf` prueft wortwoertlich diese zwei Namen. `getConf("icesecretwrite")`
+gelingt und liefert einen **leeren String** — das Secret steht in der ini-Datei,
+nicht in der `config`-Tabelle. Wer den leeren String fuer „kein Secret gesetzt"
+haelt, zieht den falschen Schluss.
+
 ### VOX-Erkennung ist eine Heuristik
 
 Mumble meldet den Sendemodus weder ueber Ice noch im Protokoll. Erkennbar ist

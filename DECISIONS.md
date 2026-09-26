@@ -513,3 +513,120 @@ Server.
 (30 s) getragen hat. Dieselbe Ueberlegung wie bei `PROVISION_ON_START`: an einen
 Zeitpunkt zu binden, was an einem Ergebnis haengen muss, geht im Normalbetrieb
 schief, nicht im Sonderfall.
+
+---
+
+## D-022 - Optionale eigene Zertifizierungsstelle beim Bau (`admin/ca/`)
+
+**Problem.** In Netzen, in denen ein Proxy TLS aufbricht, scheitert der Bau:
+`pip` meldet `CERTIFICATE_VERIFY_FAILED`, `git clone` und `curl` ebenso. Das ist
+kein Sonderfall — in verwalteten Firmennetzen ist es die Regel, und es war der
+Grund, warum das Image in der Entwicklungsumgebung lange nicht gebaut werden
+konnte.
+
+**Entscheidung.** `admin/ca/` ist ein Ablageort fuer `*.crt`-Dateien. Die
+Builder-Stufe kopiert das Verzeichnis nach
+`/usr/local/share/ca-certificates/intercom-extra/` und ruft
+`update-ca-certificates`. Leeres Verzeichnis = unveraenderter Bau, also kein
+Sonderpfad und keine Fallunterscheidung im Dockerfile (`COPY` eines leeren
+Verzeichnisses ist erlaubt, eine bedingte `COPY` nicht).
+
+`ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt` gehoert dazu: pip benutzt
+nicht den Systemspeicher, sondern das mitgelieferte Bundle von `certifi`. Der
+Wert zeigt auf den Systemspeicher und ist damit auch ohne eigene CA richtig.
+
+**Das Laufzeit-Image bleibt unberuehrt.** Es wird nur in der Builder-Stufe
+gesetzt, und die wird verworfen; die Laufzeitstufe laedt nichts mehr aus dem
+Netz (`pip install --no-index` aus den fertigen Wheels). Ein Bau hinter einem
+Firmenproxy erzeugt damit dasselbe Image wie ein Bau ohne — nachgeprueft an
+Zertifikatsspeicher und Umgebung des fertigen Images.
+
+Die Zertifikate selbst sind umgebungsspezifisch und stehen in der
+`.gitignore`; im Repository liegt nur `admin/ca/README.md`.
+
+---
+
+## D-023 - Die Konfigurationsansicht zeigt Herkunft, nicht Ist/Soll
+
+**Problem.** Die Ansicht stellte `getAllConf` als Ist-Wert neben
+`getDefaultConf` als Vorgabe. Der erste Lauf gegen einen echten Server zeigte,
+dass das die Verhaeltnisse verdreht.
+
+**Befund.** `Server::getAllConf` liest nur die `config`-Tabelle, also
+ausschliesslich zur Laufzeit per `setConf` geaenderte Werte — auf einem frischen
+Server ausser `certificate` nichts. `Meta::getDefaultConf` liefert `qmConfig`,
+das `MetaParams` aus der **ini-Datei** plus eingebauten Vorgaben baut, beim
+Docker-Image also aus den `MUMBLE_CONFIG_*`-Variablen der Compose. Gemessen:
+`getAllConf` → 1 Schluessel, `getDefaultConf` → 35, darunter `port=64739` aus
+der Compose (murmurs eingebaute Vorgabe waere 64738).
+
+Zwei Folgen, beide schlecht: die Ansicht behauptete fuer jede Einstellung aus
+der Compose „nicht gesetzt", und die vom Auftrag geforderte Warnung
+„Compose und Live laufen auseinander" konnte **strukturell nie** ausloesen —
+`env_mismatch` verlangte einen nichtleeren Ist-Wert, und der war fuer genau
+diese Schluessel immer leer.
+
+**Entscheidung.** Spalten `Wirksam` / `Herkunft` (Datenbank oder Datei) /
+`Faellt zurueck auf`. Der wirksame Wert ist der Datenbankeintrag, sonst der
+Dateiwert. Herkunft *Datenbank* ist die Zeile, auf die es ankommt: live
+geaendert, folgt der Compose nicht mehr, ueberlebt jeden `up -d`. Der Abgleich
+mit der Compose normalisiert die Namen so wie der Einstiegspunkt des Images
+(`${1^^}`, Unterstriche weg) — murmur schreibt dieselbe Einstellung an drei
+Stellen unterschiedlich: `registername`, `registerName`,
+`MUMBLE_CONFIG_REGISTERNAME`.
+
+---
+
+## D-024 - Die Laufzeitstufe uebernimmt Installationen, keine Wheels
+
+**Problem.** Die Laufzeitstufe hatte `COPY --from=builder /wheels /wheels` und
+raeumte danach mit `rm -rf /wheels` auf. Das gibt den Platz nicht zurueck: die
+Kopierschicht bleibt im Image, das `rm` legt nur eine Tilgung darueber. Gemessen
+am fertigen Image: 554 MB, davon rund 50 MB fuer eine Schicht, deren Inhalt es
+gar nicht mehr gibt.
+
+**Entscheidung.** Die Builder-Stufe installiert nach
+`--root=/install --prefix=/usr/local`, die Laufzeitstufe uebernimmt den Baum mit
+einem `COPY --from=builder /install/ /`. Es entsteht keine Wheel-Schicht mehr.
+Beide Stufen benutzen dasselbe Basisimage, die Python-Version stimmt also
+zwangsweise. Gemessen: **445 MB statt 554 MB.**
+
+Bewusst *nicht* `RUN --mount=type=bind,from=builder`: das braeuchte BuildKit,
+und auf DSM 7.2 ist BuildKit im Container Manager nicht zwangslaeufig aktiv --
+ein Bau auf dem NAS wuerde dann hart scheitern. Der Weg ueber `--root` laeuft
+mit jedem Docker.
+
+`--ignore-installed` gehoert dazu: zeroc-ice ist in der Builder-Stufe bereits
+installiert, weil `slice2py` es braucht. Ohne das Kennzeichen meldet pip
+"Requirement already satisfied" und legt es **nicht** unter `/install` ab. Das
+Laufzeit-Image waere ohne Ice gewesen, und zwar lautlos, denn alle anderen
+Pakete waren da. Aufgefallen ist es nur, weil die Importpruefung im Dockerfile
+tatsaechlich importiert -- Grund genug, sie dort zu behalten.
+
+---
+
+## D-025 - Der Export liest die wirksame Konfiguration, nicht die Datenbank
+
+**Problem.** Zwei Fehler im Exporter, beide erst beim Lauf gegen einen echten
+Server aufgefallen, beide gegen das Abnahmekriterium "Export ist wieder
+einlesbar".
+
+**1. `get_all_conf` verliert die Konfiguration aus der Datei.** Der Exporter las
+`welcometext` und `defaultchannel` aus `Server::getAllConf` -- und das sind nur
+die Datenbank-Uebersteuerungen (siehe D-023). Auf einem Server, der ueber die
+`MUMBLE_CONFIG_*`-Variablen der Compose eingerichtet wurde, stehen beide Werte
+in der ini-Datei; der Export liess sie stillschweigend weg. Ein Ruecksichern
+haette den Begruessungstext und den Vorgabekanal auf die Werkseinstellung
+zurueckgesetzt. Neu: `IceClient.get_effective_conf()` -- Datei, darueber die
+Datenbank.
+
+**2. `roots=` erzeugte eine nicht einlesbare YAML.** `server.defaultchannel`
+wurde ungeprueft mitgeschrieben. Zeigte er auf einen Kanal ausserhalb des
+exportierten Teilbaums, verwies die YAML auf einen Kanal, den sie selbst nicht
+anlegt, und `parse_config` lehnte sie mit "Kanal gibt es nicht" ab. Das
+Kriterium war also genau dann verletzt, wenn ein Vorgabekanal gesetzt war.
+
+**Entscheidung.** Der Vorgabekanal wird nur uebernommen, wenn er im Export
+vorkommt. Andernfalls erscheint im Kommentarkopf des Dokuments eine Zeile
+"Nicht uebernommen: server.defaultchannel verweist auf ... -- der Kanal liegt
+ausserhalb des exportierten Teilbaums". Weglassen ja, stilles Weglassen nein.

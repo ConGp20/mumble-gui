@@ -167,6 +167,11 @@ def _channel_to_spec(
     return spec
 
 
+def _im_export(pfad: str, top_level: list[str]) -> bool:
+    """Liegt ``pfad`` in einem der exportierten Teilbaeume?"""
+    return any(pfad == wurzel or pfad.startswith(wurzel + "/") for wurzel in top_level)
+
+
 def export_state(
     client: IceClient, *, roots: list[str] | None = None
 ) -> dict[str, Any]:
@@ -183,6 +188,10 @@ def export_state(
 
     registered = client.get_registered_users()
     root_acl = client.get_acl(0)
+
+    #: Was der Export nicht abbilden kann. Landet als Hinweis im Kopf des
+    #: Dokuments -- nicht still weggelassen.
+    ausgelassen: list[str] = []
 
     # -- Gruppen und Mitglieder ------------------------------------------
     group_names: list[str] = []
@@ -296,13 +305,35 @@ def export_state(
     channel_nodes = [node for node in (build(path) for path in top_level) if node]
 
     # -- Serverkonfiguration ----------------------------------------------
-    conf = client.get_all_conf()
+    # get_effective_conf, nicht get_all_conf: letzteres liefert nur die
+    # Datenbank-Uebersteuerungen. Auf einem ueber die Compose eingerichteten
+    # Server stehen welcometext und defaultchannel in der ini-Datei -- der
+    # Export haette sie stillschweigend verloren.
+    conf = client.get_effective_conf()
     server = ServerSpec(welcometext=conf.get("welcometext") or None)
     default_channel = conf.get("defaultchannel")
     if default_channel and default_channel.isdigit():
-        server.defaultchannel = id_to_path.get(int(default_channel)) or None
+        pfad = id_to_path.get(int(default_channel))
+        # Nur uebernehmen, wenn der Kanal auch im Export vorkommt. Bei einem
+        # auf roots= eingeschraenkten Export kann der Vorgabekanal ausserhalb
+        # liegen; dann verwiese die YAML auf einen Kanal, den sie selbst nicht
+        # anlegt, und waere nicht wieder einlesbar (parse_config lehnt sie mit
+        # "Kanal gibt es nicht" ab). Das ist kein stilles Weglassen -- der
+        # Hinweis steht unten im Kopf des Dokuments.
+        if pfad and _im_export(pfad, top_level):
+            server.defaultchannel = pfad
+        elif pfad:
+            ausgelassen.append(
+                f"server.defaultchannel verweist auf {pfad!r} -- der Kanal "
+                "liegt ausserhalb des exportierten Teilbaums und fehlt daher."
+            )
 
     document: dict[str, Any] = {"version": 1}
+    if ausgelassen:
+        # Unter einem Schluessel mit fuehrendem Unterstrich: parse_config
+        # ignoriert unbekannte Schluessel, und export_yaml hebt den Inhalt in
+        # den Kommentarkopf.
+        document["_ausgelassen"] = ausgelassen
     server_node: dict[str, Any] = {}
     if server.defaultchannel:
         server_node["defaultchannel"] = server.defaultchannel
@@ -335,6 +366,7 @@ def export_state(
 def export_yaml(client: IceClient, *, roots: list[str] | None = None) -> str:
     """Wie :func:`export_state`, aber gleich als YAML-Text."""
     document = export_state(client, roots=roots)
+    ausgelassen = document.pop("_ausgelassen", [])
     header = (
         "# Aus dem laufenden Server exportiert.\n"
         "#\n"
@@ -344,6 +376,8 @@ def export_yaml(client: IceClient, *, roots: list[str] | None = None) -> str:
         "# an der Sitzung), networks und devices (reine Dokumentation).\n"
         "# Diese Abschnitte aus der bisherigen intercom.yaml uebernehmen.\n"
     )
+    for hinweis in ausgelassen:
+        header += "#\n# Nicht uebernommen: " + hinweis + "\n"
     body = yaml.safe_dump(
         document, allow_unicode=True, sort_keys=False, default_flow_style=False, width=100
     )
