@@ -46,6 +46,21 @@ Admin-Image, zeigt den Provisioning-Plan und wendet ihn nach Bestaetigung an.
 Danach liegt das GUI auf `http://<NAS>:8080/`. Benutzer und Passwort stehen in
 der `.env` (`ADMIN_USER`, `ADMIN_PASSWORD`).
 
+Nur das Image bauen, ohne `setup.sh`:
+
+```bash
+docker compose --profile gui build mumble-admin
+# oder direkt:
+docker build -t stadion-intercom/mumble-admin:v1.5.735 admin/
+```
+
+Der Bau dauert einige Minuten — `zeroc-ice` wird aus dem Quelltext uebersetzt
+(Begruendung: DECISIONS.md, D-008). Das fertige Image ist rund **445 MB** und
+prueft sich selbst: schlaegt `import MumbleServer, Ice` oder
+`import intercom.web.app` fehl, bricht der Bau ab, statt ein Image zu
+hinterlassen, das erst im Stadion auffaellt. Hinter einem Proxy mit
+TLS-Aufbruch: `admin/ca/README.md`.
+
 > **HTTPS** macht der Synology-Reverse-Proxy davor (Systemsteuerung →
 > Anmeldeportal → Erweitert → Reverse Proxy). Die Anwendung liefert bewusst nur
 > einfaches HTTP auf `LISTEN_PORT`.
@@ -613,13 +628,27 @@ des murmur-Quelltextes stimmt: ueberlebt `Listen` (0x800) einen echten
 wegmaskiert, ist Gruppenmitgliedschaft ueber `setACL` tatsaechlich dauerhaft.
 Ohne erreichbaren Testserver werden sie uebersprungen.
 
-> Sie wurden in der Umgebung, in der dieser Code entstanden ist, **nicht
-> ausgefuehrt**. Registry und Anmeldung waren dort erreichbar
-> (`auth.docker.io` → 200, `registry-1.docker.io/v2/` → 401), die Layer selbst
-> kommen aber von `production.cloudfront.docker.com`, und dieser Host wird von
-> der Egress-Richtlinie abgelehnt (CONNECT → 403). Damit laesst sich kein
-> Docker-Hub-Image laden, auch kein `python:3.11-slim` fuer den Bau des
-> Admin-Images. Auf dem NAS laufen sie wie oben beschrieben.
+Sie sind gegen **murmur 1.5.735** ausgefuehrt worden und laufen durch. Dabei
+gefunden und behoben: eine unbrauchbare Variable in `docker-compose.test.yml`
+(`MUMBLE_CONFIG_LOGLEVEL` gibt es nicht — der Testserver startete nicht), die
+verdrehte Konfigurationsansicht und zwei Exporter-Fehler (siehe DECISIONS.md,
+D-023 bis D-025). Ein Doppel haette keinen davon gezeigt.
+
+> **Hinweis zum Netz.** In der Umgebung, in der dieser Code entstanden ist, ist
+> `production.cloudfront.docker.com` — der Layer-Auslieferer von Docker Hub —
+> von der Egress-Richtlinie gesperrt (CONNECT → 403), waehrend
+> `auth.docker.io` und `registry-1.docker.io` antworten. Ein `docker pull`
+> gegen Docker Hub scheitert deshalb beim Herunterladen der Layer. Bau und
+> Tests liefen ueber den Spiegel `mirror.gcr.io`:
+>
+> ```bash
+> docker pull mirror.gcr.io/mumblevoip/mumble-server:v1.5.735
+> docker tag  mirror.gcr.io/mumblevoip/mumble-server:v1.5.735 \
+>             mumblevoip/mumble-server:v1.5.735
+> docker build --build-arg PYTHON_IMAGE=mirror.gcr.io/library/python:3.11-slim-bookworm ...
+> ```
+>
+> Auf dem NAS ist das nicht noetig: dort genuegen die Vorgaben.
 
 ### Warum der Live-Strom nicht ueber den TestClient geprueft wird
 
