@@ -599,7 +599,7 @@ koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
 cd admin
 python3.11 -m pip install -e ".[dev]"
 ./scripts/build_slice.sh v1.5.735 slice     # Slice holen und uebersetzen
-python -m pytest -q                          # 162 Tests
+python -m pytest -q                          # 219 Tests (ohne echten Server: 207)
 python -m ruff check .
 python -m mypy intercom
 ```
