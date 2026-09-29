@@ -7,8 +7,9 @@
 #
 #  Idempotent: ein zweiter Lauf aendert nur, was noch nicht stimmt.
 #
-#  Laeuft auf Synology-DSM-Bash. Deshalb bewusst ohne mapfile/readarray, ohne
-#  assoziative Arrays und ohne GNU-eigene sed-Schalter.
+#  Bewusst sparsames Bash: ohne mapfile/readarray, ohne assoziative Arrays und
+#  ohne GNU-eigene sed-Schalter. Laeuft damit auf Debian, Ubuntu, Raspberry Pi
+#  OS und auch auf den abgespeckten Bash-Fassungen mancher NAS-Systeme.
 #
 #      ./setup.sh            komplette Einrichtung
 #      ./setup.sh --check    nur pruefen, nichts aendern
@@ -25,8 +26,8 @@ OHNE_RUECKFRAGE=0
 PROBLEME=0
 
 # --- Ausgabe -----------------------------------------------------------------
-# Farbe nur, wenn wirklich ein Terminal dranhaengt. In einem Log oder einer
-# DSM-Aufgabenplanung waeren Escape-Sequenzen nur Muell.
+# Farbe nur, wenn wirklich ein Terminal dranhaengt. In einem Log oder unter
+# systemd waeren Escape-Sequenzen nur Muell.
 if [ -t 1 ]; then
   C_ROT=$'\033[31m'; C_GRUEN=$'\033[32m'; C_GELB=$'\033[33m'
   C_BLAU=$'\033[36m'; C_FETT=$'\033[1m'; C_AUS=$'\033[0m'
@@ -95,7 +96,8 @@ fi
 
 if ! docker info > /dev/null 2>&1; then
   fehler "Der Docker-Daemon antwortet nicht. Laeuft er, und darf dieser Benutzer ihn ansprechen?"
-  info "Auf DSM hilft meist: sudo synopkg start ContainerManager"
+  info "Starten:      sudo systemctl start docker"
+  info "Ohne sudo:    sudo usermod -aG docker \$USER  (danach neu anmelden)"
   [ "${NUR_PRUEFEN}" -eq 1 ] || abbruch "Ohne laufenden Docker-Daemon geht es nicht weiter."
 else
   ok "Docker-Daemon erreichbar"
@@ -162,7 +164,7 @@ erzeuge_secret() {
   if command -v openssl > /dev/null 2>&1; then
     openssl rand -base64 24
   else
-    # DSM hat openssl praktisch immer; falls doch nicht, taugt urandom genauso.
+    # openssl ist fast immer da; falls doch nicht, taugt urandom genauso.
     head -c 24 /dev/urandom | base64
   fi
 }
@@ -378,7 +380,7 @@ titel "Fertig"
 
 HOST_IP="$(ip route get 1.1.1.1 2> /dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)"
 [ -n "${HOST_IP}" ] || HOST_IP="$(hostname -I 2> /dev/null | awk '{print $1}' || true)"
-[ -n "${HOST_IP}" ] || HOST_IP="<NAS-IP>"
+[ -n "${HOST_IP}" ] || HOST_IP="<rechner-ip>"
 
 printf '\n'
 printf '    %sGUI%s        http://%s:%s/\n' "${C_FETT}" "${C_AUS}" "${HOST_IP}" "${LISTEN_PORT}"
@@ -391,9 +393,12 @@ printf '               NICHT gebraucht – nur, falls jemand sich direkt mit dem
 printf '               Mumble-Client als SuperUser anmelden will. Aendern geht\n'
 printf '               im GUI unter „Nutzer“.\n'
 printf '\n'
-printf '    %sHTTPS%s      Die Anwendung liefert bewusst nur HTTP. TLS macht der\n' "${C_FETT}" "${C_AUS}"
-printf '               Synology-Reverse-Proxy davor (Systemsteuerung →\n'
-printf '               Anmeldeportal → Erweitert → Reverse Proxy).\n'
+printf '    %sNur HTTP%s   Das Cockpit laeuft unverschluesselt. Passwort und\n' "${C_FETT}" "${C_AUS}"
+printf '               Sitzungscookie gehen im Klartext ueber das Netz. Das ist\n'
+printf '               fuer ein abgeschlossenes Stadionnetz vertretbar, aber nur\n'
+printf '               dann. LISTEN_HOST in der .env auf die Netzkarte des\n'
+printf '               Stadionnetzes setzen, nicht 0.0.0.0 stehen lassen, wenn\n'
+printf '               der Rechner noch woanders haengt.\n'
 printf '\n'
 printf '    Weiter:    %s exec mumble-admin intercom status\n' "${COMPOSE}"
 printf '               %s logs -f mumble-admin\n' "${COMPOSE}"

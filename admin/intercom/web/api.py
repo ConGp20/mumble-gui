@@ -63,7 +63,7 @@ async def state(request: Request, account: Account = Depends(require_user)) -> d
 async def events(request: Request, account: Account = Depends(require_user)) -> StreamingResponse:
     """Server-Sent Events fuer die Live-Aktualisierung.
 
-    ``X-Accel-Buffering: no`` ist fuer den Synology-Reverse-Proxy noetig -- ohne
+    ``X-Accel-Buffering: no`` ist fuer nginx-artige Reverse Proxies noetig -- ohne
     das puffert nginx den Strom und im Browser kommt minutenlang nichts an.
     """
     context = ctx(request)

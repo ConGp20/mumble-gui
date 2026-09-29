@@ -4,7 +4,7 @@ Die eigentliche Arbeit steckt in :mod:`intercom.web.api` (JSON) und
 :mod:`intercom.web.context` (Zustand und Hintergrundaufgaben). Hier wird nur
 zusammengesteckt.
 
-HTTPS macht der Synology-Reverse-Proxy davor -- die Anwendung liefert bewusst
+TLS macht bei Bedarf ein Reverse Proxy davor -- die Anwendung liefert bewusst
 einfaches HTTP auf ``LISTEN_PORT``.
 """
 
@@ -276,7 +276,7 @@ def main() -> int:
         port=settings.listen_port,
         log_level=settings.log_level.lower(),
         access_log=settings.log_level == "DEBUG",
-        # Der Synology-Reverse-Proxy setzt X-Forwarded-For. Vertraut wird der
+        # Ein Reverse Proxy setzt X-Forwarded-For. Vertraut wird der
         # Angabe aber nur, wenn sie vom Loopback kommt -- der Proxy laeuft auf
         # demselben NAS. Mit "*" wuerde uvicorn den Kopf JEDES Absenders
         # uebernehmen, und ein Angreifer koennte sich mit jeder Anfrage eine

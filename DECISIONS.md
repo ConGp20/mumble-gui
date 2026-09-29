@@ -591,10 +591,10 @@ einem `COPY --from=builder /install/ /`. Es entsteht keine Wheel-Schicht mehr.
 Beide Stufen benutzen dasselbe Basisimage, die Python-Version stimmt also
 zwangsweise. Gemessen: **445 MB statt 554 MB.**
 
-Bewusst *nicht* `RUN --mount=type=bind,from=builder`: das braeuchte BuildKit,
-und auf DSM 7.2 ist BuildKit im Container Manager nicht zwangslaeufig aktiv --
-ein Bau auf dem NAS wuerde dann hart scheitern. Der Weg ueber `--root` laeuft
-mit jedem Docker.
+Bewusst *nicht* `RUN --mount=type=bind,from=builder`: das braucht BuildKit,
+und wo das nicht aktiv ist, scheitert der Bau hart statt langsamer zu werden.
+Betrifft aeltere Docker-Fassungen ebenso wie NAS-Oberflaechen mit eigenem
+Bau-Weg. Der Weg ueber `--root` laeuft mit jedem Docker.
 
 `--ignore-installed` gehoert dazu: zeroc-ice ist in der Builder-Stufe bereits
 installiert, weil `slice2py` es braucht. Ohne das Kennzeichen meldet pip
@@ -630,3 +630,42 @@ Kriterium war also genau dann verletzt, wenn ein Vorgabekanal gesetzt war.
 vorkommt. Andernfalls erscheint im Kommentarkopf des Dokuments eine Zeile
 "Nicht uebernommen: server.defaultchannel verweist auf ... -- der Kanal liegt
 ausserhalb des exportierten Teilbaums". Weglassen ja, stilles Weglassen nein.
+
+---
+
+## D-026 - Zielsystem ist ein beliebiger Linux-Rechner, und es gibt kein HTTPS
+
+**Problem.** Die urspruengliche Aufgabe nannte eine Synology mit DSM, und die
+Unterlagen waren entsprechend durchsetzt: `/volume1/docker/...` als Pfad,
+`synopkg start ContainerManager` als Hilfe, der DSM-Reverse-Proxy als der Weg
+zu TLS. Als Zielsystem wurde daraus ein gewoehnlicher Linux-Rechner -- ein
+Raspberry Pi, ein Mini-PC, eine virtuelle Maschine.
+
+**Entscheidung.** Alles DSM-Eigene ist raus, aus README, `setup.sh`,
+`.env.example` und den Kommentaren im Code. Was bleibt, ist bewusst
+verallgemeinert und nicht ersatzlos gestrichen:
+
+* `setup.sh` blieb schon vorher ohne `mapfile`, assoziative Arrays und
+  GNU-eigene `sed`-Schalter. Das war fuer die DSM-Bash gedacht und schadet
+  anderswo nicht -- es laeuft damit auf Debian, Ubuntu und Raspberry Pi OS
+  genauso.
+* Die Rechtevergabe auf `./server` und `./admin-data` (UID/GID 10000) bleibt
+  wie sie ist: sie faellt auf eine Warnung mit `sudo`-Hinweis zurueck, wenn der
+  aufrufende Benutzer nicht darf. Genau der Fall auf einem Pi, wo man nicht als
+  root arbeitet.
+* Der Hinweis auf gepufferte Datenstroeme bleibt als Fehlersuche-Abschnitt --
+  nur nicht mehr auf einen bestimmten Proxy gemuenzt. `X-Accel-Buffering: no`
+  wird weiter gesetzt; es kostet nichts und hilft, sobald doch einer davorsteht.
+
+**Kein HTTPS, ausdruecklich.** Das Cockpit laeuft unverschluesselt. Passwort und
+Sitzungscookie gehen im Klartext ueber das Netz. Fuer ein abgeschlossenes
+Stadionnetz ist das vertretbar -- aber nur dann, und das steht jetzt an drei
+Stellen so da: im Schnellstart, in der `.env.example` neben `LISTEN_HOST` und in
+der Schlussmeldung von `setup.sh`. Als Absicherung ohne Zusatzsoftware ist
+`LISTEN_HOST` gedacht: die IP der Netzkarte eintragen, die im Stadionnetz
+haengt, statt `0.0.0.0` stehen zu lassen. Dann ist der Port auf allen anderen
+Schnittstellen gar nicht erst offen.
+
+Die Anwendung selbst aendert sich dadurch nicht. Sie lieferte von Anfang an nur
+HTTP und tut das weiter; wer spaeter TLS will, stellt einen Reverse Proxy davor,
+ohne im Code etwas anzufassen.

@@ -95,7 +95,7 @@ class EventHub:
         """Liefert SSE-Rahmen, bis der Aufrufer abbricht.
 
         Alle 15 Sekunden geht ein Kommentar-Rahmen raus. Er haelt die Verbindung
-        durch den Synology-Reverse-Proxy offen, der sonst nach einer Weile ohne
+        durch einen etwaigen Reverse Proxy offen, der sonst nach einer Weile ohne
         Daten dichtmacht.
         """
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._queue_size)

@@ -546,7 +546,7 @@ def test_sse_endpunkt_setzt_die_richtigen_koepfe(app_client):
     async def hole_ersten_rahmen():
         antwort = await events(_Request(client.app), account=None)
         assert antwort.media_type == "text/event-stream"
-        # Ohne diesen Kopf puffert der Synology-Reverse-Proxy den Strom und im
+        # Ohne diesen Kopf puffert ein nginx-artiger Reverse Proxy den Strom und im
         # Browser kommt minutenlang nichts an.
         assert antwort.headers["x-accel-buffering"] == "no"
         assert "no-cache" in antwort.headers["cache-control"]

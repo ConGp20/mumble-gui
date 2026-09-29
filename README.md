@@ -26,9 +26,17 @@ dreissig Kanaele von Hand klickt.
 
 ## Schnellstart
 
+Zielsystem ist ein beliebiger Linux-Rechner mit Docker — Raspberry Pi,
+Mini-PC, virtuelle Maschine. Getestet auf x86-64; die Images gibt es auch fuer
+`arm64` und `arm/v7`, ein Pi 4 oder 5 ist also moeglich (zum Bau auf ARM siehe
+unten).
+
 ```bash
-git clone <dieses-repo> /volume1/docker/stadion-intercom
-cd /volume1/docker/stadion-intercom
+sudo apt install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker "$USER"     # danach ab- und wieder anmelden
+
+git clone <dieses-repo> ~/stadion-intercom
+cd ~/stadion-intercom
 ./setup.sh
 ```
 
@@ -43,7 +51,7 @@ Admin-Image, zeigt den Provisioning-Plan und wendet ihn nach Bestaetigung an.
 ./setup.sh --yes      # ohne Rueckfragen
 ```
 
-Danach liegt das GUI auf `http://<NAS>:8080/`. Benutzer und Passwort stehen in
+Danach liegt das GUI auf `http://<rechner>:8080/`. Benutzer und Passwort stehen in
 der `.env` (`ADMIN_USER`, `ADMIN_PASSWORD`).
 
 Nur das Image bauen, ohne `setup.sh`:
@@ -61,16 +69,22 @@ prueft sich selbst: schlaegt `import MumbleServer, Ice` oder
 hinterlassen, das erst im Stadion auffaellt. Hinter einem Proxy mit
 TLS-Aufbruch: `admin/ca/README.md`.
 
-> **HTTPS** macht der Synology-Reverse-Proxy davor (Systemsteuerung →
-> Anmeldeportal → Erweitert → Reverse Proxy). Die Anwendung liefert bewusst nur
-> einfaches HTTP auf `LISTEN_PORT`.
+> **Das Cockpit laeuft unverschluesselt.** Passwort und Sitzungscookie gehen im
+> Klartext ueber das Netz. Fuer ein abgeschlossenes Stadionnetz ist das
+> vertretbar — aber nur dann. Haengt der Rechner mit einem Bein im Internet
+> oder im Buero-LAN, gehoert ein Reverse Proxy mit TLS davor; die Anwendung
+> aendert sich dafuer nicht, sie liefert weiterhin nur HTTP auf `LISTEN_PORT`.
+>
+> Erste Absicherung ohne Zusatzsoftware: `LISTEN_HOST` in der `.env` auf die
+> Netzkarte des Stadionnetzes setzen statt auf `0.0.0.0`. Dann ist der Port auf
+> den anderen Schnittstellen gar nicht erst offen.
 
 ---
 
 ## Architektur
 
 ```
-  Stadion-LAN                    Host-Netz des NAS
+  Stadion-LAN                    Host-Netz des Rechners
  ┌──────────────┐
  │ Mumble-Desktop│──64738──┐
  │ Mumla (PoC)   │         │   ┌──────────────────────────────────────┐
@@ -101,7 +115,8 @@ TLS-Aufbruch: `admin/ca/README.md`.
                               └────────┼─────────────────────────────┘
                                        │ HTTP 8080
                               ┌────────▼─────────┐
-                              │ Synology-Proxy   │──▶ Browser (HTTPS)
+                              │  Browser im      │
+                              │  Stadionnetz     │
                               └──────────────────┘
 ```
 
@@ -572,14 +587,18 @@ Wert von vor zehn Minuten sieht aus wie eine Messung, ist aber eine Erinnerung.
 
 ### SSE bleibt stehen / Cockpit aktualisiert nicht
 
-Der Synology-Reverse-Proxy puffert Datenstroeme. Die Anwendung setzt
-`X-Accel-Buffering: no` und `Cache-Control: no-cache`; einige
-Proxy-Konfigurationen ueberschreiben das. Zum Pruefen direkt am NAS-Port
-vorbei am Proxy testen:
+Ohne Reverse Proxy tritt das nicht auf. Setzt jemand spaeter einen davor, ist
+Pufferung die erste Verdaechtige: die Anwendung schickt `X-Accel-Buffering: no`
+und `Cache-Control: no-cache`, aber manche Konfigurationen ueberschreiben das
+(bei nginx hilft `proxy_buffering off;`). Zum Eingrenzen direkt am Port testen,
+am Proxy vorbei:
 
 ```bash
 curl -N http://127.0.0.1:8080/api/events   # nach Anmeldung
 ```
+
+Kommen dort laufend `event: state`-Zeilen an, liegt es am Proxy, nicht an der
+Anwendung.
 
 ### Provisionierung schlaegt fehl
 
@@ -648,7 +667,7 @@ D-023 bis D-025). Ein Doppel haette keinen davon gezeigt.
 > docker build --build-arg PYTHON_IMAGE=mirror.gcr.io/library/python:3.11-slim-bookworm ...
 > ```
 >
-> Auf dem NAS ist das nicht noetig: dort genuegen die Vorgaben.
+> Auf einem normalen Netz ist das nicht noetig: dort genuegen die Vorgaben.
 
 ### Warum der Live-Strom nicht ueber den TestClient geprueft wird
 

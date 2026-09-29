@@ -2,7 +2,7 @@
 
 Bewusst klein gehalten: zwei Konten aus der Umgebung, ein signiertes Cookie,
 ein CSRF-Token. Keine Nutzerverwaltung, keine Datenbank -- wer mehr braucht,
-setzt den Synology-Reverse-Proxy davor.
+setzt einen Reverse Proxy davor.
 
 Rollen
 ------
