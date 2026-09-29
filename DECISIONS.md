@@ -189,6 +189,10 @@ fuer neuere Python-Versionen keine verlaesslichen Wheels gibt.
   und `libbz2-dev` uebersetzt `pip install --no-binary :all: zeroc-ice==3.7.11`
   unter Python 3.11 fehlerfrei. `slice2py` landet danach in `/usr/local/bin`.
 
+**Ueberholt von D-027** -- der Quelltext-Bau ist einem fertigen
+Debian-Paket gewichen. Die Begruendung unten bleibt als Beleg dafuer stehen,
+warum ein Wheel nicht in Frage kam.
+
 **Entscheidung.** Das Dockerfile baut `zeroc-ice` in einer Builder-Stufe aus
 dem Quelltext und kopiert nur das Ergebnis ins Laufzeit-Image. Das kostet beim
 ersten Bau einige Minuten, ist dafuer unabhaengig von Distributionspaketen und
@@ -669,3 +673,60 @@ Schnittstellen gar nicht erst offen.
 Die Anwendung selbst aendert sich dadurch nicht. Sie lieferte von Anfang an nur
 HTTP und tut das weiter; wer spaeter TLS will, stellt einen Reverse Proxy davor,
 ohne im Code etwas anzufassen.
+
+---
+
+## D-027 - zeroc-ice kommt aus Debian, nicht aus dem Quelltext
+
+**Problem.** D-008 entschied, `zeroc-ice` im Image aus dem Quelltext zu bauen.
+Das stimmte fuer die damalige Annahme (Ubuntu als Basis, dort Python 3.12 und
+ein dagegen gebautes Ice) -- aber es wurde nie gegen **Debian** geprueft, und
+das ist die Basis, auf der das Image ohnehin laeuft.
+
+Der Preis war hoch und faellt erst auf schwacher Hardware auf: `pip install
+zeroc-ice` uebersetzt den kompletten C++-Quelltext, hier gemessen **gut zehn
+Minuten auf x86-64**. Auf einem Raspberry Pi entsprechend laenger, und mit 2 GB
+Arbeitsspeicher kann der Compiler dabei aussteigen. Fuer ein Geraet, auf dem das
+Ding laufen soll, ist das die falsche Richtung.
+
+**Befund.** Debian 12 liefert das Paket fertig, und zwar gegen genau die
+Python-Version gebaut, die dieses Projekt benutzt:
+
+| Basis | `python3` | `python3-zeroc-ice` | gebaut fuer |
+|---|---|---|---|
+| Ubuntu 24.04 | 3.12.3 | 3.7.10 | 3.12 |
+| Ubuntu 22.04 | 3.10.6 | 3.7.6 | 3.10 |
+| **Debian 12** | **3.11.2** | **3.7.8** | **3.11** |
+
+`slice2py` kommt aus `zeroc-ice-compilers`, die von `MumbleServer.ice`
+eingebundenen Ice-Slices aus `libzeroc-ice-dev` (nur in der Builder-Stufe).
+
+**Ice 3.7.8 statt 3.7.11 ist geprueft, nicht angenommen.** Gegen murmur 1.5.735:
+
+* `slice2py` 3.7.8 uebersetzt die 1.5.735-Slice zu **133 Pruefsummen** --
+  dieselbe Zahl wie mit 3.7.11.
+* `Meta.getSliceChecksums()` meldet 71 Pruefsummen, davon **0 abweichend und 0
+  fehlend**.
+* `getChannels`, `getACL`, `getAllConf`, Rueckrufe, Provisionierung und der
+  Monitor-Bot laufen unveraendert durch.
+
+**Entscheidung.** Basis ist `debian:bookworm-slim`, Ice kommt per `apt`.
+Ergebnis: sauberer Bau ohne Cache in **50 Sekunden statt ueber zehn Minuten**,
+Image **329 MB statt 445 MB**, kein Compiler im Bau.
+
+Zwei Dinge, die dazugehoeren:
+
+* **`zeroc-ice` ist ein Extra, keine feste Abhaengigkeit** (`pyproject.toml`).
+  Debian legt die Module ab, aber keine pip-Metadaten -- pip haelt das Paket
+  also fuer nicht installiert und wuerde es trotzdem aus dem Quelltext bauen.
+  Im Image kommt Ice aus Debian, auf einem Arbeitsplatz ohne das
+  Distributionspaket ueber `pip install -e ".[dev,ice]"`.
+* **Eine venv mit `--system-site-packages`.** Unsere Abhaengigkeiten kommen aus
+  pip, Ice aus `/usr/lib/python3/dist-packages`. Ohne den Schalter saehe die
+  Umgebung es nicht. Zugleich umgeht das PEP 668, ohne mit
+  `--break-system-packages` an Debians Paketverwaltung vorbeizuschreiben.
+
+**Was das nicht ist.** Eine Aussage ueber das Betriebssystem des Hosts. Ubuntu,
+Debian oder Raspberry Pi OS auf dem Geraet sind gleichermassen in Ordnung -- der
+Container bringt sein eigenes Userland mit. Die Tabelle oben betrifft
+ausschliesslich das Basisimage.

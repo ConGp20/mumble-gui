@@ -27,9 +27,10 @@ dreissig Kanaele von Hand klickt.
 ## Schnellstart
 
 Zielsystem ist ein beliebiger Linux-Rechner mit Docker — Raspberry Pi,
-Mini-PC, virtuelle Maschine. Getestet auf x86-64; die Images gibt es auch fuer
-`arm64` und `arm/v7`, ein Pi 4 oder 5 ist also moeglich (zum Bau auf ARM siehe
-unten).
+Zima Board, Mini-PC, virtuelle Maschine. Gebaut und gegen einen echten
+mumble-server geprueft auf **x86-64**; die Basisimages gibt es ebenso fuer
+**arm64**; das Betriebssystem des Hosts spielt keine Rolle (Ubuntu, Debian,
+Raspberry Pi OS), der Container bringt sein eigenes mit.
 
 ```bash
 sudo apt install -y docker.io docker-compose-v2 git
@@ -62,12 +63,28 @@ docker compose --profile gui build mumble-admin
 docker build -t stadion-intercom/mumble-admin:v1.5.735 admin/
 ```
 
-Der Bau dauert einige Minuten — `zeroc-ice` wird aus dem Quelltext uebersetzt
-(Begruendung: DECISIONS.md, D-008). Das fertige Image ist rund **445 MB** und
-prueft sich selbst: schlaegt `import MumbleServer, Ice` oder
+Gemessen auf x86-64: **50 Sekunden** ohne jeden Cache. Auf einem Pi dauert es
+laenger, bleibt aber in derselben Groessenordnung — es wird nichts uebersetzt,
+nur installiert. Das fertige Image ist rund **329 MB**.
+
+Es prueft sich selbst: schlaegt `import MumbleServer, Ice` oder
 `import intercom.web.app` fehl, bricht der Bau ab, statt ein Image zu
 hinterlassen, das erst im Stadion auffaellt. Hinter einem Proxy mit
 TLS-Aufbruch: `admin/ca/README.md`.
+
+**Auf einem Raspberry Pi** ist nichts weiter zu tun — `docker build` nimmt von
+selbst die arm64-Fassung der Basisimages. Wer auf einem x86-Rechner fuer den Pi
+bauen will (etwa um die SD-Karte zu schonen):
+
+```bash
+docker build --platform linux/arm64 -t stadion-intercom/mumble-admin:v1.5.735 admin/
+docker save stadion-intercom/mumble-admin:v1.5.735 | gzip > intercom-arm64.tgz
+# auf dem Pi:
+gunzip -c intercom-arm64.tgz | docker load
+```
+
+Dafuer muss auf dem bauenden Rechner die Emulation eingerichtet sein:
+`docker run --privileged --rm tonistiigi/binfmt --install arm64`.
 
 > **Das Cockpit laeuft unverschluesselt.** Passwort und Sitzungscookie gehen im
 > Klartext ueber das Netz. Fuer ein abgeschlossenes Stadionnetz ist das
@@ -616,7 +633,7 @@ koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
 
 ```bash
 cd admin
-python3.11 -m pip install -e ".[dev]"
+python3.11 -m pip install -e ".[dev,ice]"   # ice nur ohne python3-zeroc-ice
 ./scripts/build_slice.sh v1.5.735 slice     # Slice holen und uebersetzen
 python -m pytest -q                          # 219 Tests (ohne echten Server: 207)
 python -m ruff check .

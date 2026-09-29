@@ -24,9 +24,27 @@ grep -q '^module MumbleServer' "${OUT_DIR}/MumbleServer.ice" || {
   exit 1
 }
 
+# MumbleServer.ice bindet Ice-eigene Slices ein (Ice/SliceChecksumDict.ice).
+# Wo slice2py sie findet, haengt an der Herkunft:
+#
+#   * aus dem PyPI-Paket: sie liegen im Paket selbst, slice2py findet sie allein.
+#   * aus dem Debian-Paket (zeroc-ice-compilers): sie liegen unter
+#     /usr/share/ice/slice und muessen ausdruecklich angegeben werden, sonst
+#     bricht der Uebersetzer mit "Can't open include file" ab.
+#
+# Deshalb wird der Pfad nur gesetzt, wenn es ihn gibt -- damit laeuft dasselbe
+# Skript in beiden Faellen.
+SLICE_INCLUDE=""
+for kandidat in /usr/share/ice/slice /usr/share/Ice/slice; do
+  if [ -d "${kandidat}" ]; then
+    SLICE_INCLUDE="-I${kandidat}"
+    break
+  fi
+done
+
 # --checksum erzeugt Pruefsummen, die wir zur Laufzeit gegen
 # Meta.getSliceChecksums() halten. Ohne den Schalter bleibt Ice.sliceChecksums leer.
-( cd "${OUT_DIR}" && slice2py --checksum MumbleServer.ice )
+( cd "${OUT_DIR}" && slice2py ${SLICE_INCLUDE} --checksum MumbleServer.ice )
 
 test -f "${OUT_DIR}/MumbleServer_ice.py" || { echo "slice2py hat nichts erzeugt" >&2; exit 1; }
 echo "Slice uebersetzt nach ${OUT_DIR}"

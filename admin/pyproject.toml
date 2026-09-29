@@ -11,10 +11,10 @@ description = "Administration, Provisionierung und Ueberwachung des Stadion-Inte
 # uebergeht die fehlende Datei heute stillschweigend -- darauf sollte sich der
 # Bau aber nicht verlassen. Die README liegt im Projektstamm.
 requires-python = ">=3.11,<3.12"
-# Die Obergrenze ist keine Vorsicht, sondern gemessen: zeroc-ice 3.7.11 hat auf
-# PyPI kein Wheel fuer 3.11 und wird aus dem Quelltext gebaut; fuer 3.12+ ist
-# selbst das unzuverlaessig, und das Distributionspaket python3-zeroc-ice ist
-# gegen genau eine Python-Version gebaut. Siehe DECISIONS.md (D-008).
+# Die Obergrenze ist keine Vorsicht, sondern gemessen: zeroc-ice hat auf PyPI
+# fuer Linux ueberhaupt kein Wheel und wird aus dem Quelltext gebaut, und das
+# Distributionspaket python3-zeroc-ice ist gegen genau eine Python-Version
+# gebaut -- in Debian 12 gegen 3.11. Siehe DECISIONS.md (D-008, D-027).
 
 dependencies = [
   "fastapi>=0.110",
@@ -24,9 +24,7 @@ dependencies = [
   "itsdangerous>=2.1",
   "python-multipart>=0.0.9",
 
-  # Ice-Schnittstelle zu murmur. Feste Version: die Slice wird damit uebersetzt,
-  # und ein Versionssprung wuerde die Pruefsummen gegen den Server verschieben.
-  "zeroc-ice==3.7.11",
+  # zeroc-ice steht BEWUSST NICHT hier, sondern als Extra "ice" weiter unten.
 
   # Nur fuer das selbstsignierte Client-Zertifikat des Monitor-Bots.
   "cryptography>=42",
@@ -41,6 +39,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Ice kommt aus einer von zwei Quellen, und welche es ist, entscheidet die
+# Umgebung -- deshalb ein Extra und keine feste Abhaengigkeit:
+#
+#   * Im Image aus dem Debian-Paket `python3-zeroc-ice` (3.7.8, gegen Python
+#     3.11 gebaut). Das ist der Regelfall und der Grund fuer dieses Extra:
+#     Debian legt die Module ab, aber keine pip-Metadaten. Stuende zeroc-ice in
+#     `dependencies`, wuerde pip es fuer unbekannt halten und trotzdem aus dem
+#     Quelltext bauen -- zehn Minuten C++ fuer etwas, das schon da ist.
+#   * Auf einem Arbeitsplatz ohne das Distributionspaket ueber dieses Extra,
+#     dann aus dem Quelltext. Feste Version, weil die Slice damit uebersetzt
+#     wird und ein Versionssprung die Pruefsummen gegen den Server verschoebe.
+#
+# Ohne beides scheitert der Import mit "No module named 'Ice'"; die Tests
+# ueberspringen sich dann von selbst (siehe tests/conftest.py).
+ice = ["zeroc-ice==3.7.11"]
+
 # types-PyYAML gehoert dazu: ohne die Stubs meldet mypy drei Fehler, die
 # keine sind -- und ein frisch aufgesetzter Arbeitsplatz sieht damit als
 # erstes eine rote Pruefung.

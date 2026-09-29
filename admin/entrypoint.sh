@@ -17,7 +17,7 @@ if [ ! -w "${DATA_DIR}" ]; then
 FEHLER: ${DATA_DIR} ist nicht beschreibbar.
 
 Der Container laeuft als UID $(id -u):$(id -g). Das gemountete Verzeichnis
-gehoert jemand anderem. Auf dem NAS im Projektverzeichnis:
+gehoert jemand anderem. Im Projektverzeichnis auf dem Host:
 
     sudo chown -R 10000:10000 ./admin-data
 

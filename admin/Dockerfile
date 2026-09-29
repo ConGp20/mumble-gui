@@ -1,28 +1,52 @@
 # =============================================================================
 #  Admin-GUI des Stadion-Intercoms
 #
-#  Zwei Stufen. Die erste baut zeroc-ice aus dem Quelltext -- das dauert einige
-#  Minuten und braucht einen Compiler. Die zweite nimmt nur das fertige Wheel
-#  und bleibt damit ohne Werkzeugkette.
+#  Zwei Stufen, beide auf debian:bookworm-slim. Die erste holt und uebersetzt
+#  die Slice und baut die Python-Abhaengigkeiten, die zweite nimmt nur das
+#  Ergebnis und bleibt ohne Werkzeugkette.
 #
-#  Warum aus dem Quelltext: zeroc-ice 3.7.11 hat auf PyPI kein Wheel fuer
-#  CPython 3.11, und das Distributionspaket python3-zeroc-ice ist gegen genau
-#  eine Python-Version gebaut (in Ubuntu 24.04 gegen 3.12, damit hier
-#  unbrauchbar). Siehe DECISIONS.md (D-008).
+#  Warum Debian und nicht python:3.11-slim:
+#
+#  zeroc-ice hat auf PyPI fuer Linux ueberhaupt kein Wheel -- nur ein sdist.
+#  `pip install zeroc-ice` uebersetzt also den kompletten C++-Quelltext: hier
+#  gemessen gut zehn Minuten auf x86-64, auf einem Raspberry Pi entsprechend
+#  laenger, und mit 2 GB Arbeitsspeicher kann der Compiler dabei aussteigen.
+#
+#  Debian 12 liefert das Paket fertig -- und zwar gegen genau die Python-Version
+#  gebaut, die dieses Projekt benutzt:
+#
+#      python3-zeroc-ice 3.7.8   Depends: python3 (>= 3.11~), python3 (<< 3.12)
+#      python3           3.11.2
+#
+#  Ubuntu taugt dafuer nicht: 24.04 hat Python 3.12 (und ein dagegen gebautes
+#  Ice 3.7.10), 22.04 hat 3.10. Nur Debian 12 trifft 3.11. Das betrifft
+#  ausschliesslich das Basisimage -- auf welchem System der Container spaeter
+#  laeuft, ist davon unberuehrt.
+#
+#  Ice 3.7.8 statt 3.7.11 ist geprueft, nicht angenommen: gegen murmur 1.5.735
+#  meldet Meta.getSliceChecksums() 71 Pruefsummen, davon 0 abweichend und 0
+#  fehlend. Siehe DECISIONS.md (D-008, D-027).
 # =============================================================================
 
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm
+ARG BASE_IMAGE=debian:bookworm-slim
 
 # --- Stufe 1: bauen -----------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS builder
+FROM ${BASE_IMAGE} AS builder
 
 ARG MUMBLE_VERSION=v1.5.735
 
-# libssl-dev und libbz2-dev sind die tatsaechlich benoetigten Bibliotheken --
-# Ice verschluesselt selbst und komprimiert seine Nachrichten.
+# python3-zeroc-ice  = die Ice-Laufzeit fuer Python
+# zeroc-ice-compilers = slice2py
+# libzeroc-ice-dev   = die Ice-eigenen .ice-Dateien unter /usr/share/ice/slice,
+#                      die MumbleServer.ice einbindet. Nur hier noetig; die
+#                      Stufe wird verworfen.
+# build-essential/python3-dev braucht pip nur noch, falls fuer eine
+# Abhaengigkeit ausnahmsweise kein Rad vorliegt.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      build-essential libssl-dev libbz2-dev ca-certificates curl git \
+      python3 python3-venv python3-pip python3-dev \
+      python3-zeroc-ice zeroc-ice-compilers libzeroc-ice-dev \
+      build-essential ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -32,9 +56,8 @@ WORKDIR /build
 # `update-ca-certificates` nimmt nur `*.crt`. Siehe admin/ca/README.md.
 #
 # Das wirkt AUSSCHLIESSLICH in dieser Stufe. Die Laufzeitstufe laedt nichts mehr
-# aus dem Netz (`pip install --no-index` aus den fertigen Wheels), bekommt die
-# Zertifikate also nicht -- ein Bau hinter einem Firmenproxy erzeugt dasselbe
-# Image wie ein Bau ohne.
+# aus dem Netz und bekommt die Zertifikate nicht -- ein Bau hinter einem
+# Firmenproxy erzeugt dasselbe Image wie ein Bau ohne.
 #
 # PIP_CERT ist noetig, weil pip nicht den Systemspeicher benutzt, sondern das
 # mitgelieferte Bundle von certifi. Der Wert ist der Systemspeicher selbst und
@@ -43,10 +66,13 @@ COPY ca/ /usr/local/share/ca-certificates/intercom-extra/
 RUN update-ca-certificates
 ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
-# zeroc-ice zuerst und in einer eigenen Schicht: es ist mit Abstand das
-# teuerste Stueck und darf nicht bei jeder Code-Aenderung neu uebersetzt werden.
-RUN pip wheel --no-binary :all: --wheel-dir /wheels "zeroc-ice==3.7.11"
-RUN pip install --no-index --find-links=/wheels "zeroc-ice==3.7.11"
+# Eigene Umgebung mit --system-site-packages: unsere Abhaengigkeiten kommen aus
+# pip, Ice dagegen aus dem Debian-Paket und liegt in
+# /usr/lib/python3/dist-packages. Ohne den Schalter saehe die Umgebung es nicht.
+# Zugleich umgeht das PEP 668 ("externally-managed-environment"), ohne pip mit
+# --break-system-packages an Debians Paketverwaltung vorbeizuschreiben.
+RUN python3 -m venv --system-site-packages /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
 
 # Slice-Datei laden und uebersetzen. Das Skript prueft, dass wirklich eine
 # Slice und keine 404-Seite ankam, und erzeugt die Pruefsummen, mit denen die
@@ -70,73 +96,45 @@ RUN chmod +x /build/scripts/fetch_vendor.sh \
 # git wird fuer pymumble gebraucht, siehe pyproject.toml.
 COPY pyproject.toml /build/pyproject.toml
 COPY intercom/ /build/intercom/
-RUN pip wheel --wheel-dir /wheels /build
-
-# Jetzt installieren, und zwar in einen abgesetzten Baum, den die Laufzeitstufe
-# als Ganzes uebernimmt.
-#
-# Die Wheels werden direkt ueber ihren Dateinamen installiert, nicht ueber den
-# Paketnamen. Grund: pymumble haengt als direkte Git-URL in den Metadaten, und
-# bei einer Aufloesung ueber den Paketnamen wuerde pip diese URL erneut
-# anfassen -- dann braeuchte auch das Laufzeit-Image git und Netz. `pip wheel`
-# hat oben bereits den vollstaendigen Abhaengigkeitsbaum gebaut; hier wird er
-# nur noch ausgepackt.
-#
-# --ignore-installed ist Pflicht: zeroc-ice ist in dieser Stufe schon
-# installiert (slice2py braucht es, siehe oben). Ohne das meldet pip
-# "Requirement already satisfied" und legt es NICHT unter /install ab -- das
-# Laufzeit-Image waere dann ohne Ice, und zwar lautlos, denn alle anderen
-# Pakete sind da. Aufgefallen ist es nur, weil die Importpruefung unten
-# tatsaechlich importiert.
-RUN pip install --no-cache-dir --no-deps --ignore-installed \
-      --root=/install --prefix=/usr/local /wheels/*.whl
+RUN pip install --no-cache-dir /build
 
 # --- Stufe 2: Laufzeit --------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS runtime
+FROM ${BASE_IMAGE} AS runtime
 
 ARG MUMBLE_VERSION=v1.5.735
 
-# curl fuer den HEALTHCHECK, libssl/libbz2 als Laufzeitbibliotheken von Ice.
+# Nur die Laufzeit: python3 und die Ice-Bindung, dazu curl fuer den HEALTHCHECK
+# und tini als PID 1. Kein Compiler, kein slice2py, keine Ice-Entwicklerdateien.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      curl ca-certificates libssl3 libbz2-1.0 tini \
+      python3 python3-zeroc-ice ca-certificates curl tini \
  && rm -rf /var/lib/apt/lists/*
 
 # UID 10000 wie beim mumble-server-Image. setup.sh setzt ./server UND
 # ./admin-data auf 10000:10000; damit passt der Besitzer auf beiden Seiten und
-# niemand muss auf dem NAS raten, wem /data gehoeren soll.
+# niemand muss raten, wem /data gehoeren soll.
 RUN groupadd --gid 10000 intercom \
  && useradd --uid 10000 --gid 10000 --no-create-home --shell /usr/sbin/nologin intercom
 
-# Die von slice2py erzeugten Module liegen ausserhalb von site-packages. Statt
+# Die von slice2py erzeugten Module liegen ausserhalb der Umgebung. Statt
 # PYTHONPATH zu setzen -- das jede Umgebung ueberschreiben kann -- wird ein
-# .pth in site-packages abgelegt: Python liest es bei jedem Start, egal wie der
-# Prozess aufgerufen wurde. Das muss VOR der Pruefung unten stehen, sonst
-# findet `import intercom.web.app` das Modul MumbleServer nicht.
+# .pth abgelegt: Python liest es bei jedem Start, egal wie der Prozess
+# aufgerufen wurde.
 COPY --from=builder /opt/intercom/slice /opt/intercom/slice
-
-# Die fertig installierten Pakete aus der Builder-Stufe uebernehmen, nicht die
-# Wheels. Ein `COPY /wheels` waere eine eigene Schicht von rund 50 MB, die im
-# Image bleibt -- ein spaeteres `rm -rf /wheels` gibt den Platz nicht zurueck,
-# es legt nur eine Tilgung darueber. Auf einem NAS ist das der Unterschied
-# zwischen 554 MB und rund 500 MB, fuer nichts.
-#
-# `--root=/install --prefix=/usr/local` in der Builder-Stufe erzeugt genau den
-# Baum, der hier hingehoert, deshalb genuegt ein Kopieren nach `/`. Beide Stufen
-# benutzen dasselbe Basisimage; die Python-Version stimmt also zwangsweise.
-COPY --from=builder /install/ /
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
 
 # Die Pruefungen bleiben: ein Image, in dem der Import scheitert, soll beim Bau
 # auffallen und nicht beim ersten Start im Stadion.
 RUN printf '/opt/intercom/slice\n' \
-      > "$(python -c 'import site; print(site.getsitepackages()[0])')/intercom-slice.pth" \
- && python -c "import MumbleServer, Ice; print('Slice:', len(Ice.sliceChecksums), 'Pruefsummen')" \
- && python -c "import intercom.cli, intercom.web.app; print('Paket installiert')" \
+      > "$(python3 -c 'import site; print(site.getsitepackages()[0])')/intercom-slice.pth" \
+ && python3 -c "import MumbleServer, Ice; print('Ice', Ice.stringVersion(), '--', len(Ice.sliceChecksums), 'Pruefsummen')" \
+ && python3 -c "import intercom.cli, intercom.web.app; print('Paket installiert')" \
  && command -v intercom > /dev/null
 
 # Statische Dateien und Vorlagen liegen neben dem Paket, nicht darin: sie
-# werden zur Laufzeit ausgeliefert und muessen sich ohne Neubau des Wheels
-# austauschen lassen.
+# werden zur Laufzeit ausgeliefert und muessen sich ohne Neubau austauschen
+# lassen.
 COPY static/    /opt/intercom/static/
 COPY templates/ /opt/intercom/templates/
 COPY --from=builder /opt/intercom/static/vendor /opt/intercom/static/vendor
@@ -163,4 +161,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=25s --retries=3 \
 # tini als PID 1: uvicorn und die Ice-Threads sollen ein sauberes SIGTERM
 # bekommen, damit removeCallback noch durchgeht.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
-CMD ["python", "-m", "intercom.web.app"]
+CMD ["python3", "-m", "intercom.web.app"]
