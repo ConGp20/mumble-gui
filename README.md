@@ -681,7 +681,7 @@ D-023 bis D-025). Ein Doppel haette keinen davon gezeigt.
 > docker pull mirror.gcr.io/mumblevoip/mumble-server:v1.5.735
 > docker tag  mirror.gcr.io/mumblevoip/mumble-server:v1.5.735 \
 >             mumblevoip/mumble-server:v1.5.735
-> docker build --build-arg PYTHON_IMAGE=mirror.gcr.io/library/python:3.11-slim-bookworm ...
+> docker build --build-arg BASE_IMAGE=mirror.gcr.io/library/debian:bookworm-slim ...
 > ```
 >
 > Auf einem normalen Netz ist das nicht noetig: dort genuegen die Vorgaben.
