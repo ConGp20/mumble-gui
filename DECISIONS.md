@@ -726,6 +726,14 @@ Zwei Dinge, die dazugehoeren:
   Umgebung es nicht. Zugleich umgeht das PEP 668, ohne mit
   `--break-system-packages` an Debians Paketverwaltung vorbeizuschreiben.
 
+**Auf arm64 nachgewiesen.** Das Image wurde fuer `linux/arm64` gebaut (338 s
+unter QEMU-Emulation), gestartet und gegen denselben echten mumble-server
+gefahren: `uname -m` meldet `aarch64`, Ice 3.7.8 mit 133 Pruefsummen, alle
+Seiten und API-Endpunkte antworten, der Monitor-Bot haengt stumm und taub im
+Zielkanal. Die Emulation belegt Bau und Lauf, nicht die Geschwindigkeit auf
+echter Hardware -- die Antwortzeiten (0,22 s statt 0,03 s fuer die
+Cockpit-Seite) sind Emulationskosten.
+
 **Was das nicht ist.** Eine Aussage ueber das Betriebssystem des Hosts. Ubuntu,
 Debian oder Raspberry Pi OS auf dem Geraet sind gleichermassen in Ordnung -- der
 Container bringt sein eigenes Userland mit. Die Tabelle oben betrifft

@@ -27,10 +27,10 @@ dreissig Kanaele von Hand klickt.
 ## Schnellstart
 
 Zielsystem ist ein beliebiger Linux-Rechner mit Docker — Raspberry Pi,
-Zima Board, Mini-PC, virtuelle Maschine. Gebaut und gegen einen echten
-mumble-server geprueft auf **x86-64**; die Basisimages gibt es ebenso fuer
-**arm64**; das Betriebssystem des Hosts spielt keine Rolle (Ubuntu, Debian,
-Raspberry Pi OS), der Container bringt sein eigenes mit.
+Zima Board, Mini-PC, virtuelle Maschine. Gebaut **und gegen einen echten
+mumble-server geprueft auf x86-64 und arm64**. Das Betriebssystem des Hosts
+spielt keine Rolle (Ubuntu, Debian, Raspberry Pi OS): der Container bringt sein
+eigenes mit.
 
 ```bash
 sudo apt install -y docker.io docker-compose-v2 git
@@ -63,9 +63,10 @@ docker compose --profile gui build mumble-admin
 docker build -t stadion-intercom/mumble-admin:v1.5.735 admin/
 ```
 
-Gemessen auf x86-64: **50 Sekunden** ohne jeden Cache. Auf einem Pi dauert es
-laenger, bleibt aber in derselben Groessenordnung — es wird nichts uebersetzt,
-nur installiert. Das fertige Image ist rund **329 MB**.
+Gemessen ohne jeden Cache: **50 Sekunden auf x86-64**. Es wird nichts
+uebersetzt, nur installiert — deshalb bleibt es auch auf schwacher Hardware in
+derselben Groessenordnung. Das fertige Image meldet `docker images` mit rund
+**330 MB**.
 
 Es prueft sich selbst: schlaegt `import MumbleServer, Ice` oder
 `import intercom.web.app` fehl, bricht der Bau ab, statt ein Image zu
@@ -73,8 +74,19 @@ hinterlassen, das erst im Stadion auffaellt. Hinter einem Proxy mit
 TLS-Aufbruch: `admin/ca/README.md`.
 
 **Auf einem Raspberry Pi** ist nichts weiter zu tun — `docker build` nimmt von
-selbst die arm64-Fassung der Basisimages. Wer auf einem x86-Rechner fuer den Pi
-bauen will (etwa um die SD-Karte zu schonen):
+selbst die arm64-Fassung der Basisimages. Das ist nachgewiesen, nicht vermutet:
+das arm64-Image wurde gebaut, gestartet und gegen denselben echten
+mumble-server gefahren wie die x86-Fassung — `uname -m` meldet `aarch64`, Ice
+3.7.8 mit 133 Pruefsummen, alle Seiten und Endpunkte antworten, der Monitor-Bot
+haengt stumm und taub im Zielkanal.
+
+> Der Nachweis lief unter QEMU-Emulation auf einem x86-Rechner. Er belegt, dass
+> das Image auf arm64 **baut und laeuft** — nicht, wie schnell es auf echter
+> Pi-Hardware ist. Die Antwortzeiten unter Emulation (Cockpit-Seite 0,22 s
+> gegen 0,03 s nativ) sind Emulationskosten, kein Massstab fuer den Pi.
+
+Wer auf einem x86-Rechner fuer den Pi bauen will (etwa um die SD-Karte zu
+schonen):
 
 ```bash
 docker build --platform linux/arm64 -t stadion-intercom/mumble-admin:v1.5.735 admin/
