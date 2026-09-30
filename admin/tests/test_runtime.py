@@ -339,3 +339,138 @@ def test_provision_on_start_meldet_kaputte_konfiguration(fake_murmur):
     asyncio.run(ctx._try_connect(first=True))
 
     assert any("PROVISION_ON_START" in b for b in ctx.banners)
+
+
+# --------------------------------------------------------------------------- #
+#  Personenbezogener Wunschzustand
+# --------------------------------------------------------------------------- #
+
+
+def test_fester_platz_wird_nach_dem_verbinden_hergestellt(
+    ice_client, fake_murmur, armed
+):
+    """Mumble kennt keinen festen Platz je Person -- also stellen wir ihn her.
+
+    ``enum UserInfo`` hat kein Kanalfeld, und ``defaultchannel`` gilt fuer alle
+    gleich. Ohne diesen Abgleich waere das "Platz"-Abzeichen im Pult eine
+    Behauptung ohne Deckung.
+    """
+    enforcer, ids = armed
+    regie = _channel(ice_client, "Intercom/Regie")
+    kameras = _channel(ice_client, "Intercom/Kameras")
+
+    enforcer.lade_wuensche(
+        {"platz": {ids["regie-1"]: ["Intercom/Regie"]}},
+        ice_client.get_channels(),
+    )
+
+    session = fake_murmur.server.connect_user(
+        "regie-1", userid=ids["regie-1"], channel=kameras
+    )
+    user = ice_client.get_state(session)
+    assert user.channel == kameras
+
+    abweichungen = enforcer.enforce_user(user)
+    platz = [a for a in abweichungen if a.kind == "platz"]
+    assert platz and platz[0].corrected
+    assert ice_client.get_state(session).channel == regie
+
+
+def test_wer_bewusst_weggeht_wird_nicht_zurueckgezogen(ice_client, fake_murmur, armed):
+    """Der Platz wird **einmal** je Sitzung hergestellt, nicht dauernd.
+
+    Ein Automatismus, der jemanden mitten im Wettkampf zurueckzieht, waere
+    schlimmer als gar keiner.
+    """
+    enforcer, ids = armed
+    regie = _channel(ice_client, "Intercom/Regie")
+    kameras = _channel(ice_client, "Intercom/Kameras")
+    enforcer.lade_wuensche(
+        {"platz": {ids["regie-1"]: ["Intercom/Regie"]}},
+        ice_client.get_channels(),
+    )
+
+    session = fake_murmur.server.connect_user(
+        "regie-1", userid=ids["regie-1"], channel=kameras
+    )
+    enforcer.enforce_user(ice_client.get_state(session))
+    assert ice_client.get_state(session).channel == regie
+
+    # Jetzt geht die Person bewusst woanders hin.
+    ice_client.set_user_state(session, channel=kameras)
+    enforcer.enforce_user(ice_client.get_state(session))
+    assert ice_client.get_state(session).channel == kameras
+
+
+def test_nach_dem_trennen_gilt_der_platz_wieder(ice_client, fake_murmur, armed):
+    """Die Merkliste haengt an der Sitzung, nicht an der Person."""
+    enforcer, ids = armed
+    regie = _channel(ice_client, "Intercom/Regie")
+    kameras = _channel(ice_client, "Intercom/Kameras")
+    enforcer.lade_wuensche(
+        {"platz": {ids["regie-1"]: ["Intercom/Regie"]}},
+        ice_client.get_channels(),
+    )
+
+    erste = fake_murmur.server.connect_user(
+        "regie-1", userid=ids["regie-1"], channel=kameras
+    )
+    enforcer.enforce_user(ice_client.get_state(erste))
+    enforcer.vergiss_sitzung(erste)
+
+    zweite = fake_murmur.server.connect_user(
+        "regie-1", userid=ids["regie-1"], channel=kameras
+    )
+    enforcer.enforce_user(ice_client.get_state(zweite))
+    assert ice_client.get_state(zweite).channel == regie
+
+
+def test_unbekannter_pfad_wird_uebergangen_statt_geraten(ice_client, fake_murmur, armed):
+    """Ein Platz, den es nicht gibt, darf nicht in irgendeinen Kanal aufgeloest werden."""
+    enforcer, ids = armed
+    kameras = _channel(ice_client, "Intercom/Kameras")
+    enforcer.lade_wuensche(
+        {"platz": {ids["regie-1"]: ["Gibt/Es/Nicht"]}},
+        ice_client.get_channels(),
+    )
+    assert enforcer.fester_platz(ids["regie-1"]) is None
+
+    session = fake_murmur.server.connect_user(
+        "regie-1", userid=ids["regie-1"], channel=kameras
+    )
+    enforcer.enforce_user(ice_client.get_state(session))
+    assert ice_client.get_state(session).channel == kameras
+
+
+def test_persoenliches_mithoeren_wird_gesetzt(ice_client, fake_murmur, armed):
+    """``startListening`` nimmt eine Sitzung -- der Server vergisst es beim Trennen."""
+    enforcer, ids = armed
+    kameras = _channel(ice_client, "Intercom/Kameras")
+    regie = _channel(ice_client, "Intercom/Regie")
+    enforcer.lade_wuensche(
+        {"mithoeren": {ids["kam-1"]: ["Intercom/Regie"]}},
+        ice_client.get_channels(),
+    )
+
+    session = fake_murmur.server.connect_user(
+        "kam-1", userid=ids["kam-1"], channel=kameras
+    )
+    enforcer.enforce_user(ice_client.get_state(session))
+    assert regie in ice_client.get_listening_channels(session)
+
+
+def test_persoenlicher_vorrang_gilt_nur_im_genannten_platz(
+    ice_client, fake_murmur, armed
+):
+    enforcer, ids = armed
+    kameras = _channel(ice_client, "Intercom/Kameras")
+    enforcer.lade_wuensche(
+        {"vorrang": {ids["kam-1"]: ["Intercom/Kameras"]}},
+        ice_client.get_channels(),
+    )
+
+    session = fake_murmur.server.connect_user(
+        "kam-1", userid=ids["kam-1"], channel=kameras
+    )
+    enforcer.enforce_user(ice_client.get_state(session))
+    assert ice_client.get_state(session).priority_speaker is True
