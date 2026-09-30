@@ -16,6 +16,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -1222,6 +1223,139 @@ async def provision_apply(
     context = ctx(request)
     try:
         plan = await context.provision(dry_run=False, actor=account.name, prune=prune)
+    except (RuntimeError, IceError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return plan.to_json()
+
+
+# --------------------------------------------------------------------------- #
+#  Vorlagen und Sicherungen
+#
+#  Beides sind EINMALIGE Aktionen mit einer Konfiguration in der Hand, keine
+#  laufende Bindung an eine Datei. Der Server bleibt die Wahrheit.
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/vorlagen")
+async def vorlagen_auflisten(account: Account = Depends(require_user)) -> dict[str, Any]:
+    """Die eingebauten Baukaesten, mit Klartext, was sie anlegen."""
+    from ..provision.vorlagen import vorlagen_liste
+
+    return {"vorlagen": vorlagen_liste()}
+
+
+@router.post("/vorlagen/{schluessel}/plan")
+async def vorlage_plan(
+    schluessel: str, request: Request, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Testlauf: was wuerde diese Vorlage aendern?
+
+    Nichts wird geschrieben. Die Oberflaeche zeigt das Ergebnis, bevor
+    irgendjemand auf Anwenden drueckt -- niemand soll raten muessen, was
+    gleich passiert.
+    """
+    from ..provision.vorlagen import vorlage_laden
+
+    context = ctx(request)
+    try:
+        config = vorlage_laden(schluessel)
+    except KeyError:
+        raise HTTPException(404, f"Vorlage {schluessel!r} gibt es nicht.") from None
+    try:
+        plan = await context.anwenden(
+            config, dry_run=True, actor=account.name, quelle=f"Vorlage {schluessel}"
+        )
+    except (RuntimeError, IceError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return plan.to_json()
+
+
+@router.post("/vorlagen/{schluessel}/anwenden")
+async def vorlage_anwenden(
+    schluessel: str, request: Request, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Wendet die Vorlage einmalig an. Danach ist sie fertig.
+
+    Es entsteht keine Bindung: wer danach einen Kanal umbenennt, hat einen
+    umbenannten Kanal. Kein Neustart schreibt die Vorlage erneut.
+    """
+    from ..provision.vorlagen import vorlage_laden
+
+    context = ctx(request)
+    try:
+        config = vorlage_laden(schluessel)
+    except KeyError:
+        raise HTTPException(404, f"Vorlage {schluessel!r} gibt es nicht.") from None
+    try:
+        plan = await context.anwenden(
+            config, dry_run=False, actor=account.name, quelle=f"Vorlage {schluessel}"
+        )
+    except (RuntimeError, IceError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return plan.to_json()
+
+
+class SicherungBody(BaseModel):
+    """Der Inhalt einer Sicherungsdatei, so wie er hochgeladen wurde."""
+
+    yaml_text: str
+    #: Auch loeschen, was in der Sicherung fehlt. Aus per Vorgabe -- eine
+    #: Sicherung einzuspielen soll nichts wegraeumen, was jemand seither
+    #: angelegt hat, solange er es nicht ausdruecklich will.
+    aufraeumen: bool = False
+
+
+def _sicherung_lesen(body: SicherungBody) -> Any:
+    """YAML-Text -> geprueft Konfiguration, mit brauchbarer Fehlermeldung."""
+    from ..provision.schema import ConfigInvalid, parse_config
+
+    try:
+        daten = yaml.safe_load(body.yaml_text)
+    except yaml.YAMLError as exc:
+        raise HTTPException(400, f"Das ist kein gueltiges YAML: {exc}") from exc
+    if not isinstance(daten, dict):
+        raise HTTPException(400, "Die Datei enthaelt keine Sicherung.")
+    try:
+        return parse_config(daten, source="Sicherung")
+    except ConfigInvalid as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/sicherung/plan")
+async def sicherung_plan(
+    request: Request, body: SicherungBody, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Testlauf fuer eine hochgeladene Sicherung. Schreibt nichts."""
+    context = ctx(request)
+    config = _sicherung_lesen(body)
+    try:
+        plan = await context.anwenden(
+            config,
+            dry_run=True,
+            actor=account.name,
+            quelle="Sicherung",
+            prune=body.aufraeumen,
+        )
+    except (RuntimeError, IceError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return plan.to_json()
+
+
+@router.post("/sicherung/einspielen")
+async def sicherung_einspielen(
+    request: Request, body: SicherungBody, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Spielt eine Sicherung ein."""
+    context = ctx(request)
+    config = _sicherung_lesen(body)
+    try:
+        plan = await context.anwenden(
+            config,
+            dry_run=False,
+            actor=account.name,
+            quelle="Sicherung",
+            prune=body.aufraeumen,
+        )
     except (RuntimeError, IceError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return plan.to_json()

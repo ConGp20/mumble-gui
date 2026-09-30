@@ -107,7 +107,12 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
 
       INTERCOM_CONFIG: ${INTERCOM_CONFIG:-/config/intercom.yaml}
-      PROVISION_ON_START: ${PROVISION_ON_START:-true}
+      # Aus, und das ist Absicht: der SERVER ist die Wahrheit, nicht eine
+      # Datei. Was in der Oberflaeche angelegt wird, bleibt. Auf true nur,
+      # wer den Server bei jedem Start auf den Stand einer intercom.yaml
+      # zwingen will -- dann gewinnt die Datei, und Aenderungen aus der
+      # Oberflaeche sind nach dem naechsten Neustart weg.
+      PROVISION_ON_START: ${PROVISION_ON_START:-false}
       PROVISION_PRUNE: ${PROVISION_PRUNE:-false}
 
       MONITOR_BOT_ENABLED: ${MONITOR_BOT_ENABLED:-true}

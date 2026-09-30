@@ -23,6 +23,7 @@ import json
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from ..config import Settings
@@ -217,7 +218,22 @@ class AppContext:
             log.exception("Monitor-Bot")
 
     def reload_config(self) -> None:
-        """Liest ``intercom.yaml`` neu ein."""
+        """Liest ``intercom.yaml`` ein, falls es eine gibt.
+
+        **Keine Datei zu haben ist der Normalfall**, kein Fehler. Der Server
+        ist die Wahrheit: was in der Oberflaeche angelegt wird, steht im
+        Server und bleibt dort. Die YAML ist nur noch das Format fuer
+        Sicherungen -- wer keine eingespielt hat, hat auch keine Datei, und
+        das darf weder ein Banner noch einen Log-Eintrag ausloesen.
+
+        Eine Datei, die *da* ist, aber nicht gelesen werden kann, bleibt ein
+        Fehler: dann wollte jemand etwas und es ging schief.
+        """
+        if not Path(self.settings.intercom_config).exists():
+            self.config = None
+            self.config_error = ""
+            self.live.apply_config([], {})
+            return
         try:
             self.config = load_config(self.settings.intercom_config)
             self.config_error = ""
@@ -498,12 +514,63 @@ class AppContext:
     #  Provisioning
     # ------------------------------------------------------------------ #
 
+    async def anwenden(
+        self,
+        config: IntercomConfig,
+        *,
+        dry_run: bool,
+        actor: str,
+        quelle: str,
+        prune: bool | None = None,
+    ) -> Plan:
+        """Gleicht den Server gegen eine **uebergebene** Konfiguration ab.
+
+        Der Weg fuer Vorlagen und eingespielte Sicherungen: beide sind
+        einmalige Aktionen mit einer Konfiguration in der Hand, keine laufende
+        Bindung an eine Datei. ``quelle`` landet im Audit-Log, damit spaeter
+        nachvollziehbar ist, was den Server veraendert hat.
+        """
+        if not self.ice.sync.connected:
+            raise RuntimeError("Keine Verbindung zu murmur.")
+
+        async with self._provision_lock:
+            effective_prune = self.settings.provision_prune if prune is None else prune
+            plan = await self.ice.run(
+                reconcile,
+                self.ice.sync,
+                config,
+                prune=effective_prune,
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                self.last_plan = plan
+                self.last_provision_at = time.time()
+                await self._refresh(full=True)
+                self.audit(
+                    actor,
+                    "provision.apply",
+                    quelle,
+                    after=json.dumps(plan.to_json(), ensure_ascii=False),
+                    ok=not plan.failed,
+                    error="; ".join(c.error for c in plan.failed),
+                )
+            self.live.hub.publish("provision", plan.to_json())
+            return plan
+
     async def provision(
         self, *, dry_run: bool, actor: str, prune: bool | None = None
     ) -> Plan:
-        """Plan oder Anwendung. Immer nur einer gleichzeitig."""
+        """Plan oder Anwendung gegen die geladene ``intercom.yaml``.
+
+        Nur noch fuer den ausdruecklichen Weg ueber eine Datei -- die
+        Oberflaeche benutzt :meth:`anwenden`.
+        """
         if self.config is None:
-            raise RuntimeError(self.config_error or "intercom.yaml ist nicht geladen.")
+            raise RuntimeError(
+                self.config_error
+                or "Es ist keine intercom.yaml geladen. Der Server ist die Wahrheit; "
+                "eine Datei brauchst du nur zum Einspielen einer Sicherung."
+            )
         if not self.ice.sync.connected:
             raise RuntimeError("Keine Verbindung zu murmur.")
 

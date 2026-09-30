@@ -13,7 +13,8 @@
 #
 #      ./setup.sh            komplette Einrichtung
 #      ./setup.sh --check    nur prüfen, nichts ändern
-#      ./setup.sh --yes      ohne Rückfragen
+#      ./setup.sh --yes      wird angenommen, aber nicht mehr gebraucht:
+#                            das Skript stellt keine Rückfragen mehr
 #      ./setup.sh --help     Kurzhilfe
 # =============================================================================
 set -euo pipefail
@@ -22,7 +23,6 @@ HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${HIER}"
 
 NUR_PRUEFEN=0
-OHNE_RUECKFRAGE=0
 PROBLEME=0
 
 # --- Ausgabe -----------------------------------------------------------------
@@ -57,24 +57,14 @@ hilfe() {
 for arg in "$@"; do
   case "${arg}" in
     --check) NUR_PRUEFEN=1 ;;
-    --yes|-y) OHNE_RUECKFRAGE=1 ;;
+    # Angenommen, damit vorhandene Aufrufe weiter laufen. Seit die
+    # Einrichtung nichts mehr anlegt, gibt es keine Rückfrage mehr.
+    --yes|-y) : ;;
     --help|-h) hilfe ;;
     *) abbruch "Unbekannte Option ${arg}. --help zeigt die Möglichkeiten." ;;
   esac
 done
 
-frage() {
-  # $1 = Frage. Rückgabe 0 = ja.
-  [ "${OHNE_RUECKFRAGE}" -eq 1 ] && return 0
-  if [ ! -t 0 ]; then
-    warnung "Keine Rückfrage möglich (kein Terminal). Mit --yes erneut aufrufen."
-    return 1
-  fi
-  local antwort
-  printf '    %s?%s %s [j/N] ' "${C_GELB}" "${C_AUS}" "$1"
-  read -r antwort
-  case "${antwort}" in [jJyY]*) return 0 ;; *) return 1 ;; esac
-}
 
 # =============================================================================
 #  1. Docker
@@ -370,27 +360,22 @@ ok "GUI antwortet"
 # =============================================================================
 #  7. Provisionierung
 # =============================================================================
-titel "Provisionierung"
+titel "Kanäle anlegen"
 
-set +e
-${COMPOSE} exec -T mumble-admin intercom plan --detailed-exitcode
-PLAN_CODE=$?
-set -e
-
-case "${PLAN_CODE}" in
-  0) ok "Der Server entspricht bereits der intercom.yaml – nichts zu tun." ;;
-  3)
-    if frage "Diese Änderungen jetzt anwenden?"; then
-      ${COMPOSE} exec -T mumble-admin intercom apply --yes
-      ok "Provisionierung angewendet"
-    else
-      warnung "Nicht angewendet. Später jederzeit möglich mit:"
-      info "${COMPOSE} exec mumble-admin intercom apply"
-    fi
-    ;;
-  2) fehler "Die intercom.yaml ist fehlerhaft – siehe Meldungen oben." ;;
-  *) fehler "Der Plan ist fehlgeschlagen (Rückgabewert ${PLAN_CODE})." ;;
-esac
+# Hier wird bewusst NICHTS angelegt.
+#
+# Der Server ist die Wahrheit, nicht eine Datei: was in der Oberfläche
+# entsteht, bleibt dort. Eine Einrichtung, die ungefragt elf Kanäle mit
+# fremden Namen hinstellt, nimmt genau diese Entscheidung vorweg -- und man
+# räumt erst mal auf, bevor man anfangen kann.
+#
+# Stattdessen steht in der Oberfläche unter „Einrichten" ein Baukasten bereit:
+# ein Knopf, vorher ein Testlauf, der zeigt was entsteht, und danach gehört
+# alles dir.
+info "Der Server bleibt leer – angelegt wird in der Oberfläche."
+info "Dort liegen fertige Baukästen bereit (z. B. Leichtathletik-Wettkampf"
+info "mit acht Kampfgerichten, Zeitmessung, Wettkampfbüro und Technik)."
+ok "Bereit"
 
 # =============================================================================
 #  8. Abschluss

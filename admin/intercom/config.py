@@ -230,7 +230,7 @@ class Settings:
             readonly_password=readonly_password,
             session_secret=session_secret,
             intercom_config=config_path,
-            provision_on_start=_bool("PROVISION_ON_START", True),
+            provision_on_start=_bool("PROVISION_ON_START", False),
             provision_prune=_bool("PROVISION_PRUNE", False),
             monitor_enabled=_bool("MONITOR_BOT_ENABLED", True),
             monitor_name=_str("MONITOR_BOT_NAME", "monitor"),

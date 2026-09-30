@@ -927,3 +927,118 @@ def test_erfolgreiches_prune_wird_als_angewendet_gemeldet(ice_client, config):
     assert geloescht.applied is True
     assert geloescht.error == ""
     assert "haustechnik" not in {g.name for g in ice_client.get_acl(0).own_groups()}
+
+
+# --------------------------------------------------------------------------- #
+#  Eingebaute Vorlagen
+# --------------------------------------------------------------------------- #
+
+
+def test_alle_vorlagen_sind_gueltig():
+    """Eine kaputte Vorlage darf nicht erst beim Anwenden auffallen."""
+    from intercom.provision.vorlagen import VORLAGEN, vorlage_laden
+
+    assert VORLAGEN, "es gibt keine einzige Vorlage"
+    for vorlage in VORLAGEN:
+        config = vorlage_laden(vorlage.schluessel)
+        fehler = [i for i in config.issues if i.level == "error"]
+        assert not fehler, f"{vorlage.schluessel}: {[i.message for i in fehler]}"
+        assert config.channels, f"{vorlage.schluessel} legt keinen Kanal an"
+        # Die Klartextangaben fuer die Oberflaeche duerfen nicht fehlen.
+        assert vorlage.titel and vorlage.beschreibung and vorlage.legt_an
+
+
+def test_unbekannte_vorlage_faellt_auf():
+    """Ein Tippfehler im Schluessel darf nicht stillschweigend nichts tun."""
+    import pytest as _pytest
+
+    from intercom.provision.vorlagen import vorlage_laden
+
+    with _pytest.raises(KeyError):
+        vorlage_laden("gibtsnicht")
+
+
+def test_vorlage_leichtathletik_legt_die_plaetze_an(ice_client):
+    """Acht getrennte Kampfgerichte, dazu Zeitmessung, Buero und Technik."""
+    from intercom.provision.planner import reconcile
+    from intercom.provision.vorlagen import vorlage_laden
+
+    config = vorlage_laden("leichtathletik")
+    plan = reconcile(ice_client, config, dry_run=False)
+    assert not plan.failed, [c.error for c in plan.failed]
+
+    namen = {k.name for k in ice_client.get_channels().values()}
+    for nummer in range(1, 9):
+        assert f"Kampfgericht {nummer}" in namen
+    for platz in ("Zeitmessung", "Wettkampfbüro", "Technik"):
+        assert platz in namen
+
+    # Die Kampfgerichte liegen in eigenen Kanaelen -- genau das ist der Sinn.
+    kanaele = ice_client.get_channels()
+    kg = [k for k in kanaele.values() if k.name.startswith("Kampfgericht ")]
+    assert len({k.id for k in kg}) == 8
+
+
+def test_vorlage_zweimal_anwenden_aendert_nichts(ice_client):
+    """Eine Vorlage ist ein Startschuss, keine laufende Bindung."""
+    from intercom.provision.planner import reconcile
+    from intercom.provision.vorlagen import vorlage_laden
+
+    config = vorlage_laden("klein")
+    reconcile(ice_client, config, dry_run=False)
+    zweiter = reconcile(ice_client, config, dry_run=False)
+    assert zweiter.empty, "nicht idempotent:\n" + zweiter.to_text()
+
+
+def test_vorlage_bindet_den_server_nicht(ice_client):
+    """Nach dem Umbenennen darf nichts die Vorlage wieder herstellen.
+
+    Das war der eigentliche Fehler der bisherigen Bauart: PROVISION_ON_START
+    schrieb bei jedem Start die Datei zurueck, und was in der Oberflaeche
+    geaendert wurde, war weg. Eine Vorlage wird einmal angewendet und ist dann
+    fertig -- das haelt dieser Test fest.
+    """
+    from intercom.ice.types import MumbleChannel
+    from intercom.provision.planner import reconcile
+    from intercom.provision.vorlagen import vorlage_laden
+
+    config = vorlage_laden("klein")
+    reconcile(ice_client, config, dry_run=False)
+
+    kanal = next(k for k in ice_client.get_channels().values() if k.name == "Technik")
+    ice_client.set_channel_state(
+        MumbleChannel(id=kanal.id, name="Tonregie", parent=kanal.parent)
+    )
+    namen = {k.name for k in ice_client.get_channels().values()}
+    assert "Tonregie" in namen and "Technik" not in namen
+
+    # Nichts im laufenden Betrieb stellt die Vorlage wieder her.
+    namen_danach = {k.name for k in ice_client.get_channels().values()}
+    assert namen_danach == namen
+
+
+def test_vorlagen_beschreiben_genau_was_sie_anlegen(ice_client):
+    """Die Oberfläche darf keine Zahl nennen, die hinterher nicht stimmt.
+
+    Regel für dieses Projekt: nie etwas anzeigen, das auf dem Server nicht so
+    steht. Für eine Vorlage heisst das: was unter „legt an" steht, muss der
+    Wirklichkeit nach dem Anwenden entsprechen.
+    """
+    import re
+
+    from intercom.provision.planner import reconcile
+    from intercom.provision.vorlagen import VORLAGEN, vorlage_laden
+
+    for vorlage in VORLAGEN:
+        # Jede Vorlage auf einem frischen Server -- daher je Durchlauf pruefen,
+        # was DIESE Vorlage anlegt.
+        vorher = set(ice_client.get_channels())
+        reconcile(ice_client, vorlage_laden(vorlage.schluessel), dry_run=False)
+        neu = set(ice_client.get_channels()) - vorher
+
+        text = " ".join(vorlage.legt_an)
+        zahlen = [int(z) for z in re.findall(r"\b(\d+)\s+Kanäle", text)]
+        assert zahlen, f"{vorlage.schluessel}: nennt keine Kanalzahl"
+        assert len(neu) == zahlen[-1], (
+            f"{vorlage.schluessel}: angekuendigt {zahlen[-1]}, angelegt {len(neu)}"
+        )
