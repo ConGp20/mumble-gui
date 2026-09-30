@@ -70,9 +70,6 @@ __all__ = [
     "StoreClosed",
 ]
 
-#: Stand, den :meth:`Store.migrate` herstellt.
-SCHEMA_VERSION: Final[int] = 2
-
 #: Wie lange auf einen fremden Schreiber gewartet wird, bevor SQLite aufgibt.
 #: Der Wert deckt einen laufenden ``prune`` auf einer grossen Datei ab.
 _BUSY_TIMEOUT_S: Final[float] = 5.0
@@ -185,7 +182,40 @@ _MIGRATIONS: Final[tuple[tuple[int, tuple[str, ...]], ...]] = (
             "CREATE INDEX IF NOT EXISTS samples_name_ts ON samples (name, ts)",
         ),
     ),
+    (
+        3,
+        (
+            # Der Wunschzustand fuer das, was murmur selbst nicht behaelt.
+            #
+            # Drei Dinge ueberleben in Mumble keine Verbindung: der Platz, auf
+            # dem jemand landen soll (``enum UserInfo`` hat kein Kanalfeld),
+            # dauerhaftes Mithoeren (``startListening`` nimmt eine Sitzung) und
+            # Priority Speaker (ein Flag am verbundenen Client). Wer das
+            # trotzdem verlaesslich haben will, muss es selbst hinterlegen und
+            # nach jedem Verbinden neu setzen -- das tut der Enforcer.
+            #
+            # Das Ziel steht als **Pfad**, nicht als Kanal-ID: IDs vergibt
+            # murmur neu, sobald ein Kanal geloescht und wieder angelegt wird.
+            # Nach dem Einspielen einer Sicherung zeigte eine gespeicherte ID
+            # sonst auf den falschen Platz oder ins Leere.
+            """
+            CREATE TABLE IF NOT EXISTS wunsch (
+                art        TEXT    NOT NULL,
+                userid     INTEGER NOT NULL,
+                ziel       TEXT    NOT NULL DEFAULT '',
+                author     TEXT    NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (art, userid, ziel)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS wunsch_art ON wunsch (art)",
+        ),
+    ),
 )
+
+#: Stand, den :meth:`Store.migrate` herstellt. Abgeleitet statt gepflegt -- eine
+#: von Hand nachgezogene Zahl laeuft frueher oder spaeter aus dem Tritt.
+SCHEMA_VERSION: Final[int] = max(nummer for nummer, _ in _MIGRATIONS)
 
 _INSERT_SAMPLE: Final[str] = """
     INSERT INTO samples (
@@ -207,6 +237,12 @@ _AUDIT_COLUMNS: Final[str] = "id, ts, actor, action, target, before, after, ok, 
 #: ACL-Aenderung vollstaendig hineinpasst.
 MAX_KURZFELD = 200
 MAX_LANGFELD = 20_000
+
+#: Die drei Dinge, die murmur selbst nicht behaelt und die deshalb hier wohnen.
+#: ``platz``: wo die Person nach dem Verbinden landen soll.
+#: ``mithoeren``: welche Plaetze sie dauerhaft mithoeren soll.
+#: ``vorrang``: auf welchen Plaetzen sie Priority Speaker sein soll.
+WUNSCH_ARTEN: Final[tuple[str, ...]] = ("platz", "mithoeren", "vorrang")
 
 
 def _kappen(text: str, grenze: int) -> str:
@@ -835,3 +871,72 @@ class Store:
             )
             for row in rows
         }
+
+    # ------------------------------------------------------------------ #
+    #  Wunschzustand
+    # ------------------------------------------------------------------ #
+
+    def set_wunsch(
+        self, art: str, userid: int, ziele: Sequence[str], author: str = ""
+    ) -> None:
+        """Setzt den Wunsch einer Person fuer eine Art -- und ersetzt den alten.
+
+        ``ziele`` sind Kanalpfade. Eine leere Liste loescht den Wunsch; das ist
+        der Weg, einen festen Platz wieder aufzuheben.
+        """
+        if art not in WUNSCH_ARTEN:
+            raise ValueError(f"Unbekannte Wunschart {art!r}.")
+        jetzt = int(time.time())
+        with self._transaction() as conn:
+            conn.execute(
+                "DELETE FROM wunsch WHERE art = ? AND userid = ?", (art, userid)
+            )
+            conn.executemany(
+                "INSERT INTO wunsch (art, userid, ziel, author, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [
+                    (art, userid, ziel, _kappen(author, MAX_KURZFELD), jetzt)
+                    for ziel in dict.fromkeys(ziele)
+                    if ziel
+                ],
+            )
+
+    def wuensche(self, art: str) -> dict[int, list[str]]:
+        """Alle Wuensche einer Art, nach Nutzer-ID geschluesselt."""
+        conn = self._connection()
+        rows = conn.execute(
+            "SELECT userid, ziel FROM wunsch WHERE art = ? ORDER BY userid, ziel",
+            (art,),
+        ).fetchall()
+        gesammelt: dict[int, list[str]] = {}
+        for row in rows:
+            gesammelt.setdefault(row["userid"], []).append(row["ziel"])
+        return gesammelt
+
+    def alle_wuensche(self) -> dict[str, dict[int, list[str]]]:
+        """Der vollstaendige Wunschzustand -- so geht er in die Sicherung."""
+        return {art: self.wuensche(art) for art in WUNSCH_ARTEN}
+
+    def wunsch_vergessen(self, userid: int) -> int:
+        """Loescht alle Wuensche einer Person. Nach dem Abmelden faellig."""
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM wunsch WHERE userid = ?", (userid,))
+            return int(cur.rowcount or 0)
+
+    def wunsch_umschreiben(self, alt: str, neu: str) -> int:
+        """Zieht Wuensche mit, wenn ein Kanal umbenannt oder verschoben wird.
+
+        Ohne das zeigte der gespeicherte Pfad nach jedem Umbenennen ins Leere --
+        und die Oberflaeche behauptete einen festen Platz, den es nicht gibt.
+        Unterpfade wandern mit: wer ``Wettkampf`` nach ``Meeting`` umbenennt,
+        verschiebt auch ``Wettkampf/Technik``.
+        """
+        if not alt or alt == neu:
+            return 0
+        with self._transaction() as conn:
+            cur = conn.execute(
+                "UPDATE wunsch SET ziel = ? || substr(ziel, ?) "
+                "WHERE ziel = ? OR ziel LIKE ? || '/%'",
+                (neu, len(alt) + 1, alt, alt),
+            )
+            return int(cur.rowcount or 0)

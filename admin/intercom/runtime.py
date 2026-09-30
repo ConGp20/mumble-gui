@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -151,6 +151,15 @@ class Enforcer:
         #: Kanal-ID -> (Gruppen, die es betrifft, Ziel-Kanal-IDs)
         self._listen: dict[int, tuple[list[str], list[int]]] = {}
         self._deviations: list[Deviation] = []
+        #: Nutzer-ID -> Kanal-ID, auf dem die Person landen soll.
+        self._platz: dict[int, int] = {}
+        #: Nutzer-ID -> Kanal-IDs, die sie dauerhaft mithoeren soll.
+        self._mithoeren: dict[int, list[int]] = {}
+        #: Nutzer-ID -> Kanal-IDs, auf denen sie Vorrang haben soll.
+        self._vorrang: dict[int, list[int]] = {}
+        #: Sitzungen, die wir schon einmal auf ihren Platz gesetzt haben. Ohne
+        #: das zoege der Abgleich jemanden zurueck, der bewusst weggeht.
+        self._platz_erledigt: set[int] = set()
         #: True, sobald ein Wunschzustand geladen wurde.
         self.armed = False
 
@@ -203,6 +212,43 @@ class Enforcer:
                         self._listen[channel_id] = (groups, targets)
             self.armed = True
 
+    def lade_wuensche(
+        self,
+        wuensche: Mapping[str, Mapping[int, list[str]]],
+        channels: dict[int, MumbleChannel],
+    ) -> None:
+        """Uebernimmt den personenbezogenen Wunschzustand aus dem Store.
+
+        Die Wuensche stehen dort als Kanalpfade -- Kanal-IDs vergibt murmur neu,
+        sobald ein Kanal geloescht und wieder angelegt wird. Hier werden sie
+        einmal aufgeloest; was sich nicht aufloesen laesst, bleibt liegen und
+        wird beim naechsten Laden erneut versucht.
+        """
+        pfade = build_paths(channels)
+        with self._lock:
+            self._platz = {}
+            self._mithoeren = {}
+            self._vorrang = {}
+            for userid, ziele in wuensche.get("platz", {}).items():
+                for ziel in ziele:
+                    if ziel in pfade:
+                        self._platz[userid] = pfade[ziel]
+                        break
+            for userid, ziele in wuensche.get("mithoeren", {}).items():
+                aufgeloest = [pfade[z] for z in ziele if z in pfade]
+                if aufgeloest:
+                    self._mithoeren[userid] = aufgeloest
+            for userid, ziele in wuensche.get("vorrang", {}).items():
+                aufgeloest = [pfade[z] for z in ziele if z in pfade]
+                if aufgeloest:
+                    self._vorrang[userid] = aufgeloest
+            self.armed = True
+
+    def vergiss_sitzung(self, session: int) -> None:
+        """Raeumt die Merkliste auf, wenn jemand die Verbindung verliert."""
+        with self._lock:
+            self._platz_erledigt.discard(session)
+
     def refresh_membership(self) -> None:
         """Liest die Gruppen am Wurzelkanal neu ein."""
         try:
@@ -220,8 +266,11 @@ class Enforcer:
         if not self.armed:
             return []
         found: list[Deviation] = []
+        found.extend(self._platz_herstellen(user))
         found.extend(self._enforce_priority(user))
+        found.extend(self._person_vorrang(user))
         found.extend(self._enforce_listeners(user))
+        found.extend(self._person_mithoeren(user))
         return found
 
     def enforce_all(self, users: Iterable[MumbleUser]) -> list[Deviation]:
@@ -322,22 +371,144 @@ class Enforcer:
         ]
 
     # ------------------------------------------------------------------ #
+    #  Personenbezogener Wunschzustand
+    # ------------------------------------------------------------------ #
+
+    def _platz_herstellen(self, user: MumbleUser) -> list[Deviation]:
+        """Setzt eine Person nach dem Verbinden auf ihren festen Platz.
+
+        Mumble kennt keinen festen Platz je Person -- ``enum UserInfo`` hat kein
+        Kanalfeld, und ``defaultchannel`` gilt fuer alle gleich. Deshalb wird er
+        hier einmal je Sitzung hergestellt: **einmal**, nicht dauernd. Wer
+        danach bewusst woanders hingeht, soll dort bleiben duerfen; ein
+        Automatismus, der jemanden mitten im Wettkampf zurueckzieht, waere
+        schlimmer als gar keiner.
+        """
+        if not user.registered or user.userid < 0:
+            return []
+        with self._lock:
+            ziel = self._platz.get(user.userid)
+            schon = user.session in self._platz_erledigt
+        if ziel is None or schon:
+            return []
+        with self._lock:
+            self._platz_erledigt.add(user.session)
+        if user.channel == ziel:
+            return []
+
+        deviation = Deviation(
+            kind="platz",
+            session=user.session,
+            user=user.name,
+            channel=self._channel_name(user.channel),
+            detail=f"Fester Platz ist {self._channel_name(ziel)}.",
+        )
+        try:
+            self._client.set_user_state(user.session, channel=ziel)
+            deviation = replace(deviation, corrected=True)
+        except IceError as exc:
+            log.warning(
+                "Fester Platz fuer %s konnte nicht gesetzt werden: %s", user.name, exc
+            )
+        return [deviation]
+
+    def _person_vorrang(self, user: MumbleUser) -> list[Deviation]:
+        """Priority Speaker aus dem personenbezogenen Wunsch."""
+        if not user.registered or user.userid < 0:
+            return []
+        with self._lock:
+            kanaele = self._vorrang.get(user.userid, [])
+        if user.channel not in kanaele or user.priority_speaker:
+            return []
+
+        deviation = Deviation(
+            kind="priority_speaker",
+            session=user.session,
+            user=user.name,
+            channel=self._channel_name(user.channel),
+            detail="Vorrang fehlt. Der Client setzt ihn beim Verbinden zurueck.",
+        )
+        try:
+            self._client.set_user_state(user.session, priority_speaker=True)
+            deviation = replace(deviation, corrected=True)
+        except IceError as exc:
+            log.warning("Vorrang fuer %s konnte nicht gesetzt werden: %s", user.name, exc)
+        return [deviation]
+
+    def _person_mithoeren(self, user: MumbleUser) -> list[Deviation]:
+        """Dauerhaftes Mithoeren aus dem personenbezogenen Wunsch.
+
+        ``startListening`` nimmt eine **Sitzung**, kein Konto -- der Server
+        vergisst es beim Trennen. Deshalb wird es hier nachgezogen.
+        """
+        if not user.registered or user.userid < 0:
+            return []
+        with self._lock:
+            ziele = self._mithoeren.get(user.userid, [])
+        if not ziele:
+            return []
+
+        try:
+            aktuell = set(self._client.get_listening_channels(user.session))
+        except IceError:
+            return []
+
+        fehlend = [ziel for ziel in ziele if ziel not in aktuell]
+        if not fehlend:
+            return []
+
+        namen = ", ".join(self._channel_name(ziel) for ziel in fehlend)
+        corrected = True
+        for ziel in fehlend:
+            try:
+                self._client.start_listening(user.session, ziel)
+            except IceError as exc:
+                corrected = False
+                log.warning(
+                    "Mithoeren %s -> %s fehlgeschlagen: %s",
+                    user.name,
+                    self._channel_name(ziel),
+                    exc,
+                )
+        return [
+            Deviation(
+                kind="listener",
+                session=user.session,
+                user=user.name,
+                channel=self._channel_name(user.channel),
+                detail=f"Mithoeren fehlt fuer: {namen}",
+                corrected=corrected,
+            )
+        ]
+
+    # ------------------------------------------------------------------ #
 
     def expected_listeners(self, user: MumbleUser) -> list[int]:
         """Soll-Listener eines Clients -- fuer die Anzeige im Detailpanel."""
         with self._lock:
             entry = self._listen.get(user.channel)
             membership = self._membership
-        if entry is None:
-            return []
-        groups, targets = entry
-        return list(targets) if membership.includes(user, groups) else []
+            persoenlich = list(self._mithoeren.get(user.userid, []))
+        ziele = list(persoenlich)
+        if entry is not None:
+            groups, targets = entry
+            if membership.includes(user, groups):
+                ziele.extend(t for t in targets if t not in ziele)
+        return ziele
 
     def expects_priority(self, user: MumbleUser) -> bool:
         with self._lock:
             groups = self._priority.get(user.channel)
             membership = self._membership
+            persoenlich = user.channel in self._vorrang.get(user.userid, [])
+        if persoenlich:
+            return True
         return bool(groups) and membership.includes(user, groups or [])
+
+    def fester_platz(self, userid: int) -> int | None:
+        """Der gewuenschte Platz einer Person, sofern aufloesbar."""
+        with self._lock:
+            return self._platz.get(userid)
 
 
 def _speak_groups(channel: Any) -> list[str]:

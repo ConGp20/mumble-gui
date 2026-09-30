@@ -409,6 +409,9 @@ async def channel_update(
         position=body.position if body.position is not None else current.position,
         links=body.links if body.links is not None else list(current.links),
     )
+    # Der Pfad vor der Aenderung -- er steht so im hinterlegten Wunschzustand.
+    alter_pfad = context.live.path_of.get(channel_id)
+
     try:
         await context.ice.set_channel_state(updated)
     except IceError as exc:
@@ -425,6 +428,16 @@ async def channel_update(
         after=json.dumps(updated.to_json(), ensure_ascii=False),
     )
     await _refresh(context)
+
+    # Umbenennen und Verschieben aendern den Pfad. Der Wunschzustand merkt sich
+    # Plaetze als Pfad -- ohne Nachziehen zeigte er ins Leere, und die
+    # Oberflaeche behauptete einen festen Platz, den es nicht mehr gibt.
+    neuer_pfad = context.live.path_of.get(channel_id)
+    if context.store is not None and alter_pfad and neuer_pfad and alter_pfad != neuer_pfad:
+        geaendert = context.store.wunsch_umschreiben(alter_pfad, neuer_pfad)
+        if geaendert:
+            channels = await context.ice.get_channels()
+            context.enforcer.lade_wuensche(context.store.alle_wuensche(), channels)
     return {"ok": True}
 
 
@@ -863,6 +876,12 @@ async def registered_delete(
         await context.ice.unregister_user(userid)
     except IceError as exc:
         raise _fail(exc) from exc
+    # Was wir uns fuer diese Person gemerkt haben, gilt jetzt niemandem mehr.
+    # murmur vergibt Nutzer-IDs aufsteigend weiter -- bliebe der Wunsch stehen,
+    # erbte ihn irgendwann die naechste Person mit derselben ID.
+    if context.store is not None:
+        context.store.wunsch_vergessen(userid)
+
     context.audit(
         account.name,
         "registered.delete",

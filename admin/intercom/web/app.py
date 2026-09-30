@@ -27,6 +27,7 @@ from .api import metrics_text
 from .api import router as api_router
 from .auth import COOKIE_NAME, SESSION_MAX_AGE, Account, client_ip, current_user, require_user
 from .context import AppContext
+from .pult import router as pult_router
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log.error("Statische Dateien fehlen unter %s", STATIC_DIR)
 
     app.include_router(api_router)
+    app.include_router(pult_router)
 
     # ------------------------------------------------------------------ #
     #  Gesundheit und Metriken -- bewusst ohne Anmeldung.

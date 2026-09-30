@@ -33,6 +33,7 @@ from ..provision.acl_map import build_desired_state
 from ..provision.planner import Plan, reconcile
 from ..provision.schema import ConfigInvalid, IntercomConfig, load_config
 from ..runtime import Enforcer
+from ..store.db import StoreClosed
 from .auth import SessionManager
 from .state import LiveState
 
@@ -328,6 +329,7 @@ class AppContext:
                 self._spawn(self._enforce(payload))
         elif event == "user_disconnected":
             self.live.drop_user(payload.session)
+            self.enforcer.vergiss_sitzung(payload.session)
             if self._loss is not None:
                 self._loss.forget(payload.session)
         elif event in {"channel_created", "channel_removed", "channel_state_changed"}:
@@ -403,17 +405,28 @@ class AppContext:
             log.debug("Laufzeit-Abgleich fehlgeschlagen", exc_info=True)
 
     async def _arm_enforcer(self) -> None:
-        """Laedt den Wunschzustand in den Enforcer."""
-        if self.config is None or not self.connected:
+        """Laedt den Wunschzustand in den Enforcer.
+
+        Zwei Quellen: die Vorgabedatei, sofern es eine gibt, und der in der
+        Oberflaeche gepflegte Wunsch je Person aus dem Store. Die zweite ist der
+        Normalfall -- seit der Server die Wahrheit haelt, gibt es meist keine
+        Vorgabedatei mehr.
+        """
+        if not self.connected:
             return
         try:
             channels = await self.ice.get_channels()
-            user_ids = await self.ice.get_user_ids(list(self.config.users))
-            desired = build_desired_state(self.config, user_ids)
-            self.enforcer.load(desired, channels)
+            if self.config is not None:
+                user_ids = await self.ice.get_user_ids(list(self.config.users))
+                desired = build_desired_state(self.config, user_ids)
+                self.enforcer.load(desired, channels)
+            if self.store is not None:
+                self.enforcer.lade_wuensche(self.store.alle_wuensche(), channels)
             await self.ice.run(self.enforcer.refresh_membership)
         except IceError as exc:
             log.warning("Laufzeit-Abgleich nicht scharf: %s", exc)
+        except StoreClosed:
+            log.debug("Wunschzustand nicht lesbar -- Store geschlossen")
 
     # ------------------------------------------------------------------ #
     #  Hintergrundaufgaben

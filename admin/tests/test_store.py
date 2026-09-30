@@ -519,3 +519,77 @@ def test_alte_datenbank_wird_auf_nullbaren_verlust_gehoben(tmp_path):
             name for (name,) in roh.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         assert "samples_alt" not in tabellen
+
+
+# --------------------------------------------------------------------------- #
+#  Wunschzustand
+# --------------------------------------------------------------------------- #
+
+
+def test_wunsch_setzen_und_lesen(tmp_path):
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        store.set_wunsch("platz", 7, ["Wettkampf/Technik"], "admin")
+        store.set_wunsch("mithoeren", 7, ["Wettkampf", "Wettkampf/Zeitmessung"], "admin")
+        assert store.wuensche("platz") == {7: ["Wettkampf/Technik"]}
+        assert store.alle_wuensche()["mithoeren"] == {
+            7: ["Wettkampf", "Wettkampf/Zeitmessung"]
+        }
+        # Jede Art hat ihren Platz, auch wenn nichts drinsteht.
+        assert store.alle_wuensche()["vorrang"] == {}
+
+
+def test_wunsch_setzen_ersetzt_statt_anzuhaengen(tmp_path):
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        store.set_wunsch("mithoeren", 7, ["A", "B"])
+        store.set_wunsch("mithoeren", 7, ["C"])
+        assert store.wuensche("mithoeren") == {7: ["C"]}
+
+
+def test_leere_liste_loescht_den_wunsch(tmp_path):
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        store.set_wunsch("platz", 7, ["Wettkampf"])
+        store.set_wunsch("platz", 7, [])
+        assert store.wuensche("platz") == {}
+
+
+def test_unbekannte_wunschart_wird_abgelehnt(tmp_path):
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        with pytest.raises(ValueError, match="Wunschart"):
+            store.set_wunsch("farbe", 7, ["blau"])
+
+
+def test_umbenennen_zieht_auch_die_unterpfade_mit(tmp_path):
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        store.set_wunsch("platz", 7, ["Wettkampf/Technik"])
+        store.set_wunsch("platz", 8, ["Wettkampf"])
+        assert store.wunsch_umschreiben("Wettkampf", "Meeting") == 2
+        assert store.wuensche("platz") == {7: ["Meeting/Technik"], 8: ["Meeting"]}
+
+
+def test_umbenennen_trifft_keine_namensverwandten(tmp_path):
+    """``Wettkampf`` darf nicht ``Wettkampfbuero`` mitnehmen."""
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        store.set_wunsch("platz", 7, ["Wettkampfbuero"])
+        assert store.wunsch_umschreiben("Wettkampf", "Meeting") == 0
+        assert store.wuensche("platz") == {7: ["Wettkampfbuero"]}
+
+
+def test_wunsch_vergessen_raeumt_alle_arten(tmp_path):
+    """murmur vergibt Nutzer-IDs weiter -- ein Rest erbte sonst die naechste Person."""
+    with Store(tmp_path / "h.sqlite") as store:
+        store.migrate()
+        store.set_wunsch("platz", 7, ["A"])
+        store.set_wunsch("mithoeren", 7, ["B"])
+        store.set_wunsch("platz", 8, ["C"])
+        assert store.wunsch_vergessen(7) == 2
+        assert store.alle_wuensche() == {
+            "platz": {8: ["C"]},
+            "mithoeren": {},
+            "vorrang": {},
+        }
