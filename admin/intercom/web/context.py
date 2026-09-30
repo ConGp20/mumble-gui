@@ -35,7 +35,7 @@ from ..provision.schema import ConfigInvalid, IntercomConfig, load_config
 from ..runtime import Enforcer
 from ..store.db import StoreClosed
 from .auth import SessionManager
-from .state import LiveState
+from .state import LiveState, NetworkMap
 
 log = logging.getLogger(__name__)
 
@@ -234,6 +234,7 @@ class AppContext:
             self.config = None
             self.config_error = ""
             self.live.apply_config([], {})
+            self.netze_laden()
             return
         try:
             self.config = load_config(self.settings.intercom_config)
@@ -247,10 +248,29 @@ class AppContext:
             self.config = None
             self.config_error = str(exc)
             log.exception("intercom.yaml")
+        # Zuletzt, damit der Store eine Vorgabedatei ueberstimmt: gepflegt wird
+        # in der Oberflaeche.
+        self.netze_laden()
 
     # ------------------------------------------------------------------ #
     #  Verbindung
     # ------------------------------------------------------------------ #
+
+    def netze_laden(self) -> None:
+        """Holt die Netzsegmente aus dem Store in die Netzsicht.
+
+        Sie liegen dort, seit die intercom.yaml nicht mehr die Wahrheit haelt.
+        Eine Vorgabedatei darf sie weiterhin mitbringen; steht in beiden etwas,
+        gewinnt der Store -- er ist das, was in der Oberflaeche gepflegt wird.
+        """
+        if self.store is None:
+            return
+        try:
+            segmente = self.store.netze()
+        except StoreClosed:
+            return
+        if segmente:
+            self.live.networks = NetworkMap(segmente)
 
     async def _try_connect(self, first: bool = False) -> bool:
         try:

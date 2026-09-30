@@ -387,6 +387,7 @@ def export_yaml(
     roots: list[str] | None = None,
     wunsch: Mapping[str, Mapping[int, list[str]]] | None = None,
     verbindungen: Mapping[str, Mapping[str, list[str]]] | None = None,
+    netze: list[Mapping[str, Any]] | None = None,
 ) -> str:
     """Wie :func:`export_state`, aber gleich als YAML-Text.
 
@@ -411,6 +412,15 @@ def export_yaml(
         }
         if gefiltert:
             document["verbindungen"] = gefiltert
+    if netze:
+        document["networks"] = [
+            {
+                "name": n["name"],
+                "cidr": n["cidr"],
+                **({"note": n["notiz"]} if n.get("notiz") else {}),
+            }
+            for n in netze
+        ]
     header = (
         "# Aus dem laufenden Server exportiert.\n"
         "#\n"

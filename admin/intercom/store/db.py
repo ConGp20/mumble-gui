@@ -48,11 +48,12 @@ kosten wuerde.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -234,6 +235,29 @@ _MIGRATIONS: Final[tuple[tuple[int, tuple[str, ...]], ...]] = (
             )
             """,
             "CREATE INDEX IF NOT EXISTS verbindung_von ON verbindung (art, von)",
+        ),
+    ),
+    (
+        5,
+        (
+            # Netzsegmente.
+            #
+            # Sie standen als `networks:` in der intercom.yaml. Seit der Server
+            # die Wahrheit haelt, gibt es die Datei im Normalfall nicht mehr --
+            # und damit blieb die Spalte "Segment" im Cockpit immer leer und
+            # der Hinweis darunter zeigte auf etwas, das nicht existiert.
+            #
+            # Die Reihenfolge entscheidet: die erste passende Maske gewinnt, wie
+            # in einer Routingtabelle. Deshalb eine Spalte dafuer.
+            """
+            CREATE TABLE IF NOT EXISTS netz (
+                name       TEXT    NOT NULL PRIMARY KEY,
+                cidr       TEXT    NOT NULL,
+                notiz      TEXT    NOT NULL DEFAULT '',
+                rang       INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            )
+            """,
         ),
     ),
 )
@@ -1046,3 +1070,51 @@ class Store:
                 (pfad, pfad, pfad, pfad),
             )
             return int(cur.rowcount or 0)
+
+    # ------------------------------------------------------------------ #
+    #  Netzsegmente
+    # ------------------------------------------------------------------ #
+
+    def netze(self) -> list[dict[str, Any]]:
+        """Alle Segmente in Auswertungsreihenfolge -- die erste Maske gewinnt."""
+        conn = self._connection()
+        rows = conn.execute(
+            "SELECT name, cidr, notiz, rang FROM netz ORDER BY rang, name"
+        ).fetchall()
+        return [
+            {
+                "name": row["name"],
+                "cidr": row["cidr"],
+                "notiz": row["notiz"],
+                "rang": row["rang"],
+            }
+            for row in rows
+        ]
+
+    def set_netze(self, segmente: Sequence[Mapping[str, Any]]) -> None:
+        """Ersetzt die Segmentliste vollstaendig.
+
+        Ganz ersetzen statt einzeln pflegen, weil die **Reihenfolge** Teil der
+        Aussage ist: ein Client landet im ersten passenden Segment. Wer einzelne
+        Zeilen anlegte und loeschte, muesste die Reihenfolge trotzdem im Ganzen
+        schreiben -- dann kann es gleich ein Vorgang sein.
+        """
+        jetzt = int(time.time())
+        zeilen = []
+        for rang, eintrag in enumerate(segmente):
+            name = str(eintrag.get("name", "")).strip()
+            cidr = str(eintrag.get("cidr", "")).strip()
+            if not name or not cidr:
+                continue
+            # Sprechender Fehler statt einer stillen Zeile, die nie trifft.
+            ipaddress.ip_network(cidr, strict=False)
+            zeilen.append(
+                (name, cidr, str(eintrag.get("notiz", "")).strip(), rang, jetzt)
+            )
+        with self._transaction() as conn:
+            conn.execute("DELETE FROM netz")
+            conn.executemany(
+                "INSERT INTO netz (name, cidr, notiz, rang, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                zeilen,
+            )

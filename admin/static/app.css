@@ -750,3 +750,6 @@ select.zufuegen { font-size: 11px; padding: 2px 4px; max-width: 100%; }
 .kennzahl.stufe-warnung  .wert { color: var(--warnung); }
 .kennzahl.stufe-kritisch .wert { color: var(--kritisch); }
 .kennzahl .wert small { font-size: 11px; color: var(--text-still); font-weight: 400; }
+
+/* Eingabefelder in dichten Tabellen sollen die Zeilenhoehe nicht sprengen. */
+table.dicht td input[type="text"] { padding: 1px 5px; font-size: 12px; }

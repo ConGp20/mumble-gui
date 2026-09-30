@@ -177,8 +177,8 @@
         </table>
       </div>
       <div class="inhalt hinweis">
-        Segmente kommen aus <code>networks:</code> in der intercom.yaml.
         Ein Client ohne passendes Netz landet unter „sonstige“.
+        Segmente pflegst du unter <a href="/server">Server</a>.
       </div>
     </div>
   </div>
@@ -343,7 +343,7 @@
           <template x-if="detail.device && Object.keys(detail.device).length">
             <div>
               <div class="trenner"></div>
-              <h3>Geraet (aus intercom.yaml)</h3>
+              <h3>Gerät</h3>
               <dl class="feldliste">
                 <template x-for="(wert, schluessel) in detail.device" :key="schluessel">
                   <div style="display:contents">

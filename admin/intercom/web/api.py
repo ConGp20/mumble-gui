@@ -1178,6 +1178,66 @@ async def conf_write(
     return {"ok": True, "restart_required": body.key in RESTART_REQUIRED}
 
 
+class NetzEintrag(BaseModel):
+    name: str
+    cidr: str
+    notiz: str = ""
+
+
+class NetzListe(BaseModel):
+    netze: list[NetzEintrag]
+
+
+@router.get("/netze")
+async def netze_lesen(
+    request: Request, account: Account = Depends(require_user)
+) -> dict[str, Any]:
+    """Die Netzsegmente und was sie gerade auffangen."""
+    context = ctx(request)
+    segmente = context.store.netze() if context.store is not None else []
+    # Wie viele Clients haengen gerade in welchem Segment? Das ist die Probe,
+    # ob eine Maske ueberhaupt etwas trifft -- eine Zeile, die nie greift, ist
+    # schlimmer als keine.
+    zaehler: dict[str, int] = {}
+    for user in context.live.users.values():
+        name = context.live.networks.segment_for(user.address)
+        zaehler[name] = zaehler.get(name, 0) + 1
+    return {
+        "netze": [{**n, "clients": zaehler.get(n["name"], 0)} for n in segmente],
+        "sonstige": zaehler.get("sonstige", 0),
+        "unbekannt": zaehler.get("unbekannt", 0),
+    }
+
+
+@router.put("/netze")
+async def netze_schreiben(
+    request: Request, body: NetzListe, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Ersetzt die Segmentliste.
+
+    Im Ganzen statt zeilenweise, weil die Reihenfolge Teil der Aussage ist: ein
+    Client landet im **ersten** passenden Segment.
+    """
+    context = ctx(request)
+    if context.store is None:
+        raise HTTPException(503, "Der Verlaufsspeicher ist nicht offen.")
+    namen = [e.name.strip() for e in body.netze if e.name.strip()]
+    if len(namen) != len(set(namen)):
+        raise HTTPException(400, "Zwei Segmente mit demselben Namen.")
+    try:
+        context.store.set_netze([e.model_dump() for e in body.netze])
+    except ValueError as exc:
+        raise HTTPException(400, f"Ungueltige Netzmaske: {exc}") from exc
+    context.netze_laden()
+    context.audit(
+        account.name,
+        "netze",
+        f"{len(namen)} Segmente",
+        after=", ".join(f"{e.name}={e.cidr}" for e in body.netze),
+    )
+    return {"ok": True, "netze": context.store.netze()}
+
+
 @router.get("/log")
 async def server_log(
     request: Request,
@@ -1394,7 +1454,32 @@ async def sicherung_einspielen(
     antwort = plan.to_json()
     antwort["wunsch"] = await _wunsch_einspielen(context, body, account.name)
     antwort["verbindungen"] = _verbindungen_einspielen(context, body, account.name)
+    antwort["netze"] = _netze_einspielen(context, account.name)
     return antwort
+
+
+def _netze_einspielen(context: Any, actor: str) -> dict[str, Any]:
+    """Uebernimmt ``networks:`` aus einer Sicherung in den Store.
+
+    Die Liste steht schon geparst in ``context.config`` -- das Einspielen hat
+    sie gerade gelesen. Nur wenn sie etwas enthaelt: eine leere Liste soll
+    vorhandene Segmente nicht wegwerfen.
+    """
+    if context.store is None or context.config is None:
+        return {"uebernommen": 0}
+    segmente = [
+        {"name": n.name, "cidr": n.cidr, "notiz": n.note}
+        for n in getattr(context.config, "networks", [])
+    ]
+    if not segmente:
+        return {"uebernommen": 0}
+    try:
+        context.store.set_netze(segmente)
+    except ValueError:
+        return {"uebernommen": 0}
+    context.netze_laden()
+    context.audit(actor, "sicherung.netze", f"{len(segmente)} Segmente")
+    return {"uebernommen": len(segmente)}
 
 
 def _verbindungen_einspielen(
@@ -1492,10 +1577,11 @@ async def provision_export(
     # und Vorrang -- ohne dass es jemandem auffiele.
     wunsch = context.store.alle_wuensche() if context.store is not None else None
     verbindungen = context.store.verbindungen() if context.store is not None else None
+    netze = context.store.netze() if context.store is not None else None
     try:
         text = await context.ice.run(
             lambda client: export_yaml(
-                client, wunsch=wunsch, verbindungen=verbindungen
+                client, wunsch=wunsch, verbindungen=verbindungen, netze=netze
             ),
             context.ice.sync,
         )

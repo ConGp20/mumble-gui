@@ -1803,3 +1803,90 @@ def test_sicherung_nimmt_die_verbindungen_mit(app_client):
     assert [z["name"] for z in client.get(f"/api/pult/platz/{regie}").json()["hoert"]] == [
         "Kameras"
     ]
+
+
+# --------------------------------------------------------------------------- #
+#  Netzsegmente
+# --------------------------------------------------------------------------- #
+
+
+def test_netzsegmente_werden_in_der_oberflaeche_gepflegt(app_client):
+    """Sie standen als networks: in der intercom.yaml.
+
+    Die gibt es im Normalfall nicht mehr – die Spalte „Segment“ im Cockpit
+    blieb damit immer leer und der Hinweis darunter zeigte ins Nichts.
+    """
+    client, _ = app_client
+    _anmelden(client)
+
+    gespeichert = _schreibe(
+        client, "put", "/api/netze",
+        {"netze": [
+            {"name": "Kabel Regie", "cidr": "10.20.10.0/24", "notiz": "Hauptstrang"},
+            {"name": "WLAN", "cidr": "10.20.0.0/16"},
+        ]},
+    )
+    assert gespeichert.status_code == 200, gespeichert.text
+
+    gelesen = client.get("/api/netze").json()["netze"]
+    # Die Reihenfolge ist Teil der Aussage: die erste passende Maske gewinnt.
+    assert [n["name"] for n in gelesen] == ["Kabel Regie", "WLAN"]
+    assert gelesen[0]["cidr"] == "10.20.10.0/24"
+
+
+def test_ungueltige_netzmaske_wird_abgelehnt(app_client):
+    """Eine Zeile, die nie trifft, ist schlimmer als keine."""
+    client, _ = app_client
+    _anmelden(client)
+    antwort = _schreibe(
+        client, "put", "/api/netze",
+        {"netze": [{"name": "Kaputt", "cidr": "keine-maske"}]},
+    )
+    assert antwort.status_code == 400
+    assert "Netzmaske" in antwort.json()["detail"]
+
+
+def test_zwei_segmente_mit_demselben_namen_werden_abgelehnt(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    antwort = _schreibe(
+        client, "put", "/api/netze",
+        {"netze": [
+            {"name": "Doppelt", "cidr": "10.0.0.0/8"},
+            {"name": "Doppelt", "cidr": "192.168.0.0/16"},
+        ]},
+    )
+    assert antwort.status_code == 400
+
+
+def test_sicherung_nimmt_die_netzsegmente_mit(app_client):
+    import yaml as _yaml
+
+    client, _ = app_client
+    _anmelden(client)
+    _schreibe(client, "put", "/api/netze",
+              {"netze": [{"name": "Kabel Regie", "cidr": "10.20.10.0/24",
+                          "notiz": "Hauptstrang"}]})
+
+    text = client.get("/api/provision/export").text
+    roh = _yaml.safe_load(text)
+    assert roh["networks"] == [
+        {"name": "Kabel Regie", "cidr": "10.20.10.0/24", "note": "Hauptstrang"}
+    ]
+
+    _schreibe(client, "put", "/api/netze", {"netze": []})
+    assert client.get("/api/netze").json()["netze"] == []
+
+    wieder = _schreibe(client, "post", "/api/sicherung/einspielen", {"yaml_text": text})
+    assert wieder.status_code == 200, wieder.text
+    assert wieder.json()["netze"]["uebernommen"] == 1
+    assert client.get("/api/netze").json()["netze"][0]["name"] == "Kabel Regie"
+
+
+def test_cockpit_verweist_nicht_mehr_auf_die_intercom_yaml(app_client):
+    """Der Hinweis zeigte auf eine Datei, die es im Normalfall nicht gibt."""
+    client, _ = app_client
+    _anmelden(client)
+    text = client.get("/").text
+    assert "intercom.yaml" not in text
+    assert 'href="/server"' in text

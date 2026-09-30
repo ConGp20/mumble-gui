@@ -80,7 +80,10 @@
   {% endif %}
   {% if health.config.error %}
     <div class="banner fehler">
-      <b>intercom.yaml ist unbrauchbar.</b>
+      <b>Die hinterlegte Vorgabedatei lässt sich nicht lesen.</b>
+      Der Betrieb läuft weiter – angelegt wird ohnehin in der Oberfläche.
+      Die Datei liegt unter <code>{{ health.config.path }}</code>; wer sie
+      nicht braucht, kann sie löschen.
       <pre class="mono" style="white-space:pre-wrap;margin:4px 0 0">{{ health.config.error }}</pre>
     </div>
   {% endif %}

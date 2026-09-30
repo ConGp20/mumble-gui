@@ -101,6 +101,73 @@
       </div>
     </div>
   </div>
+
+  {# --- Netzsegmente -------------------------------------------------------
+     Sie standen frueher als networks: in der intercom.yaml. Die gibt es im
+     Normalfall nicht mehr, und die Spalte "Segment" im Cockpit blieb damit
+     immer leer. Gepflegt wird jetzt hier. #}
+  <div class="karte" style="margin-top:12px" x-data="netzeSeite()" x-init="lade()">
+    <header>
+      Netzsegmente
+      <span class="rechts leise">Die erste passende Maske gewinnt – Reihenfolge zählt</span>
+    </header>
+    <div class="inhalt">
+      <p class="hinweistext">
+        Ordnet Client-Adressen einem Namen zu, damit im Cockpit „Kabel Regie“
+        statt <code>10.20.10.14</code> steht. Wer in kein Segment passt, landet
+        unter <em>sonstige</em>.
+      </p>
+
+      <div class="banner fehler" x-show="fehler" x-cloak>
+        <b>Das hat nicht geklappt.</b> <span x-text="fehler"></span>
+      </div>
+
+      <table class="dicht">
+        <thead>
+          <tr>
+            <th style="width:30%">Name</th>
+            <th style="width:22%">Netz (CIDR)</th>
+            <th>Notiz</th>
+            <th class="zahl">Clients</th>
+            <th style="width:80px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(n, i) in netze" :key="i">
+            <tr>
+              <td><input type="text" x-model="n.name" placeholder="Kabel Regie" style="width:100%"></td>
+              <td><input type="text" x-model="n.cidr" placeholder="10.20.10.0/24" style="width:100%"></td>
+              <td><input type="text" x-model="n.notiz" placeholder="optional" style="width:100%"></td>
+              <td class="zahl" x-text="n.clients ?? 0"></td>
+              <td>
+                <button class="knopf klein" @click="hoch(i)" :disabled="i === 0" title="nach oben">↑</button>
+                <button class="knopf klein" @click="weg(i)" title="entfernen">×</button>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="!netze.length" x-cloak>
+            <td colspan="5" class="text-leise">
+              Noch keine Segmente. Ohne sie steht im Cockpit nur die IP – das
+              reicht oft, hilft aber nicht beim Suchen.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="werkzeugleiste" style="margin-top:8px">
+        <button class="knopf" @click="zeile()">Segment hinzufügen</button>
+        <span class="fueller"></span>
+        <span class="leise" x-show="sonstige || unbekannt" x-cloak>
+          <span x-text="sonstige"></span> ohne Segment,
+          <span x-text="unbekannt"></span> ohne Adresse
+        </span>
+        {% if account.can_write %}
+        <button class="knopf haupt" @click="speichern()" :disabled="!geaendert">Speichern</button>
+        <button class="knopf" @click="lade()" :disabled="!geaendert">Verwerfen</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
@@ -165,6 +232,47 @@ function serverSeite() {
 
     stoppeTail() {
       if (this.tail) { clearInterval(this.tail); this.tail = null; }
+    }
+  };
+}
+
+function netzeSeite() {
+  return {
+    netze: [], sonstige: 0, unbekannt: 0, fehler: "", stand: "[]",
+
+    lade() {
+      this.fehler = "";
+      return Intercom.get("/api/netze").then((d) => {
+        this.netze = d.netze || [];
+        this.sonstige = d.sonstige || 0;
+        this.unbekannt = d.unbekannt || 0;
+        this.stand = JSON.stringify(this.schlank());
+      }).catch((e) => { this.fehler = e.message; });
+    },
+
+    /* Nur die Felder, die gespeichert werden -- die Clientzahl kommt vom
+       Server und darf keinen "geaendert"-Zustand vortaeuschen. */
+    schlank() {
+      return this.netze.map((n) => ({
+        name: (n.name || "").trim(),
+        cidr: (n.cidr || "").trim(),
+        notiz: (n.notiz || "").trim()
+      }));
+    },
+
+    get geaendert() { return JSON.stringify(this.schlank()) !== this.stand; },
+
+    zeile() { this.netze.push({name: "", cidr: "", notiz: "", clients: 0}); },
+    weg(i) { this.netze.splice(i, 1); },
+    hoch(i) {
+      if (i > 0) { this.netze.splice(i - 1, 0, this.netze.splice(i, 1)[0]); }
+    },
+
+    speichern() {
+      this.fehler = "";
+      return Intercom.put("/api/netze", {netze: this.schlank()})
+        .then(() => this.lade())
+        .catch((e) => { this.fehler = e.message; });
     }
   };
 }

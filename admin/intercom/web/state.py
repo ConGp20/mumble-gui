@@ -27,7 +27,7 @@ import ipaddress
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -118,21 +118,33 @@ class EventHub:
 
 
 class NetworkMap:
-    """Ordnet Client-IPs den Segmenten aus ``intercom.yaml`` zu.
+    """Ordnet Client-IPs den Netzsegmenten zu.
 
     Reihenfolge zaehlt: der erste passende Eintrag gewinnt. So laesst sich ein
     kleineres Netz vor ein groesseres stellen, ohne Praefixlaengen zu vergleichen.
+
+    Gepflegt werden die Segmente in der Oberflaeche (Server-Seite) und liegen in
+    SQLite. Frueher standen sie als ``networks:`` in der intercom.yaml -- seit
+    der Server die Wahrheit haelt, gibt es die Datei im Normalfall nicht mehr,
+    und die Spalte "Segment" blieb damit immer leer.
     """
 
-    def __init__(self, segments: list[NetworkSpec] | None = None) -> None:
+    def __init__(self, segments: Iterable[Any] | None = None) -> None:
         self._segments: list[tuple[str, Any, str]] = []
         for spec in segments or []:
+            # Zwei Quellen mit derselben Form: Zeilen aus dem Store (Abbildung)
+            # und NetworkSpec aus einer Vorgabedatei (Attribute).
+            if isinstance(spec, Mapping):
+                name, cidr = str(spec.get("name", "")), str(spec.get("cidr", ""))
+                note = str(spec.get("notiz", ""))
+            else:
+                name, cidr, note = spec.name, spec.cidr, spec.note
             try:
-                network = ipaddress.ip_network(spec.cidr, strict=False)
+                network = ipaddress.ip_network(cidr, strict=False)
             except ValueError:
-                log.warning("Netzsegment %s hat ein ungueltiges CIDR %s", spec.name, spec.cidr)
+                log.warning("Netzsegment %s hat ein ungueltiges CIDR %s", name, cidr)
                 continue
-            self._segments.append((spec.name, network, spec.note))
+            self._segments.append((name, network, note))
 
     def segment_for(self, address: str) -> str:
         if not address or address == "(anonymisiert)":
