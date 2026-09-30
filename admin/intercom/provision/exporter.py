@@ -22,6 +22,7 @@ kommt zusaetzlich die lesbare Form heraus.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -363,10 +364,43 @@ def export_state(
     return document
 
 
-def export_yaml(client: IceClient, *, roots: list[str] | None = None) -> str:
-    """Wie :func:`export_state`, aber gleich als YAML-Text."""
+def _wunsch_mit_namen(
+    client: IceClient, wunsch: Mapping[str, Mapping[int, list[str]]]
+) -> dict[str, dict[str, list[str]]]:
+    """Nutzer-IDs zu Namen aufloesen. Wer nicht mehr registriert ist, faellt weg."""
+    namen = client.get_registered_users()
+    ergebnis: dict[str, dict[str, list[str]]] = {}
+    for art, je_person in wunsch.items():
+        eintraege = {
+            namen[userid]: list(pfade)
+            for userid, pfade in sorted(je_person.items())
+            if userid in namen and pfade
+        }
+        if eintraege:
+            ergebnis[art] = eintraege
+    return ergebnis
+
+
+def export_yaml(
+    client: IceClient,
+    *,
+    roots: list[str] | None = None,
+    wunsch: Mapping[str, Mapping[int, list[str]]] | None = None,
+) -> str:
+    """Wie :func:`export_state`, aber gleich als YAML-Text.
+
+    ``wunsch`` ist der Wunschzustand aus dem Store -- fester Platz, dauerhaftes
+    Mithoeren, Vorrang. Er steht nicht am Server und ginge ohne diesen Abschnitt
+    beim Einspielen verloren. Geschluesselt wird nach **Nutzernamen**, nicht nach
+    ID: murmur vergibt IDs beim Wiederanlegen neu, und eine gespeicherte ID
+    zeigte danach auf die falsche Person.
+    """
     document = export_state(client, roots=roots)
     ausgelassen = document.pop("_ausgelassen", [])
+    if wunsch:
+        abschnitt = _wunsch_mit_namen(client, wunsch)
+        if abschnitt:
+            document["wunsch"] = abschnitt
     header = (
         "# Aus dem laufenden Server exportiert.\n"
         "#\n"
@@ -376,6 +410,13 @@ def export_yaml(client: IceClient, *, roots: list[str] | None = None) -> str:
         "# an der Sitzung), networks und devices (reine Dokumentation).\n"
         "# Diese Abschnitte aus der bisherigen intercom.yaml uebernehmen.\n"
     )
+    if document.get("wunsch"):
+        header += (
+            "#\n"
+            "# Der Abschnitt 'wunsch' kommt nicht vom Server, sondern aus dieser\n"
+            "# Oberflaeche: fester Platz, dauerhaftes Mithoeren und Vorrang merkt\n"
+            "# sich Mumble nicht. Beim Einspielen wird er wieder uebernommen.\n"
+        )
     for hinweis in ausgelassen:
         header += "#\n# Nicht uebernommen: " + hinweis + "\n"
     body = yaml.safe_dump(

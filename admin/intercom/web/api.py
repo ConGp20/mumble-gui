@@ -25,6 +25,7 @@ from ..ice.errors import IceError
 from ..ice.permissions import BY_NAME, PERMISSIONS, mask_to_names, names_to_mask
 from ..ice.types import ACLEntry, BanEntry, ChannelACL, ChannelGroup, MumbleChannel
 from ..provision.templates import TEMPLATES, apply_template
+from ..store.db import WUNSCH_ARTEN
 from .auth import Account, require_admin, require_user
 
 router = APIRouter(prefix="/api")
@@ -1377,7 +1378,59 @@ async def sicherung_einspielen(
         )
     except (RuntimeError, IceError) as exc:
         raise HTTPException(400, str(exc)) from exc
-    return plan.to_json()
+
+    antwort = plan.to_json()
+    antwort["wunsch"] = await _wunsch_einspielen(context, body, account.name)
+    return antwort
+
+
+async def _wunsch_einspielen(context: Any, body: SicherungBody, actor: str) -> dict[str, Any]:
+    """Uebernimmt den Abschnitt ``wunsch`` aus einer Sicherung.
+
+    Er steht dort nach Nutzernamen; hier werden sie gegen die gerade angelegten
+    Registrierungen aufgeloest. Wen es nicht (mehr) gibt, wird ueberschlagen und
+    gemeldet -- stillschweigend fallenlassen waere genau die Sorte Verlust, die
+    erst beim naechsten Wettkampf auffaellt.
+    """
+    roh = yaml.safe_load(body.yaml_text) or {}
+    abschnitt = roh.get("wunsch") if isinstance(roh, dict) else None
+    if not isinstance(abschnitt, dict) or context.store is None:
+        return {"uebernommen": 0, "fehlend": []}
+
+    try:
+        registriert = await context.ice.get_registered_users()
+    except IceError:
+        return {"uebernommen": 0, "fehlend": [], "fehler": "Nutzer nicht lesbar."}
+    nach_name = {name: userid for userid, name in registriert.items()}
+
+    uebernommen = 0
+    fehlend: list[str] = []
+    for art, je_person in abschnitt.items():
+        if art not in WUNSCH_ARTEN or not isinstance(je_person, dict):
+            continue
+        for name, pfade in je_person.items():
+            userid = nach_name.get(str(name))
+            if userid is None:
+                fehlend.append(str(name))
+                continue
+            context.store.set_wunsch(
+                art, userid, [str(p) for p in (pfade or [])], actor
+            )
+            uebernommen += 1
+
+    if uebernommen or fehlend:
+        try:
+            kanaele = await context.ice.get_channels()
+            context.enforcer.lade_wuensche(context.store.alle_wuensche(), kanaele)
+        except IceError:
+            pass
+        context.audit(
+            actor,
+            "sicherung.wunsch",
+            f"{uebernommen} uebernommen",
+            after=", ".join(sorted(set(fehlend))) if fehlend else "",
+        )
+    return {"uebernommen": uebernommen, "fehlend": sorted(set(fehlend))}
 
 
 @router.get("/provision/export", response_class=PlainTextResponse)
@@ -1387,8 +1440,14 @@ async def provision_export(
     from ..provision.exporter import export_yaml
 
     context = ctx(request)
+    # Der Wunschzustand steht nicht am Server. Ohne ihn waere die Sicherung
+    # unvollstaendig, und nach dem Einspielen fehlten feste Plaetze, Mithoeren
+    # und Vorrang -- ohne dass es jemandem auffiele.
+    wunsch = context.store.alle_wuensche() if context.store is not None else None
     try:
-        text = await context.ice.run(export_yaml, context.ice.sync)
+        text = await context.ice.run(
+            lambda client: export_yaml(client, wunsch=wunsch), context.ice.sync
+        )
     except IceError as exc:
         raise _fail(exc) from exc
     return PlainTextResponse(

@@ -1593,3 +1593,66 @@ def test_zelle_mit_mehreren_eintraegen_wird_gesperrt(app_client):
         {"kanal": regie, "rolle": "kamera", "recht": "sprechen", "wert": "erlaubt"},
     )
     assert abgelehnt.status_code == 409
+
+
+def test_sicherung_nimmt_den_wunschzustand_mit(app_client):
+    """Ohne das faellt der feste Platz beim Einspielen still unter den Tisch.
+
+    Gemerkt wird nach *Namen*, nicht nach Nutzer-ID: murmur vergibt IDs beim
+    Wiederanlegen neu, und eine gespeicherte ID zeigte danach auf die falsche
+    Person.
+    """
+    import yaml as _yaml
+
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    userid = _person_anlegen(client, "zeit-1")
+    _schreibe(
+        client, "post", "/api/pult/platz",
+        {"userid": userid, "kanal": regie, "merken": True},
+    )
+    _schreibe(
+        client, "put", "/api/pult/wunsch",
+        {"art": "mithoeren", "userid": userid, "kanaele": [regie]},
+    )
+
+    text = client.get("/api/provision/export").text
+    roh = _yaml.safe_load(text)
+    assert roh["wunsch"]["platz"] == {"zeit-1": ["Intercom/Regie"]}
+    assert roh["wunsch"]["mithoeren"] == {"zeit-1": ["Intercom/Regie"]}
+    assert "zeit-1" in text and "Der Abschnitt 'wunsch'" in text
+
+    # Wunsch wegwerfen und die Sicherung einspielen.
+    _schreibe(
+        client, "put", "/api/pult/wunsch",
+        {"art": "platz", "userid": userid, "kanaele": []},
+    )
+    _schreibe(
+        client, "put", "/api/pult/wunsch",
+        {"art": "mithoeren", "userid": userid, "kanaele": []},
+    )
+    assert client.get("/api/pult/wunsch").json()["wunsch"]["platz"] == {}
+
+    wieder = _schreibe(
+        client, "post", "/api/sicherung/einspielen", {"yaml_text": text}
+    )
+    assert wieder.status_code == 200, wieder.text
+    assert wieder.json()["wunsch"]["uebernommen"] == 2
+    assert wieder.json()["wunsch"]["fehlend"] == []
+
+    wunsch = client.get("/api/pult/wunsch").json()["wunsch"]
+    assert wunsch["platz"][str(userid)][0]["pfad"] == "Intercom/Regie"
+    assert wunsch["mithoeren"][str(userid)][0]["pfad"] == "Intercom/Regie"
+
+
+def test_sicherung_meldet_wen_sie_nicht_zuordnen_kann(app_client):
+    """Ein Name ohne Registrierung wird gemeldet, nicht verschwiegen."""
+    client, _ = app_client
+    _anmelden(client)
+    text = client.get("/api/provision/export").text
+    text += "\nwunsch:\n  platz:\n    gibt-es-nicht: [Intercom/Regie]\n"
+
+    antwort = _schreibe(client, "post", "/api/sicherung/einspielen", {"yaml_text": text})
+    assert antwort.status_code == 200, antwort.text
+    assert antwort.json()["wunsch"]["fehlend"] == ["gibt-es-nicht"]
