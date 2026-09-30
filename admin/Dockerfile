@@ -141,6 +141,12 @@ COPY --from=builder /opt/intercom/static/vendor /opt/intercom/static/vendor
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Verknuepft das Paket in der GitHub-Registry mit dem Repository: ohne dieses
+# Etikett steht es dort ohne Herkunft und ohne Verbindung zu den Quellen da.
+LABEL org.opencontainers.image.source="https://github.com/ConGp20/mumble-gui" \
+      org.opencontainers.image.description="Admin-GUI, Provisioner und Monitor fuer das Stadion-Intercom" \
+      org.opencontainers.image.licenses="MIT"
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     SLICE_DIR=/opt/intercom/slice \

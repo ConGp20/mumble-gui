@@ -119,13 +119,46 @@ Admin-Image, zeigt den Provisioning-Plan und wendet ihn nach Bestaetigung an.
 Danach liegt das GUI auf `http://<rechner>:8080/`. Benutzer und Passwort stehen in
 der `.env` (`ADMIN_USER`, `ADMIN_PASSWORD`).
 
-Nur das Image bauen, ohne `setup.sh`:
+### Das Image wird normalerweise nicht gebaut, sondern geladen
+
+`.github/workflows/image.yml` baut es bei jedem Push nach `admin/` und legt es
+in die Container-Registry von GitHub. Gebaut wird auf zwei Laeufern, jeder
+nativ fuer seine Architektur — `ubuntu-latest` fuer x86-64 und
+`ubuntu-24.04-arm` fuer arm64 — und am Ende zu einer Multi-Arch-Liste
+zusammengefasst. `docker pull` waehlt daraus von selbst das Passende; auf einem
+Pi ist damit nichts zu uebersetzen.
+
+`setup.sh` versucht zuerst zu ziehen und baut nur, wenn das nicht klappt:
+
+```
+✔ Fertiges Image geladen – es muss nichts gebaut werden
+```
+
+Gemessen: die komplette Einrichtung mit fertigem Image dauert **14 Sekunden**,
+mit lokalem Bau rund eine Minute auf x86-64.
+
+> **Einmalig von Hand:** ein neues Paket in der GitHub-Registry ist
+> **privat**, auch wenn das Repository oeffentlich ist — es erbt vom
+> Repository die Zugriffsrechte, aber nicht die Sichtbarkeit. Damit ein Pi
+> ohne Anmeldung ziehen kann, das Paket einmal auf *public* stellen:
+> GitHub → Profil → Packages → `mumble-admin` → Package settings → Change
+> visibility.
+>
+> Soll es privat bleiben, meldet sich das Geraet mit einem Token an:
+> ```bash
+> echo "<TOKEN mit read:packages>" | docker login ghcr.io -u <konto> --password-stdin
+> ```
+
+Selbst bauen, wenn du am Quelltext etwas geaendert hast:
 
 ```bash
 docker compose --profile gui build mumble-admin
 # oder direkt:
 docker build -t stadion-intercom/mumble-admin:v1.5.735 admin/
 ```
+
+Damit `setup.sh` das eigene Image nimmt statt zu ziehen, in der `.env`
+`ADMIN_IMAGE` auf den eigenen Namen setzen.
 
 Gemessen ohne jeden Cache: **50 Sekunden auf x86-64**. Es wird nichts
 uebersetzt, nur installiert — deshalb bleibt es auch auf schwacher Hardware in

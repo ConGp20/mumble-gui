@@ -68,7 +68,15 @@ services:
       args:
         # Slice-Datei und Server stammen aus demselben Tag – siehe .env.
         MUMBLE_VERSION: ${MUMBLE_VERSION:-v1.5.735}
-    image: stadion-intercom/mumble-admin:${MUMBLE_VERSION:-v1.5.735}
+    # Fertiges Image aus der Container-Registry von GitHub -- gebaut von
+    # .github/workflows/image.yml, nativ fuer x86-64 und arm64. Auf dem
+    # Zielgeraet muss damit nichts uebersetzt werden.
+    #
+    # Die build-Angabe oben bleibt als Rueckfallebene stehen: stehen image UND
+    # build da, zieht Compose das Image und baut nur, wenn das Ziehen
+    # scheitert (oder man --build mitgibt). Das deckt eine Abspaltung ohne
+    # eigene Registry und einen Rechner ohne Internet gleichermassen ab.
+    image: ${ADMIN_IMAGE:-ghcr.io/congp20/mumble-admin}:${MUMBLE_VERSION:-v1.5.735}
     container_name: mumble-admin
     restart: unless-stopped
     network_mode: host

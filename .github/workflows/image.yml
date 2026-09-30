@@ -1,0 +1,118 @@
+# =============================================================================
+#  Baut das Admin-Image und legt es in die Container-Registry von GitHub.
+#
+#  Damit muss auf dem Zielgeraet nichts mehr gebaut werden -- ein Raspberry Pi
+#  zieht das fertige Image in Sekunden statt es selbst zu uebersetzen.
+#
+#  Gebaut wird auf ZWEI Laeufern, jeder nativ fuer seine Architektur:
+#  ubuntu-latest (x86-64) und ubuntu-24.04-arm (arm64). Das ist deutlich
+#  schneller als ein einzelner Lauf mit QEMU-Emulation -- und beide Laeufer
+#  sind fuer oeffentliche Repositories kostenlos.
+#
+#  Am Ende fasst ein dritter Schritt beide zu einer Multi-Arch-Liste zusammen.
+#  "docker pull" waehlt daraus von selbst das Richtige aus.
+# =============================================================================
+name: Image bauen und veroeffentlichen
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "admin/**"
+      - ".github/workflows/image.yml"
+  workflow_dispatch:
+
+env:
+  # GHCR verlangt Kleinbuchstaben; der Kontoname kann gemischt sein.
+  REGISTRY: ghcr.io
+  MUMBLE_VERSION: v1.5.735
+
+jobs:
+  bauen:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plattform: linux/amd64
+            laeufer: ubuntu-latest
+          - plattform: linux/arm64
+            laeufer: ubuntu-24.04-arm
+    runs-on: ${{ matrix.laeufer }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Namen in Kleinbuchstaben
+        id: name
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/mumble-admin" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: An der Registry anmelden
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Je Architektur nur den Digest hochladen; zusammengefasst wird unten.
+      - name: Bauen und hochladen
+        id: bau
+        uses: docker/build-push-action@v6
+        with:
+          context: ./admin
+          platforms: ${{ matrix.plattform }}
+          build-args: |
+            MUMBLE_VERSION=${{ env.MUMBLE_VERSION }}
+          provenance: false
+          outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.plattform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.plattform }}
+
+      - name: Digest merken
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/$(echo '${{ steps.bau.outputs.digest }}' | sed 's|sha256:||')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ runner.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  zusammenfassen:
+    needs: [bauen]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: An der Registry anmelden
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Multi-Arch-Liste erzeugen
+        run: |
+          IMAGE="${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/mumble-admin"
+          cd /tmp/digests
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${MUMBLE_VERSION}" \
+            --tag "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          echo "### Image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect "${IMAGE}:${MUMBLE_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

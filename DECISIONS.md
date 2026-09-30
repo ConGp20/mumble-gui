@@ -738,3 +738,45 @@ Cockpit-Seite) sind Emulationskosten.
 Debian oder Raspberry Pi OS auf dem Geraet sind gleichermassen in Ordnung -- der
 Container bringt sein eigenes Userland mit. Die Tabelle oben betrifft
 ausschliesslich das Basisimage.
+
+---
+
+## D-028 - Das Image kommt aus der Registry, der Bau ist Rueckfallebene
+
+**Problem.** `setup.sh` rief `docker compose up -d --build` und baute das
+Admin-Image auf dem Zielgeraet. Auf einem Raspberry Pi ist das der langsamste
+Teil der ganzen Einrichtung -- fuer ein Image, das auf jedem Geraet identisch
+ist. Gebaut werden muss es nur, weil es niemand veroeffentlicht hat.
+
+**Entscheidung.** `.github/workflows/image.yml` baut es und legt es in die
+Container-Registry von GitHub (`ghcr.io`). Gebaut wird auf **zwei Laeufern,
+jeder nativ**: `ubuntu-latest` fuer x86-64, `ubuntu-24.04-arm` fuer arm64.
+Kein QEMU -- der emulierte arm64-Bau dauerte hier 338 s, nativ ist er in
+derselben Groessenordnung wie x86-64. Beide Laeufer sind fuer oeffentliche
+Repositories kostenlos. Ein dritter Schritt fasst die beiden Digests zu einer
+Multi-Arch-Liste zusammen, aus der `docker pull` von selbst das Richtige
+waehlt.
+
+In der Compose stehen jetzt `image:` **und** `build:`. Das ist kein Versehen:
+nachgemessen zieht Compose in dieser Kombination das Image und baut nur, wenn
+das Ziehen scheitert oder man `--build` mitgibt. Damit deckt dieselbe Datei
+drei Faelle ab -- fertiges Image, eigene Abspaltung ohne Registry, Rechner ohne
+Internet.
+
+`setup.sh` versucht entsprechend erst zu ziehen und baut nur im Fehlerfall.
+Beide Wege sind durchgespielt: mit erreichbarem Image laeuft die komplette
+Einrichtung in **14 Sekunden** durch, ohne faellt sie auf den lokalen Bau
+zurueck und meldet das ausdruecklich.
+
+**Was von Hand bleibt.** Ein neu angelegtes Paket in der GitHub-Registry ist
+**privat**, auch bei oeffentlichem Repository: es erbt die Zugriffsrechte des
+verknuepften Repositories, aber ausdruecklich nicht dessen Sichtbarkeit. Damit
+ein Geraet ohne Anmeldung ziehen kann, muss die Sichtbarkeit einmal in der
+Oberflaeche umgestellt werden. Die Verknuepfung selbst stellt das Etikett
+`org.opencontainers.image.source` im Dockerfile her.
+
+**Nicht geprueft.** Der Arbeitsablauf ist hier nie gelaufen -- GitHub Actions
+laesst sich in dieser Umgebung nicht ausfuehren. Geprueft sind: die
+YAML-Gueltigkeit, das Verhalten von Compose bei `image` plus `build`, beide
+Zweige in `setup.sh` gegen eine lokale Registry, und dass die Etiketten im
+fertigen Image ankommen. Der erste echte Lauf ist der erste Beweis.

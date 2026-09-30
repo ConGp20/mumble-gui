@@ -333,9 +333,17 @@ fi
 #  6. Admin-GUI bauen und starten
 # =============================================================================
 titel "Admin-GUI bauen und starten"
-info "Der erste Bau dauert ein paar Minuten – Abhängigkeiten werden geladen."
-
-${COMPOSE} --profile gui up -d --build
+# Erst versuchen, das fertige Image zu ziehen -- es wird von GitHub fuer
+# x86-64 und arm64 gebaut. Nur wenn das nicht klappt (eigene Abspaltung ohne
+# Registry, kein Internet, geaenderter Quelltext), wird selbst gebaut.
+if ${COMPOSE} --profile gui pull mumble-admin > /dev/null 2>&1; then
+  ok "Fertiges Image geladen – es muss nichts gebaut werden"
+  ${COMPOSE} --profile gui up -d
+else
+  info "Kein fertiges Image verfügbar – es wird lokal gebaut."
+  info "Das dauert beim ersten Mal ein paar Minuten."
+  ${COMPOSE} --profile gui up -d --build
+fi
 ok "mumble-admin gestartet"
 
 printf '    %s·%s Warte auf das GUI auf Port %s ' "${C_BLAU}" "${C_AUS}" "${LISTEN_PORT}"
