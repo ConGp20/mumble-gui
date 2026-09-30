@@ -72,7 +72,7 @@ def test_plan_detailed_exitcode(fake_murmur, tmp_path, capsys):
     env = _env(fake_murmur, tmp_path, MINIMAL)
     with mock.patch.dict(os.environ, env, clear=False):
         assert main(["plan", "--detailed-exitcode"]) == 3
-        assert "Kanal anlegen" in capsys.readouterr().out
+        assert "Platz anlegen" in capsys.readouterr().out
 
         assert main(["apply", "--yes"]) == 0
         capsys.readouterr()

@@ -400,7 +400,10 @@ class Reconciler:
                     Change(
                         kind="note",
                         target=want.path,
-                        summary=f"Elternkanal {want.parent_path!r} fehlt -- uebersprungen.",
+                        summary=(
+                            f"Der Platz darueber ({want.parent_path!r}) "
+                            "fehlt -- uebersprungen."
+                        ),
                     )
                 )
                 continue
@@ -410,7 +413,7 @@ class Reconciler:
                 change = Change(
                     kind="channel_create",
                     target=want.path,
-                    summary="Kanal anlegen",
+                    summary="Platz anlegen",
                     after=[
                         f"Name: {want.name}",
                         f"Beschreibung: {want.description or '(keine)'}",
@@ -466,7 +469,7 @@ class Reconciler:
                     Change(
                         kind="channel_update",
                         target=want.path,
-                        summary="Kanalzustand nicht lesbar",
+                        summary="Platz nicht lesbar",
                         error=str(exc),
                     )
                 )
@@ -485,7 +488,7 @@ class Reconciler:
         change = Change(
             kind="channel_update",
             target=want.path,
-            summary="Kanaleigenschaften aendern",
+            summary="Platz aendern",
             before=[f"{label}: {old!r}" for label, old, _ in differences],
             after=[f"{label}: {new!r}" for label, _, new in differences],
         )
@@ -578,7 +581,7 @@ class Reconciler:
             change = Change(
                 kind="channel_delete",
                 target=path,
-                summary="Kanal loeschen (steht nicht in intercom.yaml)",
+                summary="Platz loeschen (steht nicht in der Vorlage bzw. Sicherung)",
                 before=[f"Kanal-ID {channel_id}"],
                 destructive=True,
                 needs_prune=True,
@@ -623,7 +626,7 @@ class Reconciler:
                 geloescht = Change(
                     kind="group_update",
                     target=f"{UEBERALL} @{group.name}",
-                    summary="Gruppe loeschen (steht nicht in groups:)",
+                    summary="Rolle loeschen (steht nicht in der Vorlage bzw. Sicherung)",
                     before=[_group_line(group)],
                     destructive=True,
                     needs_prune=True,
@@ -671,7 +674,7 @@ class Reconciler:
         change = Change(
             kind="acl_update",
             target=UEBERALL,
-            summary="Gruppen und Richtlinien am Wurzelkanal setzen",
+            summary="Rollen und Richtlinien setzen, die überall gelten",
             before=[line for line, _ in group_diff] + [line for line, _ in acl_diff],
             after=[line for _, line in group_diff] + [line for _, line in acl_diff],
         )
@@ -731,7 +734,7 @@ class Reconciler:
                 geloescht = Change(
                     kind="group_update",
                     target=f"{want.path} @{group.name}",
-                    summary="Gruppe loeschen (steht nicht in der YAML)",
+                    summary="Rolle loeschen (steht nicht in der Vorlage bzw. Sicherung)",
                     before=[_group_line(group)],
                     destructive=True,
                     needs_prune=True,
@@ -751,7 +754,7 @@ class Reconciler:
             change = Change(
                 kind="acl_update",
                 target=want.path,
-                summary="ACLs aendern" if acl_diff else "Gruppen aendern",
+                summary="Regeln aendern" if acl_diff else "Rollen aendern",
                 before=[line for line, _ in acl_diff if line]
                 + [line for line, _ in group_diff if line],
                 after=[line for _, line in acl_diff if line]

@@ -1917,11 +1917,29 @@ def test_keine_wurzel_in_der_oberflaeche(app_client):
     """
     client, _ = app_client
     _anmelden(client)
+
+    # Erst etwas tun, das Protokollzeilen erzeugt. Ohne das lief diese Pruefung
+    # fuer /audit ins Leere: eine leere Tabelle enthaelt kein verbotenes Wort.
+    # Genau so ist ein "Gruppen und Richtlinien am Wurzelkanal setzen" bis in
+    # die fertige Oberflaeche durchgerutscht.
+    angewendet = _schreibe(client, "post", "/api/vorlagen/klein/anwenden", {})
+    assert angewendet.status_code == 200, angewendet.text
+
     for pfad in SEITEN_MIT_EIGENER_SPRACHE:
         antwort = client.get(pfad)
         assert antwort.status_code == 200, f"{pfad} antwortet {antwort.status_code}"
         for wort in ("Wurzel", "(Root)"):
             assert wort not in antwort.text, f"{wort!r} steht auf {pfad}"
+
+    # Und jetzt das, was die Seiten wirklich anzeigen. /audit holt seine Zeilen
+    # per JavaScript nach -- im HTML steht davon nichts, eine Pruefung auf der
+    # Seite lief also ins Leere. Genau so ist "Gruppen und Richtlinien am
+    # Wurzelkanal setzen" bis in die fertige Oberflaeche durchgerutscht.
+    protokoll = client.get("/api/audit?limit=200").text
+    plan = _schreibe(client, "post", "/api/vorlagen/klein/plan", {}).text
+    for wo, roh in (("Protokoll", protokoll), ("Planzeilen", plan)):
+        for wort in ("Wurzelkanal", "Kanal anlegen", "Gruppe loeschen", "Kanaleigenschaften"):
+            assert wort not in roh, f"{wort!r} steht in {wo}"
 
 
 def test_navigation_spricht_die_sprache_der_intercom(app_client):

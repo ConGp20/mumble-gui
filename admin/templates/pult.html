@@ -419,6 +419,7 @@ function pult() {
        Verbindungen und die Gegenrichtung, die in der Uebersicht nichts zu
        suchen haben. */
     blatt: null,
+    _hinweisTimer: null,
     personen: [],
     verbunden: {},
     verbindungen: {},
@@ -511,9 +512,17 @@ function pult() {
         .catch((e) => { this.fehler = e.message; });
     },
 
+    /* Der Timer der *vorigen* Meldung loeschte die naechste: wer zwei Dinge
+       kurz nacheinander tut, sah die zweite Rueckmeldung fuer den Rest der
+       Sekunde -- und dann nicht mehr. Deshalb haelt die Meldung ihren eigenen
+       Timer und raeumt den alten weg. */
     melde(text) {
       this.hinweis = text;
-      window.setTimeout(() => { this.hinweis = ""; }, 4000);
+      if (this._hinweisTimer) { window.clearTimeout(this._hinweisTimer); }
+      this._hinweisTimer = window.setTimeout(() => {
+        this.hinweis = "";
+        this._hinweisTimer = null;
+      }, 5000);
     },
 
     /* --- Aufnehmen und Ablegen --------------------------------------- */
