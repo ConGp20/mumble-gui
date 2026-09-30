@@ -26,10 +26,20 @@ services:
       # Nur Loopback. Ohne Secret koennte jeder auf dem Host den Server steuern.
       MUMBLE_CONFIG_ICE: '"tcp -h 127.0.0.1 -p ${ICE_PORT:-6502}"'
       MUMBLE_CONFIG_ICESECRETWRITE: ${ICE_SECRET}
-      # Ice-Callbacks brauchen mehr als einen Server-Thread, sonst blockiert
-      # murmur waehrend eines Rueckrufs alle weiteren Ice-Aufrufe.
-      MUMBLE_CONFIG_ICE_THREADPOOL_SERVER_SIZE: "2"
-      MUMBLE_CONFIG_ICE_THREADPOOL_SERVER_SIZEMAX: "8"
+      #
+      # Hier stand einmal Ice.ThreadPool.Server.Size. Das laesst sich ueber
+      # diesen Weg gar nicht setzen: der Einstiegspunkt des Images bildet den
+      # Variablennamen ab, indem er ihn in Grossbuchstaben setzt und
+      # Unterstriche entfernt -- Punkte bleiben stehen. Der echte Schluessel
+      # heisst "Ice.ThreadPool.Server.Size", und eine Umgebungsvariable kann
+      # keinen Punkt im Namen haben. MUMBLE_ACCEPT_UNKNOWN_SETTINGS hilft
+      # nicht: es schreibt den Namen unveraendert in die Konfiguration, wo
+      # murmur ihn ebenso wenig versteht.
+      #
+      # Gebraucht wird es auch nicht: Rueckrufe, Provisionierung und der
+      # Monitor-Bot laufen mit der Vorgabe nachweislich durch. Wer die
+      # Ice-Eigenschaften mit Punkt doch braucht, hinterlegt eine eigene
+      # Konfigurationsdatei und zeigt mit MUMBLE_CUSTOM_CONFIG_FILE darauf.
       # --- Betrieb -----------------------------------------------------------
       MUMBLE_CONFIG_PORT: ${MUMBLE_PORT:-64738}
       MUMBLE_CONFIG_WELCOMETEXT: "<b>Stadion-Intercom</b> – PTT benutzen, nicht VOX."
@@ -37,7 +47,10 @@ services:
       MUMBLE_CONFIG_BANDWIDTH: "72000"
       MUMBLE_CONFIG_OPUSTHRESHOLD: "0"
       MUMBLE_CONFIG_CHANNELNESTINGLIMIT: "10"
-      MUMBLE_CONFIG_LOGLEVEL: "1"
+      # Kein MUMBLE_CONFIG_LOGLEVEL: ein "loglevel" gibt es in murmur nicht.
+      # Der Einstiegspunkt des Images nimmt nur Namen an, die in seiner
+      # bare_config.ini vorkommen, und bricht bei jedem anderen ab -- der
+      # Server startet dann gar nicht erst.
       # Ohne Obfuskation sehen wir im Admin-GUI die echten Client-IPs.
       MUMBLE_CONFIG_OBFUSCATE: "false"
       MUMBLE_CONFIG_SENDVERSION: "true"
