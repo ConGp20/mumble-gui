@@ -1,0 +1,571 @@
+{% extends "base.html" %}
+
+{#
+  Das Pult: Personen, Rollen und Plaetze auf einer Flaeche, per Ziehen zu
+  verbinden.
+
+  Die Seite zeigt ausschliesslich, was der Server wirklich haelt. Die Rechte
+  werden nicht aus unseren Vorgaben abgeleitet, sondern aus den ACLs
+  ausgerechnet (intercom/ice/wirkung.py, geprueft gegen effectivePermissions).
+  Nach jeder Aenderung wird neu geladen, statt die Anzeige zu erraten -- ein
+  Klick kann etwas anderes bewirken als beabsichtigt, wenn weiter unten ein
+  Verbot steht, und dann muss das Verbot zu sehen sein.
+#}
+
+{% block inhalt %}
+<div x-data="pult()" x-init="laden()" class="pult">
+
+  <div class="banner" x-show="fehler" x-cloak>
+    <b>Das hat nicht geklappt.</b> <span x-text="fehler"></span>
+  </div>
+  <div class="banner" x-show="hinweis" x-cloak style="border-color: var(--ok); background: var(--ok-bg)">
+    <span x-text="hinweis"></span>
+  </div>
+
+  <div class="pult-kopf">
+    <div class="pult-erklaerung">
+      <b>Ziehen und ablegen.</b>
+      Eine Person auf einen Platz zieht sie dorthin. Eine Person auf eine Rolle
+      nimmt sie in die Rolle auf. Einen Platz auf einen anderen haengt ihn
+      darunter. Wer lieber klickt: erst auf <em>Aufnehmen</em>, dann auf das Ziel.
+    </div>
+    <div class="pult-werkzeuge">
+      <button class="knopf klein" @click="laden()" :disabled="laedt">
+        <span x-text="laedt ? 'laedt …' : 'Neu laden'"></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="aufnahmeleiste" x-show="aufnahme" x-cloak>
+    <span class="was">
+      <span x-text="aufnahme && aufnahme.art === 'person' ? 'Person' : 'Platz'"></span>:
+      <b x-text="aufnahme && aufnahme.titel"></b>
+    </span>
+    <span class="still">– jetzt das Ziel anklicken</span>
+    <button class="knopf klein" @click="aufnahme = null">Abbrechen</button>
+  </div>
+
+  <div class="pult-flaeche">
+
+    {# ---------------------------------------------------------------- #}
+    {#  Personen und Rollen                                              #}
+    {# ---------------------------------------------------------------- #}
+    <aside class="karte">
+      <header>
+        Personen
+        <span class="rechts still" x-text="personen.length + ' registriert'"></span>
+      </header>
+      <div class="inhalt pult-liste">
+        <input type="search" placeholder="Suchen …" x-model="suche">
+
+        <template x-for="p in gefiltertePersonen" :key="p.userid">
+          <div class="person"
+               :class="{ online: p.session !== null, aufgenommen: istAufgenommen('person', p.userid) }"
+               draggable="true"
+               @dragstart="nimm('person', p.userid, p.name, $event)"
+               @dragend="zug = null"
+               @click="aufnehmen('person', p.userid, p.name)">
+            <span class="punkt" :class="p.session !== null ? 'status-ok' : 'status-inaktiv'"></span>
+            <span class="name mono" x-text="p.name"></span>
+            <span class="rollen">
+              <template x-for="r in p.rollen" :key="r">
+                <span class="abzeichen" x-text="r"></span>
+              </template>
+              <span class="abzeichen" x-show="festerPlatz(p.userid)"
+                    :title="'Fester Platz: ' + festerPlatz(p.userid)">Platz</span>
+            </span>
+          </div>
+        </template>
+        <p class="leer" x-show="!gefiltertePersonen.length" x-cloak>
+          Keine Person gefunden. Registriert wird unter <a href="/nutzer">Nutzer</a>.
+        </p>
+      </div>
+
+      <header>Rollen</header>
+      <div class="inhalt pult-liste">
+        <template x-for="r in rollen" :key="r.name">
+          <div class="rolle"
+               :class="{ ziel: zug && zug.art === 'person' && !r.eingebaut, eingebaut: r.eingebaut }"
+               @dragover.prevent="zug && zug.art === 'person' && !r.eingebaut"
+               @drop.prevent="aufRolle(r)"
+               @click="aufRolle(r)">
+            <span class="name" x-text="r.titel"></span>
+            <span class="still" x-show="r.eingebaut">von Mumble, nicht aenderbar</span>
+            <span class="anzahl" x-show="!r.eingebaut" x-text="mitgliederZahl(r.name)"></span>
+          </div>
+        </template>
+        <p class="leer" x-show="!rollen.filter(r => !r.eingebaut).length" x-cloak>
+          Noch keine eigene Rolle. Eine entsteht, sobald du unter
+          <a href="/acl">ACL</a> eine Gruppe anlegst – oder mit einer Vorlage unter
+          <a href="/einrichten">Einrichten</a>.
+        </p>
+      </div>
+    </aside>
+
+    {# ---------------------------------------------------------------- #}
+    {#  Plaetze                                                          #}
+    {# ---------------------------------------------------------------- #}
+    <section class="karte">
+      <header>
+        Plaetze
+        <span class="rechts still">Wer hier steht, ist gerade verbunden</span>
+      </header>
+      <div class="inhalt pult-plaetze">
+        <template x-for="k in kanaele" :key="k.id">
+          <div class="platz"
+               :class="{
+                 ziel: istZiel(k),
+                 gewaehlt: gewaehlt === k.id,
+                 wurzel: k.wurzel,
+                 aufgenommen: istAufgenommen('platz', k.id)
+               }"
+               :style="'margin-left:' + (k.tiefe * 14) + 'px'"
+               :draggable="!k.wurzel"
+               @dragstart="nimm('platz', k.id, k.name, $event)"
+               @dragend="zug = null"
+               @dragover.prevent="istZiel(k)"
+               @drop.prevent="aufPlatz(k)"
+               @click="aufPlatz(k)">
+            <div class="kopfzeile">
+              <span class="name" x-text="k.name"></span>
+              <span class="rechts">
+                <button class="knopf winzig" @click.stop="gewaehlt = (gewaehlt === k.id ? null : k.id)"
+                        :title="'Rechte an diesem Platz ' + (gewaehlt === k.id ? 'zuklappen' : 'zeigen')">
+                  Rechte
+                </button>
+              </span>
+            </div>
+            <div class="besetzung">
+              <template x-for="u in besetzung(k.id)" :key="u.session">
+                <span class="client mono"
+                      draggable="true"
+                      @dragstart.stop="nimmSitzung(u, $event)"
+                      @dragend="zug = null"
+                      @click.stop="aufnehmenSitzung(u)"
+                      :class="{ aufgenommen: aufnahme && aufnahme.art === 'sitzung' && aufnahme.id === u.session }"
+                      :title="u.registriert ? 'Angemeldet als ' + u.name : 'Nicht registriert'">
+                  <span x-text="u.name"></span>
+                  <span class="abzeichen stumm" x-show="u.stumm">stumm</span>
+                  <span class="abzeichen taub" x-show="u.taub">taub</span>
+                </span>
+              </template>
+              <span class="still" x-show="!besetzung(k.id).length">leer</span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+  </div>
+
+  {# ---------------------------------------------------------------- #}
+  {#  Rechte am gewaehlten Platz                                       #}
+  {# ---------------------------------------------------------------- #}
+  <section class="karte" x-show="gewaehlt !== null" x-cloak style="margin-top:12px">
+    <header>
+      Rechte an <b x-text="platzName(gewaehlt)"></b>
+      <span class="rechts">
+        <button class="knopf klein" @click="gewaehlt = null">Zuklappen</button>
+      </span>
+    </header>
+    <div class="inhalt">
+      <p class="hinweistext">
+        Das Zeichen sagt, was am Ende gilt. Die Farbe sagt, ob es <em>hier</em>
+        gesetzt ist: gruen erlaubt, rot verboten, grau von weiter oben geerbt.
+        Klicken wechselt zwischen geerbt, erlaubt und verboten.
+      </p>
+
+      <div class="tabellenrahmen">
+        <table class="dicht matrix">
+          <thead>
+            <tr>
+              <th>Rolle</th>
+              <template x-for="s in spalten" :key="s.name">
+                <th class="zahl" :title="s.hilfe" x-text="s.titel"></th>
+              </template>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in rollen" :key="r.name">
+              <tr>
+                <td>
+                  <span x-text="r.titel"></span>
+                  <span class="still" x-show="r.eingebaut">(eingebaut)</span>
+                </td>
+                <template x-for="s in spalten" :key="s.name">
+                  <td class="zelle">
+                    <button class="rechtzelle"
+                            :class="zellenKlasse(gewaehlt, r.name, s.name)"
+                            :disabled="!darfBearbeiten(gewaehlt, r.name)"
+                            :title="zellenTitel(gewaehlt, r.name, s.name)"
+                            @click="weiterschalten(gewaehlt, r.name, s.name)"
+                            x-text="zellenZeichen(gewaehlt, r.name, s.name)"></button>
+                  </td>
+                </template>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <template x-for="r in rollen" :key="'grund-' + r.name">
+        <p class="hinweistext warnung" x-show="grundFuer(gewaehlt, r.name)" x-cloak>
+          <b x-text="r.titel"></b>: <span x-text="grundFuer(gewaehlt, r.name)"></span>
+          <a href="/acl">In der Expertensicht oeffnen</a>
+        </p>
+      </template>
+
+      <p class="hinweistext" x-show="unbestimmtHier()" x-cloak>
+        Ein Fragezeichen heisst: haengt an etwas, das erst beim Verbinden
+        feststeht – ein geprueftes Zertifikat, ein Zugangswort. Das wird hier
+        nicht geraten.
+      </p>
+    </div>
+  </section>
+
+  {# ---------------------------------------------------------------- #}
+  {#  Was dauerhaft ist und was nicht                                  #}
+  {# ---------------------------------------------------------------- #}
+  <section class="karte" style="margin-top:12px">
+    <header>Was davon ueberlebt einen Neustart?</header>
+    <div class="inhalt">
+      <table class="dicht">
+        <thead>
+          <tr><th>Aktion</th><th>Haelt der Server?</th><th>Was heisst das</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Person in eine Rolle aufnehmen</td>
+            <td><span class="status status-ok">ja</span></td>
+            <td class="text-leise">Steht als Gruppe am Wurzelkanal.</td>
+          </tr>
+          <tr>
+            <td>Rechte verteilen</td>
+            <td><span class="status status-ok">ja</span></td>
+            <td class="text-leise">Steht als ACL am Platz.</td>
+          </tr>
+          <tr>
+            <td>Platz unter einen anderen haengen</td>
+            <td><span class="status status-ok">ja</span></td>
+            <td class="text-leise">Der Kanalbaum steht in der Serverdatenbank.</td>
+          </tr>
+          <tr>
+            <td>Jemanden auf einen Platz ziehen</td>
+            <td><span class="status status-warnung">nur jetzt</span></td>
+            <td class="text-leise">
+              Gilt fuer diese Verbindung. Beim naechsten Anmelden landet die
+              Person wieder dort, wo der Server sie hinstellt.
+            </td>
+          </tr>
+          <tr>
+            <td>Fester Platz je Person</td>
+            <td><span class="status status-warnung">nur ueber uns</span></td>
+            <td class="text-leise">
+              Mumble kennt das nicht. Wir merken es uns und stellen es nach jedem
+              Verbinden einmal her – danach darf sich jeder frei bewegen.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hinweistext">
+        Mehr dazu steht in der <a href="/anleitung">Anleitung</a>.
+      </p>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block skripte %}
+<script>
+function pult() {
+  return {
+    laedt: false,
+    fehler: "",
+    hinweis: "",
+    suche: "",
+    gewaehlt: null,
+
+    kanaele: [],
+    rollen: [],
+    personen: [],
+    verbunden: {},
+    rechte: {},
+    spalten: [],
+    wunsch: {},
+
+    /* Was gerade gezogen wird (Maus) bzw. aufgenommen ist (Klick). Beides
+       derselbe Vorgang, nur mit anderem Eingabegeraet -- auf einem Tablet auf
+       der Tribuene gibt es kein dragstart. */
+    zug: null,
+    aufnahme: null,
+
+    /* ---------------------------------------------------------------- */
+
+    laden() {
+      this.laedt = true;
+      this.fehler = "";
+      return Promise.all([
+        Intercom.get("/api/pult"),
+        Intercom.get("/api/pult/wunsch").catch(() => ({ wunsch: {} }))
+      ]).then(([daten, wunsch]) => {
+        this.kanaele = daten.kanaele;
+        this.rollen = daten.rollen;
+        this.personen = daten.personen;
+        this.verbunden = daten.verbunden;
+        this.rechte = daten.rechte;
+        this.spalten = daten.spalten;
+        this.wunsch = wunsch.wunsch || {};
+        if (this.gewaehlt !== null &&
+            !this.kanaele.some((k) => k.id === this.gewaehlt)) {
+          this.gewaehlt = null;
+        }
+      }).catch((e) => {
+        this.fehler = e.message;
+      }).finally(() => {
+        this.laedt = false;
+      });
+    },
+
+    melde(text) {
+      this.hinweis = text;
+      window.setTimeout(() => { this.hinweis = ""; }, 4000);
+    },
+
+    /* --- Aufnehmen und Ablegen --------------------------------------- */
+
+    nimm(art, id, titel, ereignis) {
+      this.zug = { art: art, id: id, titel: titel };
+      this.aufnahme = null;
+      if (ereignis && ereignis.dataTransfer) {
+        ereignis.dataTransfer.effectAllowed = "move";
+        ereignis.dataTransfer.setData("text/plain", titel);
+      }
+    },
+
+    nimmSitzung(u, ereignis) {
+      this.nimm("sitzung", u.session, u.name, ereignis);
+      this.zug.userid = u.registriert ? u.userid : null;
+    },
+
+    aufnehmen(art, id, titel) {
+      if (this.aufnahme && this.aufnahme.art === art && this.aufnahme.id === id) {
+        this.aufnahme = null;
+        return;
+      }
+      this.aufnahme = { art: art, id: id, titel: titel };
+    },
+
+    aufnehmenSitzung(u) {
+      this.aufnehmen("sitzung", u.session, u.name);
+      if (this.aufnahme) { this.aufnahme.userid = u.registriert ? u.userid : null; }
+    },
+
+    istAufgenommen(art, id) {
+      return !!(this.aufnahme && this.aufnahme.art === art && this.aufnahme.id === id);
+    },
+
+    /* Was gerade in der Hand ist -- egal ob gezogen oder angeklickt. */
+    inDerHand() {
+      return this.zug || this.aufnahme;
+    },
+
+    istZiel(k) {
+      const h = this.inDerHand();
+      if (!h) { return false; }
+      if (h.art === "platz") { return h.id !== k.id && !this.istNachkomme(k.id, h.id); }
+      return true;
+    },
+
+    /* Ein Platz darf nicht unter seinen eigenen Nachkommen wandern -- murmur
+       lehnt das ab, und die Anzeige soll es gar nicht erst anbieten. */
+    istNachkomme(kandidat, ahne) {
+      let k = this.kanaele.find((x) => x.id === kandidat);
+      while (k && !k.wurzel) {
+        if (k.parent === ahne) { return true; }
+        k = this.kanaele.find((x) => x.id === k.parent);
+      }
+      return false;
+    },
+
+    /* --- Die drei Ablegevorgaenge ------------------------------------ */
+
+    aufPlatz(k) {
+      const h = this.inDerHand();
+      if (!h) { this.gewaehlt = (this.gewaehlt === k.id ? null : k.id); return; }
+      this.zug = null;
+      this.aufnahme = null;
+
+      if (h.art === "platz") {
+        if (h.id === k.id || this.istNachkomme(k.id, h.id)) { return; }
+        return this.schreibe(
+          Intercom.patch("/api/channels/" + h.id, { parent: k.id }),
+          '"' + h.titel + '" haengt jetzt unter "' + k.name + '".'
+        );
+      }
+
+      if (h.art === "sitzung") {
+        return this.schreibe(
+          Intercom.post("/api/pult/platz", { session: h.id, kanal: k.id }),
+          h.titel + " steht jetzt auf " + k.name + " – fuer diese Verbindung."
+        );
+      }
+
+      // Person: verschieben, falls online. Sonst ist nur der feste Platz moeglich.
+      const person = this.personen.find((p) => p.userid === h.id);
+      const online = person && person.session !== null;
+      const merken = !online || window.confirm(
+        h.titel + ' auf "' + k.name + '" setzen.\n\n' +
+        "OK: zusaetzlich als festen Platz merken – dann landet die Person dort " +
+        "nach jedem Anmelden.\n" +
+        "Abbrechen: nur jetzt verschieben."
+      );
+      return this.schreibe(
+        Intercom.post("/api/pult/platz", {
+          userid: h.id, kanal: k.id, merken: merken
+        }),
+        merken
+          ? h.titel + ' hat jetzt den festen Platz "' + k.name + '".'
+          : h.titel + " steht jetzt auf " + k.name + " – nur fuer diese Verbindung."
+      );
+    },
+
+    aufRolle(r) {
+      const h = this.inDerHand();
+      if (!h) { return; }
+      if (r.eingebaut) {
+        this.fehler = '"' + r.titel + '" ist eine eingebaute Gruppe von Mumble. ' +
+                      "Wer dazugehoert, ergibt sich von selbst.";
+        this.zug = null; this.aufnahme = null;
+        return;
+      }
+      let userid = null;
+      if (h.art === "person") { userid = h.id; }
+      else if (h.art === "sitzung") { userid = h.userid; }
+      this.zug = null;
+      this.aufnahme = null;
+      if (userid === null || userid < 0) {
+        this.fehler = h.titel + " ist nicht registriert. Eine Rolle bekommt nur, " +
+                      "wen der Server beim naechsten Mal wiedererkennt.";
+        return;
+      }
+      const drin = (this.personen.find((p) => p.userid === userid) || {}).rollen || [];
+      const rein = drin.indexOf(r.name) === -1;
+      return this.schreibe(
+        Intercom.put("/api/pult/rolle", { userid: userid, rolle: r.name, drin: rein }),
+        h.titel + (rein ? " gehoert jetzt zu " : " gehoert nicht mehr zu ") + r.titel + "."
+      );
+    },
+
+    schreibe(versprechen, meldung) {
+      this.fehler = "";
+      return versprechen
+        .then(() => { this.melde(meldung); return this.laden(); })
+        .catch((e) => { this.fehler = e.message; return this.laden(); });
+    },
+
+    /* --- Anzeige ------------------------------------------------------ */
+
+    get gefiltertePersonen() {
+      const s = this.suche.trim().toLowerCase();
+      if (!s) { return this.personen; }
+      return this.personen.filter((p) =>
+        p.name.toLowerCase().indexOf(s) !== -1 ||
+        p.rollen.some((r) => r.toLowerCase().indexOf(s) !== -1));
+    },
+
+    besetzung(kanalId) {
+      return this.verbunden[String(kanalId)] || [];
+    },
+
+    platzName(id) {
+      const k = this.kanaele.find((x) => x.id === id);
+      return k ? k.name : "";
+    },
+
+    mitgliederZahl(name) {
+      const n = this.personen.filter((p) => p.rollen.indexOf(name) !== -1).length;
+      return n === 1 ? "1 Person" : n + " Personen";
+    },
+
+    festerPlatz(userid) {
+      const eintraege = (this.wunsch.platz || {})[String(userid)] || [];
+      return eintraege.length ? eintraege[0].pfad : "";
+    },
+
+    /* --- Rechtematrix ------------------------------------------------- */
+
+    zelle(kanalId, rolle) {
+      const k = this.rechte[String(kanalId)];
+      return (k && k[rolle]) || null;
+    },
+
+    zellenZeichen(kanalId, rolle, recht) {
+      const z = this.zelle(kanalId, rolle);
+      if (!z) { return "·"; }
+      const w = z.wirkung[recht];
+      if (w === null) { return "?"; }
+      return w ? "✓" : "✗";
+    },
+
+    zellenKlasse(kanalId, rolle, recht) {
+      const z = this.zelle(kanalId, rolle);
+      if (!z) { return ""; }
+      const eigen = z.eigen[recht] || "offen";
+      const w = z.wirkung[recht];
+      return {
+        "gesetzt-erlaubt": eigen === "erlaubt",
+        "gesetzt-verboten": eigen === "verboten",
+        "geerbt": eigen === "offen",
+        "wirkt-ja": w === true,
+        "wirkt-nein": w === false,
+        "wirkt-offen": w === null
+      };
+    },
+
+    zellenTitel(kanalId, rolle, recht) {
+      const z = this.zelle(kanalId, rolle);
+      if (!z) { return ""; }
+      if (!z.bearbeitbar) { return z.grund; }
+      const eigen = z.eigen[recht] || "offen";
+      const w = z.wirkung[recht];
+      const hier = eigen === "offen"
+        ? "hier nicht gesetzt, kommt von weiter oben"
+        : "hier " + eigen;
+      const ergebnis = w === null
+        ? "haengt an Zertifikat oder Zugangswort"
+        : (w ? "gilt: erlaubt" : "gilt: verboten");
+      return hier + " – " + ergebnis;
+    },
+
+    darfBearbeiten(kanalId, rolle) {
+      const z = this.zelle(kanalId, rolle);
+      return !!(z && z.bearbeitbar);
+    },
+
+    grundFuer(kanalId, rolle) {
+      const z = this.zelle(kanalId, rolle);
+      return z && !z.bearbeitbar ? z.grund : "";
+    },
+
+    unbestimmtHier() {
+      const k = this.rechte[String(this.gewaehlt)];
+      if (!k) { return false; }
+      return Object.keys(k).some((rolle) =>
+        this.spalten.some((s) => k[rolle].wirkung[s.name] === null));
+    },
+
+    weiterschalten(kanalId, rolle, recht) {
+      const z = this.zelle(kanalId, rolle);
+      if (!z || !z.bearbeitbar) { return; }
+      const reihe = { "offen": "erlaubt", "erlaubt": "verboten", "verboten": "offen" };
+      const neu = reihe[z.eigen[recht] || "offen"];
+      return this.schreibe(
+        Intercom.put("/api/pult/recht", {
+          kanal: kanalId, rolle: rolle, recht: recht, wert: neu
+        }),
+        ""
+      );
+    }
+  };
+}
+</script>
+{% endblock %}

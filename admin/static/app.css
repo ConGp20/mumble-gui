@@ -514,3 +514,103 @@ label { font-size: 12px; color: var(--text-leise); }
 .inhalt p { margin: 0 0 8px; max-width: 72ch; line-height: 1.5; }
 .inhalt ol.feldliste { margin: 0; padding-left: 20px; }
 .inhalt ol.feldliste li { margin-bottom: 4px; }
+
+/* --- Pult ---------------------------------------------------------------
+   Personen und Rollen links, Plaetze rechts, Rechte darunter. Ziel ist, dass
+   ein Ablegepunkt sichtbar ist, *bevor* man loslaesst -- sonst zieht man ins
+   Leere und weiss nicht, warum nichts passiert ist. */
+
+.pult-kopf {
+  display: flex; align-items: flex-start; gap: 12px;
+  margin-bottom: 10px;
+}
+.pult-erklaerung { flex: 1; color: var(--text-leise); font-size: 12px; }
+.pult-erklaerung b { color: var(--text); }
+.pult-werkzeuge { display: flex; gap: 6px; }
+
+.aufnahmeleiste {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; margin-bottom: 10px;
+  border: 1px solid var(--akzent); border-radius: var(--radius);
+  background: var(--akzent-bg); font-size: 12px;
+}
+.aufnahmeleiste .was b { font-family: var(--mono); }
+
+.pult-flaeche {
+  display: grid; gap: 12px;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  /* Ohne das strecken sich beide Karten auf die Hoehe der laengeren, und die
+     kuerzere haette einen leeren Block darunter. */
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .pult-flaeche { grid-template-columns: minmax(0, 1fr); }
+}
+
+.pult-liste { display: flex; flex-direction: column; gap: 3px; max-height: 34vh; overflow-y: auto; }
+.pult-liste input[type="search"] { margin-bottom: 4px; }
+.pult-liste .leer { color: var(--text-still); font-style: italic; font-size: 12px; margin: 2px 0; }
+
+.person, .rolle {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; border: 1px solid transparent; border-radius: var(--radius);
+  background: var(--surface-2); cursor: grab; font-size: 12px;
+}
+.person:hover, .rolle:hover { background: var(--surface-3); }
+.person:active { cursor: grabbing; }
+.person .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.person .rollen { display: flex; gap: 2px; flex-wrap: wrap; }
+.person .punkt { width: 8px; }
+.person.online .name { color: var(--text); }
+.person:not(.online) .name { color: var(--text-leise); }
+.person.aufgenommen, .platz.aufgenommen, .client.aufgenommen {
+  border-color: var(--akzent); background: var(--akzent-bg);
+}
+
+.rolle .name { flex: 1; }
+.rolle .anzahl { color: var(--text-still); font-size: 11px; }
+.rolle.eingebaut { cursor: default; opacity: .75; }
+.rolle.ziel { border-color: var(--ok); background: var(--ok-bg); }
+
+.pult-plaetze { display: flex; flex-direction: column; gap: 3px; }
+
+.platz {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); padding: 5px 7px; cursor: pointer;
+}
+.platz.wurzel { background: var(--surface); }
+.platz:hover { border-color: var(--border-hell); }
+.platz.ziel { border-color: var(--ok); background: var(--ok-bg); }
+.platz.gewaehlt { border-color: var(--akzent); }
+.platz .kopfzeile { display: flex; align-items: center; gap: 6px; }
+.platz .kopfzeile .name { font-weight: 600; flex: 1; }
+.platz .besetzung { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; font-size: 11px; }
+.platz .besetzung .still { color: var(--text-still); font-style: italic; }
+
+.client {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 5px; border-radius: 9px;
+  border: 1px solid var(--border-hell); background: var(--surface-3);
+  cursor: grab;
+}
+.client:active { cursor: grabbing; }
+
+.knopf.winzig { padding: 0 5px; font-size: 10px; line-height: 17px; height: 18px; }
+
+/* Rechtematrix. Die Farbe sagt, was *hier* gesetzt ist; das Zeichen, was am
+   Ende gilt. Beides getrennt, weil beides eine eigene Frage ist. */
+.rechtzelle {
+  width: 100%; min-width: 34px; height: 22px;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: transparent; color: var(--text-leise);
+  font-family: var(--mono); font-size: 12px; cursor: pointer;
+}
+.rechtzelle:hover:not(:disabled) { border-color: var(--border-hell); }
+.rechtzelle:disabled { cursor: not-allowed; opacity: .45; }
+.rechtzelle.gesetzt-erlaubt { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.rechtzelle.gesetzt-verboten { background: var(--kritisch-bg); border-color: var(--kritisch); color: var(--kritisch); }
+.rechtzelle.geerbt { background: transparent; }
+.rechtzelle.wirkt-offen { color: var(--warnung); font-weight: 700; }
+
+.hinweistext { color: var(--text-leise); font-size: 12px; margin: 6px 0 0; }
+.hinweistext.warnung { color: var(--warnung); }

@@ -144,7 +144,7 @@ def test_secrets_stehen_nicht_im_html(app_client):
     client, fake = app_client
     _anmelden(client)
     for pfad in (
-        "/", "/kanaele", "/acl", "/nutzer", "/server", "/einrichten", "/audit",
+        "/", "/pult", "/kanaele", "/acl", "/nutzer", "/server", "/einrichten", "/audit",
         "/anleitung",
     ):
         antwort = client.get(pfad)
@@ -1326,3 +1326,270 @@ def test_anleitung_erklaert_die_stolpersteine(app_client):
     # Und das, was Mumble sich schlicht nicht merkt.
     for begriff in ("Fester Platz je Person", "Dauerhaftes Mithören", "Priority Speaker"):
         assert begriff in text, f"{begriff} fehlt in der Anleitung"
+
+
+
+# --------------------------------------------------------------------------- #
+#  Pult
+# --------------------------------------------------------------------------- #
+
+
+def _kanal_id(client, name):
+    daten = client.get("/api/pult").json()
+    treffer = [k for k in daten["kanaele"] if k["name"] == name]
+    assert treffer, f"Platz {name!r} nicht gefunden"
+    return treffer[0]["id"]
+
+
+def _person_anlegen(client, name="kam-pult"):
+    antwort = client.post(
+        "/api/registered",
+        json={"name": name, "cert_hash": "c" * 40},
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    assert antwort.status_code == 200, antwort.text
+    return antwort.json()["userid"]
+
+
+def _schreibe(client, methode, pfad, koerper=None):
+    return getattr(client, methode)(
+        pfad,
+        json=koerper if koerper is not None else {},
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+
+
+def test_pult_liefert_plaetze_rollen_und_rechte(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    daten = client.get("/api/pult").json()
+
+    namen = [k["name"] for k in daten["kanaele"]]
+    assert "Regie" in namen
+    rollen = {r["name"] for r in daten["rollen"]}
+    assert {"all", "auth", "regie"} <= rollen
+
+    # Die eingebauten Gruppen sind als solche gekennzeichnet -- sie lassen sich
+    # nicht besetzen, und die Oberflaeche muss das wissen.
+    eingebaut = {r["name"] for r in daten["rollen"] if r["eingebaut"]}
+    assert eingebaut == {"all", "auth"}
+
+    regie = _kanal_id(client, "Regie")
+    zelle = daten["rechte"][str(regie)]["regie"]
+    assert zelle["wirkung"]["sprechen"] is True
+    assert set(zelle["eigen"]) == {
+        "betreten", "sprechen", "hoeren", "reinschalten", "schreiben"
+    }
+
+
+def test_recht_setzen_meldet_die_wirkung_nicht_die_absicht(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+
+    antwort = _schreibe(
+        client, "put", "/api/pult/recht",
+        {"kanal": regie, "rolle": "kamera", "recht": "sprechen", "wert": "erlaubt"},
+    )
+    assert antwort.status_code == 200, antwort.text
+    daten = antwort.json()
+    # Eigen und Wirkung kommen beide aus einem frischen Lesen des Servers.
+    assert daten["eigen"]["sprechen"] == "erlaubt"
+    assert daten["wirkung"]["sprechen"] is True
+
+    frisch = client.get("/api/pult").json()
+    assert frisch["rechte"][str(regie)]["kamera"]["wirkung"]["sprechen"] is True
+
+
+def test_recht_verbieten_wirkt_auch_wenn_es_vorher_erlaubt_war(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+
+    antwort = _schreibe(
+        client, "put", "/api/pult/recht",
+        {"kanal": regie, "rolle": "regie", "recht": "sprechen", "wert": "verboten"},
+    )
+    assert antwort.status_code == 200, antwort.text
+    assert antwort.json()["wirkung"]["sprechen"] is False
+
+
+def test_recht_auf_offen_raeumt_den_eintrag_weg(app_client):
+    """Ein Eintrag, der nichts erlaubt und nichts verbietet, bliebe als Leiche."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+
+    _schreibe(
+        client, "put", "/api/pult/recht",
+        {"kanal": regie, "rolle": "kamera", "recht": "sprechen", "wert": "verboten"},
+    )
+    mit = client.get("/api/pult").json()["rechte"][str(regie)]["kamera"]["eigen"]
+    assert mit["sprechen"] == "verboten"
+
+    _schreibe(
+        client, "put", "/api/pult/recht",
+        {"kanal": regie, "rolle": "kamera", "recht": "sprechen", "wert": "offen"},
+    )
+    ohne = client.get(f"/api/channels/{regie}/acl").json()
+    eigene = [a for a in ohne["acls"] if not a["inherited"] and a["group"] == "kamera"]
+    assert not eigene, "der leere Eintrag muss verschwinden"
+
+
+def test_eingebaute_rolle_laesst_sich_nicht_besetzen(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    userid = _person_anlegen(client)
+    antwort = _schreibe(
+        client, "put", "/api/pult/rolle", {"userid": userid, "rolle": "auth", "drin": True}
+    )
+    assert antwort.status_code == 400
+    assert "eingebaute" in antwort.json()["detail"]
+
+
+def test_rolle_zuweisen_und_wieder_wegnehmen(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    userid = _person_anlegen(client)
+
+    _schreibe(
+        client, "put", "/api/pult/rolle",
+        {"userid": userid, "rolle": "kamera", "drin": True},
+    )
+    person = next(
+        p for p in client.get("/api/pult").json()["personen"] if p["userid"] == userid
+    )
+    assert "kamera" in person["rollen"]
+
+    _schreibe(
+        client, "put", "/api/pult/rolle",
+        {"userid": userid, "rolle": "kamera", "drin": False},
+    )
+    person = next(
+        p for p in client.get("/api/pult").json()["personen"] if p["userid"] == userid
+    )
+    assert "kamera" not in person["rollen"]
+
+
+def test_platz_ohne_verbindung_wird_ehrlich_abgelehnt(app_client):
+    """Niemand online: verschieben geht nicht, und das muss dastehen."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    userid = _person_anlegen(client)
+
+    antwort = _schreibe(
+        client, "post", "/api/pult/platz",
+        {"userid": userid, "kanal": regie, "merken": False},
+    )
+    assert antwort.status_code == 409
+    assert "nicht verbunden" in antwort.json()["detail"]
+
+
+def test_fester_platz_wird_als_pfad_gemerkt(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    userid = _person_anlegen(client)
+
+    antwort = _schreibe(
+        client, "post", "/api/pult/platz",
+        {"userid": userid, "kanal": regie, "merken": True},
+    )
+    assert antwort.status_code == 200, antwort.text
+    assert antwort.json()["pfad"] == "Intercom/Regie"
+
+    wunsch = client.get("/api/pult/wunsch").json()["wunsch"]
+    eintrag = wunsch["platz"][str(userid)][0]
+    assert eintrag["pfad"] == "Intercom/Regie"
+    assert eintrag["kanal"] == regie
+
+
+def test_umbenennen_zieht_den_festen_platz_mit(app_client):
+    """Sonst zeigte der gemerkte Pfad ins Leere -- und die Anzeige luege."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    userid = _person_anlegen(client)
+    _schreibe(
+        client, "post", "/api/pult/platz",
+        {"userid": userid, "kanal": regie, "merken": True},
+    )
+
+    umbenannt = _schreibe(
+        client, "patch", f"/api/channels/{regie}", {"name": "Leitstand"}
+    )
+    assert umbenannt.status_code == 200, umbenannt.text
+
+    wunsch = client.get("/api/pult/wunsch").json()["wunsch"]
+    eintrag = wunsch["platz"][str(userid)][0]
+    assert eintrag["pfad"] == "Intercom/Leitstand"
+    assert eintrag["kanal"] == regie, "der Pfad muss wieder aufloesbar sein"
+
+
+def test_abmelden_einer_person_loescht_ihren_wunsch(app_client):
+    """murmur vergibt Nutzer-IDs weiter -- ein Rest erbte die naechste Person."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    userid = _person_anlegen(client)
+    _schreibe(
+        client, "post", "/api/pult/platz",
+        {"userid": userid, "kanal": regie, "merken": True},
+    )
+
+    geloescht = client.delete(
+        f"/api/registered/{userid}", headers={"X-CSRF-Token": _csrf(client)}
+    )
+    assert geloescht.status_code == 200, geloescht.text
+    wunsch = client.get("/api/pult/wunsch").json()["wunsch"]
+    assert str(userid) not in wunsch["platz"]
+
+
+def test_zelle_mit_mehreren_eintraegen_wird_gesperrt(app_client):
+    """Welcher Eintrag gewinnt, haengt an der Reihenfolge.
+
+    Ein Raster mit drei Zustaenden je Zelle kann das nicht abbilden. Statt zu
+    raten sperrt die Zelle und verweist auf die Expertensicht.
+    """
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+
+    vorhandene = client.get(f"/api/channels/{regie}/acl").json()
+    eigene = [
+        {
+            "apply_here": a["apply_here"],
+            "apply_subs": a["apply_subs"],
+            "allow": a["allow_names"],
+            "deny": a["deny_names"],
+            "group": a["group"],
+            "userid": a["userid"],
+        }
+        for a in vorhandene["acls"]
+        if not a["inherited"]
+    ]
+    # Zweimal dieselbe Gruppe, gegenlaeufig.
+    eigene.append(
+        {"apply_here": True, "apply_subs": True, "allow": [], "deny": ["Speak"],
+         "group": "kamera", "userid": -1}
+    )
+    eigene.append(
+        {"apply_here": True, "apply_subs": True, "allow": ["Speak"], "deny": [],
+         "group": "kamera", "userid": -1}
+    )
+    gespeichert = _schreibe(
+        client, "put", f"/api/channels/{regie}/acl",
+        {"inherit": vorhandene["inherit"], "acls": eigene, "groups": []},
+    )
+    assert gespeichert.status_code == 200, gespeichert.text
+
+    zelle = client.get("/api/pult").json()["rechte"][str(regie)]["kamera"]
+    assert zelle["bearbeitbar"] is False
+    assert "Reihenfolge" in zelle["grund"]
+
+    abgelehnt = _schreibe(
+        client, "put", "/api/pult/recht",
+        {"kanal": regie, "rolle": "kamera", "recht": "sprechen", "wert": "erlaubt"},
+    )
+    assert abgelehnt.status_code == 409

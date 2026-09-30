@@ -227,6 +227,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return render
 
     app.get("/", response_class=HTMLResponse)(page("cockpit.html", "Cockpit"))
+    app.get("/pult", response_class=HTMLResponse)(page("pult.html", "Pult"))
     app.get("/kanaele", response_class=HTMLResponse)(page("kanaele.html", "Kanaele"))
     app.get("/acl", response_class=HTMLResponse)(page("acl.html", "ACL-Editor"))
     app.get("/nutzer", response_class=HTMLResponse)(page("nutzer.html", "Nutzer"))

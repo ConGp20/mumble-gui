@@ -8,7 +8,10 @@
   <script src="/static/vendor/htmx.min.js" defer></script>
   <script src="/static/app.js"></script>
   <script src="/static/vendor/alpine.min.js" defer></script>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>%F0%9F%8E%99</text></svg>">
+  {# Spitze Klammern muessen im Daten-URI kodiert sein. Unkodiert verwirft
+     Chromium das Bild und fragt /favicon.ico an -- das gibt es nicht, und jede
+     Seite endete mit einem 404 in der Konsole. #}
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='14'%3E%F0%9F%8E%99%3C/text%3E%3C/svg%3E">
 </head>
 <body data-csrf="{{ csrf }}"
       data-alert-ping="{{ settings.alert_ping_ms }}"
@@ -18,6 +21,7 @@
   <div class="marke">Stadion-Intercom <span>· Administration</span></div>
   <nav class="navigation">
     <a href="/"             class="{{ 'aktiv' if seite == 'cockpit' }}">Cockpit</a>
+    <a href="/pult"         class="{{ 'aktiv' if seite == 'pult' }}">Pult</a>
     <a href="/kanaele"      class="{{ 'aktiv' if seite == 'kanaele' }}">Kanaele</a>
     <a href="/acl"          class="{{ 'aktiv' if seite == 'acl' }}">ACL</a>
     <a href="/nutzer"       class="{{ 'aktiv' if seite == 'nutzer' }}">Nutzer</a>
