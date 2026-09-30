@@ -143,7 +143,10 @@ def test_secrets_stehen_nicht_im_html(app_client):
     """Das Ice-Secret darf nirgends im Frontend landen."""
     client, fake = app_client
     _anmelden(client)
-    for pfad in ("/", "/kanaele", "/acl", "/nutzer", "/server", "/einrichten", "/audit"):
+    for pfad in (
+        "/", "/kanaele", "/acl", "/nutzer", "/server", "/einrichten", "/audit",
+        "/anleitung",
+    ):
         antwort = client.get(pfad)
         # Erst pruefen, DASS die Seite da ist. Ohne das lief dieser Test
         # stillschweigend ins Leere, als eine Seite umbenannt wurde: eine
@@ -1300,3 +1303,26 @@ def test_sicherung_raeumt_ohne_haken_nichts_weg(app_client):
         headers={"X-CSRF-Token": csrf},
     )
     assert "Spaeter angelegt" in {k.name for k in fake.server.channels.values()}
+
+
+def test_anleitung_erklaert_die_stolpersteine(app_client):
+    """Die Anleitung muss die drei Dinge nennen, an denen man haengenbleibt.
+
+    Nicht aus Vollstaendigkeitsdrang: das sind genau die Punkte, an denen
+    Mumble sich anders verhaelt, als man erwartet -- und ohne die steht man
+    vor einer Oberflaeche, die nichts falsch macht und trotzdem nicht tut,
+    was man wollte.
+    """
+    client, _ = app_client
+    _anmelden(client)
+    text = client.get("/anleitung").text
+
+    # Rechte haengen am Kanal, nicht an der Person.
+    assert "Rechte hängen am Platz" in text
+    # Vererbung, und dass der letzte Eintrag gewinnt.
+    assert "der letzte Eintrag" in text and "gewinnt" in text
+    # Registrierung braucht eine Verbindung, weil es ums Zertifikat geht.
+    assert "Zertifikat" in text
+    # Und das, was Mumble sich schlicht nicht merkt.
+    for begriff in ("Fester Platz je Person", "Dauerhaftes Mithören", "Priority Speaker"):
+        assert begriff in text, f"{begriff} fehlt in der Anleitung"

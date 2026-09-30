@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div class="raster" style="grid-template-columns:1fr; max-width:900px">
+
+  <div class="karte">
+    <header>Worum es geht</header>
+    <div class="inhalt">
+      <p>
+        Mumble ist eigentlich für Spieleabende gebaut, nicht für Veranstaltungen.
+        Deshalb heißen die Dinge dort anders als in einer Intercom, und ein paar
+        Begriffe sind schlicht im Weg. Hier steht, was was ist – in der Sprache,
+        in der man vor Ort denkt.
+      </p>
+      <table class="dicht">
+        <thead><tr><th>In der Intercom</th><th>Heißt bei Mumble</th><th>Kurz gesagt</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Platz</strong> (Kampfgericht 3, Zeitmessung …)</td>
+              <td>Kanal</td>
+              <td>Ein Raum. Wer drin sitzt, hört die anderen darin.</td></tr>
+          <tr><td><strong>Rolle</strong> (Technik, Leitung …)</td>
+              <td>Gruppe</td>
+              <td>Eine Schublade voller Leute. Rechte vergibt man an die Rolle, nicht an Personen.</td></tr>
+          <tr><td><strong>Person</strong></td>
+              <td>Registrierter Nutzer</td>
+              <td>Jemand, den der Server wiedererkennt – am Zertifikat, nicht am Namen.</td></tr>
+          <tr><td><strong>Recht</strong></td>
+              <td>ACL-Eintrag</td>
+              <td>Wer darf an diesem Platz was: sprechen, zuhören, schreiben, hinein.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="karte">
+    <header>Die drei Sachen, die man verstanden haben muss</header>
+    <div class="inhalt">
+
+      <h3>1. Rechte hängen am Platz, nicht an der Person</h3>
+      <p>
+        Man sagt nicht „Anna darf sprechen“, sondern „<em>an diesem Platz</em> darf
+        die Rolle <em>Technik</em> sprechen“ – und Anna ist in der Rolle Technik.
+        Das klingt umständlich, spart aber die ganze Arbeit: kommt jemand neu
+        dazu, steckt man ihn in die Rolle und fertig. Man muss nicht elf Plätze
+        durchgehen.
+      </p>
+
+      <h3>2. Rechte fließen von oben nach unten</h3>
+      <p>
+        Plätze können ineinander liegen. Ein Recht, das weiter oben vergeben
+        wird, gilt auch weiter unten – solange es unten niemand ausdrücklich
+        wieder wegnimmt. Deshalb gibt es Ordner wie „Kampfgerichte“: dort setzt
+        man einmal, was für alle acht gelten soll.
+      </p>
+      <div class="hinweis">
+        Gelesen wird von oben nach unten, und <strong>der letzte Eintrag
+        gewinnt</strong>. Ein Verbot weiter unten sticht eine Erlaubnis weiter
+        oben. Wenn also etwas nicht geht, obwohl es erlaubt aussieht: weiter
+        unten schauen.
+      </div>
+
+      <h3>3. Registrieren geht erst, wenn jemand verbunden ist</h3>
+      <p>
+        Der Server erkennt Leute am <strong>Zertifikat</strong>, das ihr
+        Mumble-Programm beim ersten Verbinden mitbringt – nicht am Namen. Ein
+        Name lässt sich abtippen, ein Zertifikat nicht. Deshalb:
+        erst verbinden lassen, dann unter <em>Nutzer</em> auf
+        <em>Registrieren</em>, dann in eine Rolle stecken.
+      </p>
+      <div class="hinweis">
+        Solange jemand nicht registriert ist, kann er in keiner Rolle sein – und
+        bekommt damit nur die Rechte, die für alle gelten.
+      </div>
+    </div>
+  </div>
+
+  <div class="karte">
+    <header>Was man vergeben kann</header>
+    <div class="inhalt">
+      <table class="dicht">
+        <thead><tr><th>Recht</th><th>Was es erlaubt</th><th>Wofür man es braucht</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Betreten</strong></td>
+              <td>Den Platz überhaupt betreten.</td>
+              <td>Ohne das sieht man den Platz, kommt aber nicht rein.</td></tr>
+          <tr><td><strong>Sprechen</strong></td>
+              <td>Reden, wenn man auf dem Platz sitzt.</td>
+              <td>Der Normalfall für alle, die dort arbeiten.</td></tr>
+          <tr><td><strong>Zuhören</strong></td>
+              <td>Den Platz hören, <em>ohne</em> drin zu sitzen.</td>
+              <td>Technik hört überall mit, sitzt aber nur an einer Stelle.</td></tr>
+          <tr><td><strong>Reinschalten</strong></td>
+              <td>Kurz in einen fremden Platz sprechen (Whisper).</td>
+              <td>Die Regie schaltet auf Kamera 2, ohne umzuziehen.</td></tr>
+          <tr><td><strong>Schreiben</strong></td>
+              <td>Textnachrichten in den Platz schicken.</td>
+              <td>Startlisten, Korrekturen, alles was man nachlesen will.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="karte">
+    <header>Was Mumble sich <em>nicht</em> merkt</header>
+    <div class="inhalt">
+      <p>
+        Drei Dinge kann Mumble nicht dauerhaft speichern. Das ist keine
+        Einstellung, die man suchen müsste – es gibt schlicht kein Feld dafür.
+        Diese Oberfläche merkt sie sich deshalb selbst und stellt sie wieder her,
+        sobald sich jemand verbindet.
+      </p>
+      <table class="dicht">
+        <thead><tr><th>Was</th><th>Warum nicht</th><th>Wie es hier trotzdem geht</th></tr></thead>
+        <tbody>
+          <tr><td>Fester Platz je Person</td>
+              <td>Ein registrierter Nutzer hat in Mumble kein Kanalfeld.</td>
+              <td>Wird hier gemerkt und beim Verbinden gesetzt.</td></tr>
+          <tr><td>Dauerhaftes Mithören</td>
+              <td>Hängt an der Sitzung, nicht am Nutzer – nach dem Trennen weg.</td>
+              <td>Wird nach jedem Verbinden neu gesetzt.</td></tr>
+          <tr><td>Priority Speaker</td>
+              <td>Ist Zustand einer Sitzung, kein Recht.</td>
+              <td>Desgleichen.</td></tr>
+        </tbody>
+      </table>
+      <div class="hinweis">
+        Praktische Folge: zwischen „getrennt“ und „wieder da“ vergehen ein paar
+        Sekunden, bis das wieder steht. Wenn direkt nach einem Reconnect etwas
+        fehlt – kurz warten, es kommt von selbst.
+      </div>
+    </div>
+  </div>
+
+  <div class="karte">
+    <header>Wo fange ich an?</header>
+    <div class="inhalt">
+      <ol class="feldliste">
+        <li><strong>Einrichten</strong> → einen Baukasten anwenden. Legt die Plätze und Rollen an.</li>
+        <li>Alle einmal verbinden lassen (Mumble-Programm, Serveradresse, Name).</li>
+        <li><strong>Nutzer</strong> → jeden registrieren und in seine Rolle stecken.</li>
+        <li><strong>Kanäle</strong> → Plätze umbenennen, verschieben, ergänzen.</li>
+        <li><strong>Einrichten</strong> → Sicherung herunterladen, wenn es passt. Das ist dein Netz.</li>
+      </ol>
+      <p class="leise">
+        Alles, was hier angelegt wird, steht im Server und bleibt dort. Es gibt
+        keine Datei, die beim nächsten Start etwas zurücksetzt.
+      </p>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

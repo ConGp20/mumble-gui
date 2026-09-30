@@ -189,11 +189,6 @@ class Settings:
         data_dir = Path(os.environ.get("DATA_DIR", "/data"))
         slice_dir = Path(os.environ.get("SLICE_DIR", "/opt/intercom/slice"))
         config_path = Path(_str("INTERCOM_CONFIG", "/config/intercom.yaml"))
-        if not config_path.exists():
-            warnings.append(
-                f"{config_path} nicht gefunden. Provisioning ist deaktiviert, "
-                "das Cockpit funktioniert trotzdem."
-            )
 
         monitor_password = os.environ.get("MONITOR_BOT_PASSWORD", "").strip() or None
 

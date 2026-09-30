@@ -229,6 +229,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.get("/acl", response_class=HTMLResponse)(page("acl.html", "ACL-Editor"))
     app.get("/nutzer", response_class=HTMLResponse)(page("nutzer.html", "Nutzer"))
     app.get("/server", response_class=HTMLResponse)(page("server.html", "Server"))
+    app.get("/anleitung", response_class=HTMLResponse)(
+        page("anleitung.html", "Anleitung")
+    )
     app.get("/einrichten", response_class=HTMLResponse)(
         page("einrichten.html", "Einrichten")
     )
