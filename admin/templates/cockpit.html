@@ -14,54 +14,79 @@
 
   <!-- Kennzahlen ------------------------------------------------------- -->
   <div class="karte" style="margin-bottom:12px">
+    {# Die Zahlen, die im Betrieb zaehlen -- dicht, numerisch, auf einen Blick.
+       Was fruehstuecks hier stand und nichts sagte, ist raus: "Letztes
+       Provisioning" beschreibt eine Bauart, die es nicht mehr gibt, und der
+       lange rote Fehlertext des Monitor-Bots nahm eine ganze Kachel ein. Dafuer
+       stehen jetzt Ping und Verlust da -- die beiden Zahlen, wegen derer man
+       ueberhaupt auf ein Cockpit schaut. #}
     <div class="kennzahlen">
       <div class="kennzahl">
-        <div class="beschriftung">Server</div>
-        <div class="wert" x-text="health.ice?.server_version || '–'"></div>
-        <div class="zusatz" x-text="health.ice?.server_version_text || ''"></div>
-      </div>
-      <div class="kennzahl">
-        <div class="beschriftung">Laufzeit Server</div>
-        <div class="wert" x-text="I.fmtDauer(serverUptime)"></div>
-        <div class="zusatz">Admin: <span x-text="I.fmtDauer(health.uptime_s)"></span></div>
-      </div>
-      <div class="kennzahl">
-        <div class="beschriftung">Clients</div>
+        <div class="beschriftung">Verbunden</div>
         <div class="wert" x-text="counts.users ?? 0"></div>
-        <div class="zusatz"><span x-text="counts.speaking ?? 0"></span> senden gerade</div>
+        <div class="zusatz">
+          <span x-text="counts.speaking ?? 0"></span> senden ·
+          <span x-text="counts.registered ?? 0"></span> angemeldet
+        </div>
       </div>
-      <div class="kennzahl">
-        <div class="beschriftung">Kanaele</div>
-        <div class="wert" x-text="counts.channels ?? 0"></div>
+
+      <div class="kennzahl" :class="pingStufe">
+        <div class="beschriftung">Ping</div>
+        <div class="wert">
+          <span x-text="pingMedian === null ? '–' : I.fmtPing(pingMedian)"></span><small> ms</small>
+        </div>
+        <div class="zusatz">
+          Median · max <span x-text="pingMax === null ? '–' : I.fmtPing(pingMax)"></span> ms
+        </div>
       </div>
+
+      <div class="kennzahl" :class="verlustStufe">
+        <div class="beschriftung">Verlust</div>
+        <div class="wert">
+          <span x-text="verlustMax === null ? '–' : I.fmtPct(verlustMax)"></span><small> %</small>
+        </div>
+        <div class="zusatz" x-text="verlustMax === null ? 'nicht gemessen' : 'schlechtester Client'"></div>
+      </div>
+
       <div class="kennzahl">
         <div class="beschriftung">Bandbreite</div>
         <div class="wert" x-text="I.fmtBits(counts.bandwidth_bps || 0)"></div>
         <div class="zusatz">Summe aller Clients</div>
       </div>
+
       <div class="kennzahl">
-        <div class="beschriftung">Monitor-Bot</div>
+        <div class="beschriftung">Plätze</div>
+        <div class="wert" x-text="counts.channels ?? 0"></div>
+        <div class="zusatz"><span x-text="belegtePlaetze"></span> belegt</div>
+      </div>
+
+      <div class="kennzahl">
+        <div class="beschriftung">Server</div>
+        <div class="wert" style="font-size:17px" x-text="health.ice?.server_version || '–'"></div>
+        <div class="zusatz">seit <span x-text="I.fmtDauer(serverUptime)"></span></div>
+      </div>
+
+      <div class="kennzahl">
+        <div class="beschriftung">Messung</div>
         <div class="wert">
-          <span class="status" :class="health.monitor?.connected ? 'status-ok' : 'status-kritisch'"
-                x-text="health.monitor?.connected ? 'aktiv' : (health.monitor?.enabled ? 'getrennt' : 'aus')"></span>
+          <span class="status"
+                :class="health.monitor?.connected ? 'status-ok'
+                        : (health.monitor?.enabled ? 'status-warnung' : 'status-inaktiv')"
+                x-text="health.monitor?.connected ? 'läuft'
+                        : (health.monitor?.enabled ? 'getrennt' : 'aus')"></span>
         </div>
-        <div class="zusatz">
-          <template x-if="health.monitor?.ping_ms">
-            <span>eigener Ping <span x-text="I.fmtPing(health.monitor.ping_ms)"></span> ms</span>
+        <div class="zusatz" :title="health.monitor?.error || ''">
+          <template x-if="health.monitor?.connected">
+            <span>Bot-Ping <span x-text="I.fmtPing(health.monitor.ping_ms)"></span> ms</span>
           </template>
-          <template x-if="!health.monitor?.connected && health.monitor?.error">
-            <span class="fehlertext" x-text="health.monitor.error"></span>
+          <template x-if="!health.monitor?.connected">
+            <span x-text="health.monitor?.enabled ? 'kein Verlustwert' : 'MONITOR_ENABLED=false'"></span>
           </template>
         </div>
       </div>
+
       <div class="kennzahl">
-        <div class="beschriftung">Letztes Provisioning</div>
-        <div class="wert" style="font-size:13px"
-             x-text="health.provision?.last_at ? I.fmtZeit(health.provision.last_at) : 'nie'"></div>
-        <div class="zusatz" x-text="health.provision?.summary || 'noch nicht angewendet'"></div>
-      </div>
-      <div class="kennzahl">
-        <div class="beschriftung">Live-Verbindung</div>
+        <div class="beschriftung">Live</div>
         <div class="wert">
           <span class="status" :class="verbunden ? 'status-ok' : 'status-warnung'"
                 x-text="verbunden ? 'offen' : 'getrennt'"></span>
@@ -198,10 +223,10 @@
         <tbody>
           <template x-for="zeile in gefiltert" :key="zeile.session">
             <tr class="anklickbar" :data-stufe="zeile.alert"
-                :class="$root.gewaehlt === zeile.session ? 'gewaehlt' : ''"
-                @click="$root.zeigeDetail(zeile.session)">
+                :class="gewaehlt === zeile.session ? 'gewaehlt' : ''"
+                @click="zeigeDetail(zeile.session)">
               <template x-for="s in sichtbareSpalten" :key="s.key">
-                <td :class="s.zahl ? 'zahl' : ''" x-html="$root.zelle(zeile, s.key)"></td>
+                <td :class="s.zahl ? 'zahl' : ''" x-html="zelle(zeile, s.key)"></td>
               </template>
             </tr>
           </template>
@@ -232,7 +257,7 @@
             <select x-model="zielKanal">
               <option value="">Platz wählen …</option>
               <template x-for="k in flacheKanaele" :key="k.id">
-                <option :value="k.id" x-text="Intercom.platzname(k)"></option>
+                <option :value="k.id" x-text="Intercom.platzpfad(k)"></option>
               </template>
             </select>
             <button class="knopf" :disabled="!zielKanal"
@@ -309,7 +334,7 @@
             <dt>Version</dt>    <dd x-text="detail.user.version"></dd>
             <dt>Release</dt>    <dd x-text="detail.user.release"></dd>
             <dt>Betriebssystem</dt><dd x-text="detail.user.os + ' ' + detail.user.os_version"></dd>
-            <dt>Zustand</dt>    <dd x-html="$root.zelle(detail.user, 'zustand')"></dd>
+            <dt>Zustand</dt>    <dd x-html="zelle(detail.user, 'zustand')"></dd>
             <dt>Kommentar</dt>  <dd x-text="detail.user.comment || '–'"></dd>
             <dt>Identity</dt>   <dd x-text="detail.user.identity || '–'"></dd>
             <dt>Context</dt>    <dd x-text="detail.user.context || '–'"></dd>
@@ -367,6 +392,58 @@ function cockpit() {
     quelle: null,
     schwellePing: Number(document.body.dataset.alertPing || 80),
     schwelleVerlust: Number(document.body.dataset.alertLoss || 2),
+
+    /* --- Die Zahlen, wegen derer man auf ein Cockpit schaut ----------------
+       Ping und Verlust kommen aus den Clientzeilen, nicht aus einer eigenen
+       Abfrage -- sie stehen dort ohnehin, es hat sie nur nie jemand
+       zusammengezaehlt.
+
+       null heisst "nicht gemessen" und wird auch so angezeigt. Ohne
+       Monitor-Bot gibt es ueberhaupt keinen Verlustwert; als 0 dargestellt
+       waere das eine Entwarnung, die niemand gegeben hat. */
+    get pingWerte() {
+      return this.users
+        .map((z) => z.ping_ms)
+        .filter((w) => typeof w === "number" && w > 0)
+        .sort((a, b) => a - b);
+    },
+
+    get pingMedian() {
+      const w = this.pingWerte;
+      if (!w.length) { return null; }
+      const m = Math.floor(w.length / 2);
+      return w.length % 2 ? w[m] : (w[m - 1] + w[m]) / 2;
+    },
+
+    get pingMax() {
+      const w = this.pingWerte;
+      return w.length ? w[w.length - 1] : null;
+    },
+
+    get verlustMax() {
+      const w = this.users
+        .map((z) => z.loss_pct)
+        .filter((v) => typeof v === "number");
+      return w.length ? Math.max.apply(null, w) : null;
+    },
+
+    get belegtePlaetze() {
+      const besetzt = new Set();
+      this.users.forEach((z) => besetzt.add(z.channel_id));
+      return besetzt.size;
+    },
+
+    get pingStufe() {
+      const w = this.pingMax;
+      if (w === null) { return ""; }
+      return "stufe-" + I.stufe(w, this.schwellePing, this.schwellePing * 2);
+    },
+
+    get verlustStufe() {
+      const w = this.verlustMax;
+      if (w === null) { return ""; }
+      return "stufe-" + I.stufe(w, this.schwelleVerlust, this.schwelleVerlust * 3);
+    },
 
     spalten: [
       {key: "name",          label: "Name"},

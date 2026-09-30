@@ -741,3 +741,12 @@ select.zufuegen { font-size: 11px; padding: 2px 4px; max-width: 100%; }
 .platz .wer.verbunden .rolle-marke {
   border-color: var(--akzent); background: var(--akzent-bg); color: var(--akzent);
 }
+
+/* Kennzahlen mit Stufe: die Zahl selbst faerbt sich, wenn es eng wird. Die
+   linke Kante traegt die Aussage zusaetzlich -- Farbe allein reicht nicht,
+   und der Techniker steht im Zweifel bei Sonne auf der Tribuene. */
+.kennzahl.stufe-warnung  { box-shadow: inset 3px 0 0 var(--warnung); }
+.kennzahl.stufe-kritisch { box-shadow: inset 3px 0 0 var(--kritisch); }
+.kennzahl.stufe-warnung  .wert { color: var(--warnung); }
+.kennzahl.stufe-kritisch .wert { color: var(--kritisch); }
+.kennzahl .wert small { font-size: 11px; color: var(--text-still); font-weight: 400; }

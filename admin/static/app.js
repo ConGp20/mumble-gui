@@ -333,11 +333,26 @@
        Begruendung steht in intercom/woerter.py. */
     UEBERALL: "Überall",
 
-    /* Anzeigename eines Platzes. Der oberste heisst immer "Ueberall": murmur
-       traegt dort je nach Alter des Servers "Root" oder gar nichts ein. */
+    /* Zwei Sichten auf denselben Platz, und sie duerfen nicht verwechselt
+       werden: im Baum sagt die Einrueckung schon, wo er haengt -- dort ist der
+       blosse Name richtig. In einer Auswahlliste steht er ohne Zusammenhang,
+       und es gibt acht Plaetze namens "Kampfgericht n" -- dort braucht es den
+       vollen Pfad.
+
+       Der oberste heisst in beiden Faellen "Ueberall": murmur traegt dort je
+       nach Alter des Servers "Root" oder gar nichts ein, und beides ist vor
+       Ort keine Auskunft. */
+    istOberster: function (knoten) {
+      return !knoten || knoten.id === 0 || knoten.parent === -1;
+    },
+
     platzname: function (knoten) {
-      if (!knoten) { return "Überall"; }
-      if (knoten.id === 0 || knoten.parent === -1) { return "Überall"; }
+      if (Intercom.istOberster(knoten)) { return "Überall"; }
+      return knoten.name || knoten.path || "Überall";
+    },
+
+    platzpfad: function (knoten) {
+      if (Intercom.istOberster(knoten)) { return "Überall"; }
       return knoten.path || knoten.name || "Überall";
     },
     fmtZahl: fmtZahl,

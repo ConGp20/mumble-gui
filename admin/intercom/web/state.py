@@ -567,5 +567,10 @@ class LiveState:
                 "channels": len(self.channels),
                 "bandwidth_bps": sum(u.bytes_per_sec for u in self.users.values()) * 8,
                 "speaking": sum(1 for u in self.users.values() if u.bytes_per_sec > 0),
+                # Wie viele der Verbundenen sind Personen, die der Server
+                # wiedererkennt? Der Rest sind Gaeste und bekommt nur, was fuer
+                # alle gilt -- im Betrieb ist das der haeufigste Grund dafuer,
+                # dass jemand nicht senden darf.
+                "registered": sum(1 for u in self.users.values() if u.registered),
             },
         }

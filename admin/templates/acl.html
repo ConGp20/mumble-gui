@@ -15,7 +15,7 @@
     <label>Kanal
       <select x-model="kanalId" @change="ladeAcl()" style="min-width:280px">
         <template x-for="k in flach" :key="k.id">
-          <option :value="k.id" x-text="Intercom.platzname(k)"></option>
+          <option :value="k.id" x-text="Intercom.platzpfad(k)"></option>
         </template>
       </select>
     </label>

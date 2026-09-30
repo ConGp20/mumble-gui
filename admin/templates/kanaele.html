@@ -18,7 +18,7 @@
     <input type="text" x-model="neuName" placeholder="Name des neuen Platzes" style="min-width:200px">
     <select x-model="neuEltern">
       <template x-for="k in flach" :key="k.id">
-        <option :value="k.id" x-text="Intercom.platzname(k)"></option>
+        <option :value="k.id" x-text="Intercom.platzpfad(k)"></option>
       </template>
     </select>
     <button class="knopf haupt" :disabled="!neuName.trim()" @click="anlegen()">Anlegen</button>
@@ -49,7 +49,7 @@
         <template x-if="gewaehlt">
           <div>
             <dl class="feldliste" style="margin-bottom:10px">
-              <dt>Pfad</dt><dd x-text="Intercom.platzname(gewaehlt)"></dd>
+              <dt>Pfad</dt><dd x-text="Intercom.platzpfad(gewaehlt)"></dd>
               <dt>ID</dt><dd x-text="gewaehlt.id"></dd>
               <dt>Gerade da</dt><dd x-text="gewaehlt.total_users"></dd>
             </dl>
@@ -65,7 +65,7 @@
             <label>Elternkanal
               <select x-model="form.parent" style="width:100%">
                 <template x-for="k in flach" :key="k.id">
-                  <option :value="k.id" x-text="Intercom.platzname(k)"
+                  <option :value="k.id" x-text="Intercom.platzpfad(k)"
                           :disabled="istNachfahre(k.id)"></option>
                 </template>
               </select>
@@ -73,7 +73,7 @@
             <label>Verlinkt mit
               <select x-model="form.links" multiple size="5" style="width:100%">
                 <template x-for="k in flach" :key="k.id">
-                  <option :value="String(k.id)" x-text="Intercom.platzname(k)"
+                  <option :value="String(k.id)" x-text="Intercom.platzpfad(k)"
                           x-show="k.id !== gewaehlt.id"></option>
                 </template>
               </select>
