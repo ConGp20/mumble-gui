@@ -80,9 +80,6 @@ services:
     container_name: mumble-admin
     restart: unless-stopped
     network_mode: host
-    # Das GUI wird nur mit `--profile gui` gestartet, damit `setup.sh` zuerst
-    # den Server hochfahren und dessen Version auslesen kann.
-    profiles: ["gui"]
     depends_on:
       mumble-server:
         condition: service_healthy

@@ -327,13 +327,13 @@ titel "Admin-GUI bauen und starten"
 # Erst versuchen, das fertige Image zu ziehen -- es wird von GitHub fuer
 # x86-64 und arm64 gebaut. Nur wenn das nicht klappt (eigene Abspaltung ohne
 # Registry, kein Internet, geaenderter Quelltext), wird selbst gebaut.
-if ${COMPOSE} --profile gui pull mumble-admin > /dev/null 2>&1; then
+if ${COMPOSE} pull mumble-admin > /dev/null 2>&1; then
   ok "Fertiges Image geladen – es muss nichts gebaut werden"
-  ${COMPOSE} --profile gui up -d
+  ${COMPOSE} up -d
 else
   info "Kein fertiges Image verfügbar – es wird lokal gebaut."
   info "Das dauert beim ersten Mal ein paar Minuten."
-  ${COMPOSE} --profile gui up -d --build
+  ${COMPOSE} up -d --build
 fi
 ok "mumble-admin gestartet"
 
@@ -420,8 +420,15 @@ printf '               dann. LISTEN_HOST in der .env auf die Netzkarte des\n'
 printf '               Stadionnetzes setzen, nicht 0.0.0.0 stehen lassen, wenn\n'
 printf '               der Rechner noch woanders hängt.\n'
 printf '\n'
-printf '    Weiter:    %s exec mumble-admin intercom status\n' "${COMPOSE}"
-printf '               %s logs -f mumble-admin\n' "${COMPOSE}"
+printf '    %sIm Betrieb%s\n' "${C_FETT}" "${C_AUS}"
+printf '      Status      %s ps\n' "${COMPOSE}"
+printf '      Protokoll   %s logs -f mumble-admin\n' "${COMPOSE}"
+printf '      Selbsttest  %s exec mumble-admin intercom status\n' "${COMPOSE}"
+printf '      Anhalten    %s stop        (Daten bleiben, startet mit up -d)\n' "${COMPOSE}"
+printf '      Beenden     %s down        (Container weg, Daten bleiben)\n' "${COMPOSE}"
+printf '\n'
+printf '      Alle Befehle aus diesem Verzeichnis (%s) ausfuehren –\n' "$(pwd)"
+printf '      Compose findet die docker-compose.yml sonst nicht.\n'
 printf '\n'
 
 if [ "${PROBLEME}" -gt 0 ]; then
