@@ -32,10 +32,74 @@ mumble-server geprueft auf x86-64 und arm64**. Das Betriebssystem des Hosts
 spielt keine Rolle (Ubuntu, Debian, Raspberry Pi OS): der Container bringt sein
 eigenes mit.
 
-```bash
-sudo apt install -y docker.io docker-compose-v2 git
-sudo usermod -aG docker "$USER"     # danach ab- und wieder anmelden
+### Docker aus der offiziellen Quelle
 
+Bewusst **nicht** `apt install docker.io`. Nachgemessen auf Ubuntu 24.04 und
+22.04 (Stand September 2026):
+
+| | offizielle Quelle | Ubuntu-Paket |
+|---|---|---|
+| Engine | `docker-ce` 29.8.1 | `docker.io` 29.1.3 |
+| Compose | `docker-compose-plugin` **5.5.1** | `docker-compose-v2` **2.40.3** |
+| buildx | `docker-buildx-plugin` 0.37.1 | `docker-buildx` 0.30.1 |
+
+Die Engine selbst ist nah dran — der Abstand bei Compose ist dagegen ein
+Hauptversionssprung. Dazu kommt das Praktische: `apt install docker.io` allein
+gibt weder `docker compose` noch `docker buildx`, beides sind getrennte Pakete,
+die man einzeln kennen und nachziehen muss. Und Docker nennt `docker.io` in
+seiner eigenen Anleitung unter den Paketen, die vor der Installation weg
+muessen -- beides nebeneinander geht nicht.
+
+Die folgenden Befehle sind nicht abgeschrieben, sondern in einem frischen
+`ubuntu:24.04` durchlaufen: Ergebnis Docker 29.8.1, Compose v5.5.1,
+buildx 0.37.1.
+
+```bash
+# Falls eine Distributionsfassung im Weg liegt (auf fertigen Pi-Abbildern oft):
+sudo apt remove -y docker.io docker-compose docker-compose-v2 docker-doc \
+                   podman-docker containerd runc
+
+# Schluessel und Paketquelle von Docker eintragen:
+sudo apt update
+sudo apt install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+     -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources > /dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io \
+                    docker-buildx-plugin docker-compose-plugin
+
+sudo usermod -aG docker "$USER"     # danach ab- und wieder anmelden
+```
+
+> **Auf Raspberry Pi OS oder Debian** statt Ubuntu: in den beiden Zeilen mit
+> `download.docker.com` das `ubuntu` durch `debian` ersetzen, und bei `Suites:`
+> genuegt `$VERSION_CODENAME`. Sonst ist alles gleich.
+>
+> Die Paketquelle liefert `arm64` und `amd64` — derselbe Befehlssatz auf Pi wie
+> auf dem Zima Board.
+
+Zum Pruefen, bevor es weitergeht:
+
+```bash
+docker run --rm hello-world
+docker compose version
+```
+
+### Einrichten
+
+```bash
 git clone <dieses-repo> ~/stadion-intercom
 cd ~/stadion-intercom
 ./setup.sh

@@ -81,7 +81,16 @@ frage() {
 # =============================================================================
 titel "Docker pruefen"
 
-command -v docker > /dev/null 2>&1 || abbruch "docker ist nicht installiert."
+if ! command -v docker > /dev/null 2>&1; then
+  fehler "docker ist nicht installiert."
+  info "Aus der offiziellen Quelle einrichten, nicht ueber docker.io: das"
+  info "Paket der Distribution bringt weder 'docker compose' noch"
+  info "'docker buildx' mit, und Docker nennt es unter den Paketen, die vor"
+  info "der eigenen Installation weg muessen. Die Schritte stehen im README"
+  info "unter \"Docker aus der offiziellen Quelle\"; kurz:"
+  info "  https://docs.docker.com/engine/install/ubuntu/"
+  abbruch "Ohne Docker geht es nicht weiter."
+fi
 
 COMPOSE=""
 if docker compose version > /dev/null 2>&1; then
@@ -90,6 +99,8 @@ if docker compose version > /dev/null 2>&1; then
 elif command -v docker-compose > /dev/null 2>&1; then
   COMPOSE="docker-compose"
   warnung "Nur docker-compose (v1) gefunden. Es sollte gehen, v2 ist aber empfohlen."
+  info "v1 wird seit 2023 nicht mehr gepflegt. Das Paket docker-compose-plugin"
+  info "aus der offiziellen Docker-Quelle bringt v2 mit -- siehe README."
 else
   abbruch "Weder 'docker compose' noch 'docker-compose' gefunden."
 fi
