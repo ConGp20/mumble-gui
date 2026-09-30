@@ -422,6 +422,7 @@ class AppContext:
                 self.enforcer.load(desired, channels)
             if self.store is not None:
                 self.enforcer.lade_wuensche(self.store.alle_wuensche(), channels)
+                self.enforcer.lade_verbindungen(self.store.verbindungen(), channels)
             await self.ice.run(self.enforcer.refresh_membership)
         except IceError as exc:
             log.warning("Laufzeit-Abgleich nicht scharf: %s", exc)

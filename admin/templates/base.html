@@ -19,16 +19,38 @@
 
 <header class="kopf">
   <div class="marke">Stadion-Intercom <span>· Administration</span></div>
+  {# Drei Gruppen statt neun gleichwertiger Woerter: was man im Betrieb
+     braucht, was man beim Aufbauen braucht, und die Fachsicht fuer die
+     Faelle, die das einfache Raster nicht abbildet. Die Titel sagen, was
+     dahintersteckt -- "ACL" allein sagt niemandem etwas. #}
   <nav class="navigation">
-    <a href="/"             class="{{ 'aktiv' if seite == 'cockpit' }}">Cockpit</a>
-    <a href="/pult"         class="{{ 'aktiv' if seite == 'pult' }}">Pult</a>
-    <a href="/kanaele"      class="{{ 'aktiv' if seite == 'kanaele' }}">Kanaele</a>
-    <a href="/acl"          class="{{ 'aktiv' if seite == 'acl' }}">ACL</a>
-    <a href="/nutzer"       class="{{ 'aktiv' if seite == 'nutzer' }}">Nutzer</a>
-    <a href="/server"       class="{{ 'aktiv' if seite == 'server' }}">Server</a>
-    <a href="/einrichten"   class="{{ 'aktiv' if seite == 'einrichten' }}">Einrichten</a>
-    <a href="/audit"        class="{{ 'aktiv' if seite == 'audit' }}">Audit</a>
-    <a href="/anleitung"    class="{{ 'aktiv' if seite == 'anleitung' }}">Anleitung</a>
+    <span class="gruppe">Betrieb</span>
+    <a href="/"             class="{{ 'aktiv' if seite == 'cockpit' }}"
+       title="Wer ist verbunden, wie ist die Leitung, was alarmiert">Cockpit</a>
+
+    <span class="trenner"></span>
+    <span class="gruppe">Aufbauen</span>
+    <a href="/pult"         class="{{ 'aktiv' if seite == 'pult' }}"
+       title="Personen in Rollen und auf Plaetze ziehen, Rechte verteilen">Pult</a>
+    <a href="/nutzer"       class="{{ 'aktiv' if seite == 'nutzer' }}"
+       title="Wen der Server wiedererkennt – registrieren, umbenennen, entfernen">Personen</a>
+    <a href="/kanaele"      class="{{ 'aktiv' if seite == 'kanaele' }}"
+       title="Plaetze anlegen, umbenennen, verschieben (in Mumble: Kanaele)">Plätze</a>
+    <a href="/einrichten"   class="{{ 'aktiv' if seite == 'einrichten' }}"
+       title="Baukaesten fuer den Anfang, Sicherung herunterladen und einspielen">Einrichten</a>
+
+    <span class="trenner"></span>
+    <span class="gruppe">Fachsicht</span>
+    <a href="/acl"          class="{{ 'aktiv' if seite == 'acl' }}"
+       title="Rechte im Original, Eintrag fuer Eintrag (Mumble nennt das ACL)">Rechte</a>
+    <a href="/server"       class="{{ 'aktiv' if seite == 'server' }}"
+       title="Serverkonfiguration, Baenne, Protokoll">Server</a>
+    <a href="/audit"        class="{{ 'aktiv' if seite == 'audit' }}"
+       title="Wer hat wann was geaendert">Protokoll</a>
+
+    <span class="trenner"></span>
+    <a href="/anleitung"    class="{{ 'aktiv' if seite == 'anleitung' }}"
+       title="Mumbles Modell in Klartext">Anleitung</a>
   </nav>
   <div class="kopf-rechts">
     {% if health.ice.connected %}

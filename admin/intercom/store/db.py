@@ -211,6 +211,31 @@ _MIGRATIONS: Final[tuple[tuple[int, tuple[str, ...]], ...]] = (
             "CREATE INDEX IF NOT EXISTS wunsch_art ON wunsch (art)",
         ),
     ),
+    (
+        4,
+        (
+            # Verbindungen zwischen zwei Plaetzen.
+            #
+            # Das ist die Frage, die eine Intercom stellt: "Kampfgericht 1 soll
+            # die Zeitmessung hoeren." Mumble kennt sie nicht als solche -- dort
+            # zerfaellt sie in ein Recht am *Ziel* und, beim Mithoeren,
+            # zusaetzlich in ein startListening je Sitzung, das kein Trennen
+            # ueberlebt. Die Absicht selbst hat dort keinen Ort, also hier.
+            #
+            # Wieder als Pfad, nicht als ID: siehe die Tabelle wunsch.
+            """
+            CREATE TABLE IF NOT EXISTS verbindung (
+                art        TEXT    NOT NULL,
+                von        TEXT    NOT NULL,
+                nach       TEXT    NOT NULL,
+                author     TEXT    NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (art, von, nach)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS verbindung_von ON verbindung (art, von)",
+        ),
+    ),
 )
 
 #: Stand, den :meth:`Store.migrate` herstellt. Abgeleitet statt gepflegt -- eine
@@ -243,6 +268,12 @@ MAX_LANGFELD = 20_000
 #: ``mithoeren``: welche Plaetze sie dauerhaft mithoeren soll.
 #: ``vorrang``: auf welchen Plaetzen sie Priority Speaker sein soll.
 WUNSCH_ARTEN: Final[tuple[str, ...]] = ("platz", "mithoeren", "vorrang")
+
+#: Arten von Verbindungen zwischen zwei Plaetzen.
+#: ``hoert``: wer auf dem einen Platz sitzt, hoert den anderen mit.
+#: ``reinschalten``: wer auf dem einen Platz sitzt, darf in den anderen
+#: hineinsprechen, ohne ihn zu betreten.
+VERBINDUNGSARTEN: Final[tuple[str, ...]] = ("hoert", "reinschalten")
 
 
 def _kappen(text: str, grenze: int) -> str:
@@ -938,5 +969,80 @@ class Store:
                 "UPDATE wunsch SET ziel = ? || substr(ziel, ?) "
                 "WHERE ziel = ? OR ziel LIKE ? || '/%'",
                 (neu, len(alt) + 1, alt, alt),
+            )
+            return int(cur.rowcount or 0)
+
+    # ------------------------------------------------------------------ #
+    #  Verbindungen zwischen Plaetzen
+    # ------------------------------------------------------------------ #
+
+    def set_verbindung(
+        self, art: str, von: str, nach: str, *, an: bool, author: str = ""
+    ) -> None:
+        """Legt eine Verbindung an oder hebt sie auf."""
+        if art not in VERBINDUNGSARTEN:
+            raise ValueError(f"Unbekannte Verbindungsart {art!r}.")
+        if not von or not nach:
+            raise ValueError("Verbindungen brauchen zwei Plaetze.")
+        if von == nach:
+            raise ValueError("Ein Platz kann sich nicht mit sich selbst verbinden.")
+        with self._transaction() as conn:
+            if an:
+                conn.execute(
+                    "INSERT INTO verbindung (art, von, nach, author, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT (art, von, nach) DO UPDATE SET "
+                    "  author = excluded.author, updated_at = excluded.updated_at",
+                    (art, von, nach, _kappen(author, MAX_KURZFELD), int(time.time())),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM verbindung WHERE art = ? AND von = ? AND nach = ?",
+                    (art, von, nach),
+                )
+
+    def verbindungen(self, art: str | None = None) -> dict[str, dict[str, list[str]]]:
+        """Alle Verbindungen, nach Art und Ausgangsplatz geschluesselt."""
+        conn = self._connection()
+        if art is None:
+            rows = conn.execute(
+                "SELECT art, von, nach FROM verbindung ORDER BY art, von, nach"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT art, von, nach FROM verbindung WHERE art = ? ORDER BY von, nach",
+                (art,),
+            ).fetchall()
+        gesammelt: dict[str, dict[str, list[str]]] = {a: {} for a in VERBINDUNGSARTEN}
+        for row in rows:
+            gesammelt.setdefault(row["art"], {}).setdefault(row["von"], []).append(
+                row["nach"]
+            )
+        return gesammelt
+
+    def verbindung_umschreiben(self, alt: str, neu: str) -> int:
+        """Zieht Verbindungen mit, wenn ein Platz umbenannt oder verschoben wird."""
+        if not alt or alt == neu:
+            return 0
+        geaendert = 0
+        with self._transaction() as conn:
+            for spalte in ("von", "nach"):
+                cur = conn.execute(
+                    f"UPDATE OR REPLACE verbindung SET {spalte} = ? || substr({spalte}, ?) "
+                    f"WHERE {spalte} = ? OR {spalte} LIKE ? || '/%'",
+                    (neu, len(alt) + 1, alt, alt),
+                )
+                geaendert += int(cur.rowcount or 0)
+        return geaendert
+
+    def verbindung_vergessen(self, pfad: str) -> int:
+        """Loescht alle Verbindungen eines Platzes. Nach dem Loeschen faellig."""
+        if not pfad:
+            return 0
+        with self._transaction() as conn:
+            cur = conn.execute(
+                "DELETE FROM verbindung WHERE von = ? OR nach = ? "
+                "OR von LIKE ? || '/%' OR nach LIKE ? || '/%'",
+                (pfad, pfad, pfad, pfad),
             )
             return int(cur.rowcount or 0)

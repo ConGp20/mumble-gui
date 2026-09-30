@@ -1,17 +1,26 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "nutzer",
+  "Personen",
+  "Wen der Server wiedererkennt, wenn er sich das naechste Mal anmeldet.",
+  "Einmal je Person, bevor sie eine Rolle bekommen kann. Danach nur noch, wenn jemand dazukommt oder geht.",
+  achtung="Registrieren geht <strong>erst, wenn jemand verbunden ist</strong>. Der Server merkt sich das Zertifikat, das der Mumble-Client mitbringt – einen Namen kann man abtippen, ein Zertifikat nicht. Also: erst verbinden lassen, dann rechts unter „Verbunden, aber nicht registriert“ auf <em>Jetzt registrieren</em>.",
+) }}
+
 <div x-data="nutzer()" x-init="start()">
 
   <div class="raster zwei">
     <div class="karte">
       <header>
-        Registrierte Nutzer
+        Personen
         <span class="rechts leise" x-text="eintraege.length + ' Eintraege'"></span>
       </header>
       <div class="tabellenrahmen">
         <table class="dicht">
           <thead>
-            <tr><th>Name</th><th class="zahl">ID</th><th>Gruppen</th><th>Zertifikat</th>
+            <tr><th>Name</th><th class="zahl">ID</th><th>Rollen</th><th>Zertifikat</th>
                 <th>Zuletzt aktiv</th><th>Online</th><th></th></tr>
           </thead>
           <tbody>
@@ -48,7 +57,7 @@
       <header>Verbunden, aber nicht registriert</header>
       <div class="tabellenrahmen">
         <table class="dicht">
-          <thead><tr><th>Name</th><th>Kanal</th><th>IP</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Platz</th><th>IP</th><th></th></tr></thead>
           <tbody>
             <template x-for="u in unregistriert" :key="u.session">
               <tr>
@@ -75,17 +84,17 @@
     </div>
   </div>
 
-  <!-- Gruppen-Matrix ------------------------------------------------------ -->
+  <!-- Rollenmatrix ---------------------------------------------------------- -->
   <div class="karte" style="margin-top:12px">
     <header>
-      Gruppen
-      <span class="rechts leise">Mitgliedschaft am Wurzelkanal, vererbt sich nach unten</span>
+      Rollen
+      <span class="rechts leise">Gilt überall – von hier aus nach unten auf alle Plätze</span>
     </header>
     <div class="tabellenrahmen">
       <table class="dicht matrix">
         <thead>
           <tr>
-            <th>Nutzer</th>
+            <th>Person</th>
             <template x-for="g in gruppen" :key="g">
               <th class="dreh"><div x-text="g"></div></th>
             </template>
@@ -113,7 +122,7 @@
     <div class="inhalt">
       <div class="werkzeugleiste">
         <button class="knopf haupt" :disabled="!geaendert" @click="matrixSpeichern()">
-          Gruppen speichern
+          Rollen speichern
         </button>
         <button class="knopf" @click="start()">Verwerfen</button>
         <span class="fueller"></span>
@@ -196,7 +205,7 @@ function nutzer() {
             .filter(u => (u.groups || []).indexOf(g) !== -1)
             .map(u => u.userid);
         });
-      }).catch(err => alert("Nutzer nicht lesbar: " + err.message));
+      }).catch(err => alert("Personen nicht lesbar: " + err.message));
 
       this.I.get("/api/state").then(d => {
         this.unregistriert = (d.users || []).filter(u => !u.registered);
@@ -218,7 +227,7 @@ function nutzer() {
 
     matrixSpeichern() {
       this.I.put("/api/registered/groups", {groups: this.matrix})
-        .then(() => { alert("Gruppen gespeichert."); this.start(); })
+        .then(() => { alert("Rollen gespeichert."); this.start(); })
         .catch(err => alert("Speichern fehlgeschlagen: " + err.message));
     },
 

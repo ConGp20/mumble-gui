@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from .ice.errors import IceError
 from .ice.types import MumbleChannel, MumbleUser
+from .woerter import UEBERALL
 
 if TYPE_CHECKING:
     from .ice.client import IceClient
@@ -157,6 +158,11 @@ class Enforcer:
         self._mithoeren: dict[int, list[int]] = {}
         #: Nutzer-ID -> Kanal-IDs, auf denen sie Vorrang haben soll.
         self._vorrang: dict[int, list[int]] = {}
+        #: Platz -> Plaetze, die von dort aus mitgehoert werden sollen.
+        #: Das ist die Intercom-Verbindung "Kampfgericht 1 hoert die
+        #: Zeitmessung": sie gilt fuer jeden, der dort sitzt, und nicht fuer
+        #: eine bestimmte Person.
+        self._platz_hoert: dict[int, list[int]] = {}
         #: Sitzungen, die wir schon einmal auf ihren Platz gesetzt haben. Ohne
         #: das zoege der Abgleich jemanden zurueck, der bewusst weggeht.
         self._platz_erledigt: set[int] = set()
@@ -244,6 +250,30 @@ class Enforcer:
                     self._vorrang[userid] = aufgeloest
             self.armed = True
 
+    def lade_verbindungen(
+        self,
+        verbindungen: Mapping[str, Mapping[str, list[str]]],
+        channels: dict[int, MumbleChannel],
+    ) -> None:
+        """Uebernimmt die Platz-zu-Platz-Verbindungen aus dem Store.
+
+        Nur ``hoert`` braucht einen laufenden Abgleich: ``startListening`` haengt
+        an der Sitzung und ist nach dem Trennen weg. ``reinschalten`` ist ein
+        reines Recht am Zielplatz und steht dauerhaft in der ACL -- da gibt es
+        nichts nachzuziehen.
+        """
+        pfade = build_paths(channels)
+        with self._lock:
+            self._platz_hoert = {}
+            for von, zielen in verbindungen.get("hoert", {}).items():
+                quelle = pfade.get(von)
+                if quelle is None:
+                    continue
+                aufgeloest = [pfade[z] for z in zielen if z in pfade]
+                if aufgeloest:
+                    self._platz_hoert[quelle] = aufgeloest
+            self.armed = True
+
     def vergiss_sitzung(self, session: int) -> None:
         """Raeumt die Merkliste auf, wenn jemand die Verbindung verliert."""
         with self._lock:
@@ -287,7 +317,7 @@ class Enforcer:
     # ------------------------------------------------------------------ #
 
     def _channel_name(self, channel_id: int) -> str:
-        return self._channel_of_path.get(channel_id, f"#{channel_id}") or "(Wurzel)"
+        return self._channel_of_path.get(channel_id, f"#{channel_id}") or UEBERALL
 
     def _enforce_priority(self, user: MumbleUser) -> list[Deviation]:
         with self._lock:
@@ -441,10 +471,12 @@ class Enforcer:
         ``startListening`` nimmt eine **Sitzung**, kein Konto -- der Server
         vergisst es beim Trennen. Deshalb wird es hier nachgezogen.
         """
-        if not user.registered or user.userid < 0:
-            return []
         with self._lock:
-            ziele = self._mithoeren.get(user.userid, [])
+            ziele = list(self._platz_hoert.get(user.channel, []))
+            if user.registered and user.userid >= 0:
+                for ziel in self._mithoeren.get(user.userid, []):
+                    if ziel not in ziele:
+                        ziele.append(ziel)
         if not ziele:
             return []
 

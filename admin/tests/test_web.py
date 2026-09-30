@@ -351,7 +351,7 @@ def test_acl_vorschau_warnt_vor_root_only_rechten(app_client):
         headers={"X-CSRF-Token": _csrf(client)},
     )
     warnungen = " ".join(antwort.json()["warnings"])
-    assert "Wurzelkanal" in warnungen
+    assert "ganz oben" in warnungen
 
 
 def test_acl_lehnt_wirkungslose_eintraege_ab(app_client):
@@ -1621,7 +1621,7 @@ def test_sicherung_nimmt_den_wunschzustand_mit(app_client):
     roh = _yaml.safe_load(text)
     assert roh["wunsch"]["platz"] == {"zeit-1": ["Intercom/Regie"]}
     assert roh["wunsch"]["mithoeren"] == {"zeit-1": ["Intercom/Regie"]}
-    assert "zeit-1" in text and "Der Abschnitt 'wunsch'" in text
+    assert "zeit-1" in text and "kommen nicht vom" in text
 
     # Wunsch wegwerfen und die Sicherung einspielen.
     _schreibe(
@@ -1677,3 +1677,129 @@ def test_anleitung_nennt_die_richtung_der_rechte(app_client):
     assert "Das Raster im Pult lesen" in text
     for begriff in ("Zeichen", "Farbe", "Fragezeichen", "gesperrte Zelle"):
         assert begriff in text, f"{begriff} fehlt in der Lesehilfe"
+
+
+# --------------------------------------------------------------------------- #
+#  Verbindungen zwischen Plätzen
+# --------------------------------------------------------------------------- #
+
+
+def test_platzblatt_zeigt_den_platz_aus_seiner_sicht(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+
+    blatt = client.get(f"/api/pult/platz/{regie}").json()
+    assert blatt["platz"]["name"] == "Regie"
+    namen = {r["name"] for r in blatt["hier"]}
+    assert {"all", "auth", "regie"} <= namen
+    # Wer hier sprechen darf, ist die Menge, um die es bei Verbindungen geht.
+    assert "regie" in blatt["spricht_hier"]
+    assert blatt["hoert"] == [] and blatt["reinschalten"] == []
+
+
+def test_der_oberste_platz_heisst_ueberall(app_client):
+    """„Wurzel“ und „Root“ sagen vor Ort niemandem etwas."""
+    client, _ = app_client
+    _anmelden(client)
+    oben = next(k for k in client.get("/api/pult").json()["kanaele"] if k["id"] == 0)
+    assert oben["name"] == "Überall"
+    assert "Wurzel" not in client.get("/pult").text
+    assert "Wurzel" not in client.get("/kanaele").text
+
+
+def test_verbindung_setzt_das_recht_am_zielplatz(app_client):
+    """„Regie hört die Kameras“ heisst: die Regie-Rollen brauchen das Recht
+    an *Kameras* – nicht an der Regie."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    kameras = _kanal_id(client, "Kameras")
+
+    antwort = _schreibe(
+        client, "put", "/api/pult/verbindung",
+        {"art": "hoert", "von": regie, "nach": kameras, "an": True},
+    )
+    assert antwort.status_code == 200, antwort.text
+    assert "regie" in antwort.json()["rollen"]
+
+    # Das Recht steht jetzt am Zielplatz.
+    frisch = client.get("/api/pult").json()
+    assert frisch["rechte"][str(kameras)]["regie"]["wirkung"]["hoeren"] is True
+
+    # Und die Verbindung wird an beiden Enden gezeigt.
+    von = client.get(f"/api/pult/platz/{regie}").json()
+    nach = client.get(f"/api/pult/platz/{kameras}").json()
+    assert [z["name"] for z in von["hoert"]] == ["Kameras"]
+    assert [z["name"] for z in nach["wird_gehoert_von"]] == ["Regie"]
+
+
+def test_verbindung_loesen_laesst_das_recht_stehen(app_client):
+    """Ein Automatismus, der eine bewusste Entscheidung zurueckdreht, ist
+    schlimmer als ein Recht zuviel – aber er sagt es."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    kameras = _kanal_id(client, "Kameras")
+    _schreibe(client, "put", "/api/pult/verbindung",
+              {"art": "hoert", "von": regie, "nach": kameras, "an": True})
+
+    geloest = _schreibe(client, "put", "/api/pult/verbindung",
+                        {"art": "hoert", "von": regie, "nach": kameras, "an": False})
+    assert geloest.status_code == 200
+    assert "bleibt stehen" in geloest.json()["hinweis"]
+    assert client.get(f"/api/pult/platz/{regie}").json()["hoert"] == []
+    # Das Recht ist noch da, und das wird nicht verschwiegen.
+    frisch = client.get("/api/pult").json()
+    assert frisch["rechte"][str(kameras)]["regie"]["wirkung"]["hoeren"] is True
+
+
+def test_platz_verbindet_sich_nicht_mit_sich_selbst(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    antwort = _schreibe(client, "put", "/api/pult/verbindung",
+                        {"art": "hoert", "von": regie, "nach": regie, "an": True})
+    assert antwort.status_code == 400
+
+
+def test_umbenennen_zieht_die_verbindung_mit(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    kameras = _kanal_id(client, "Kameras")
+    _schreibe(client, "put", "/api/pult/verbindung",
+              {"art": "hoert", "von": regie, "nach": kameras, "an": True})
+
+    _schreibe(client, "patch", f"/api/channels/{kameras}", {"name": "Kamerazug"})
+
+    blatt = client.get(f"/api/pult/platz/{regie}").json()
+    assert [z["name"] for z in blatt["hoert"]] == ["Kamerazug"]
+    assert blatt["hoert"][0]["kanal"] == kameras, "der Pfad muss aufloesbar bleiben"
+
+
+def test_sicherung_nimmt_die_verbindungen_mit(app_client):
+    """Sonst wäre nach dem Einspielen jede Intercom-Verbindung weg."""
+    import yaml as _yaml
+
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    kameras = _kanal_id(client, "Kameras")
+    _schreibe(client, "put", "/api/pult/verbindung",
+              {"art": "hoert", "von": regie, "nach": kameras, "an": True})
+
+    text = client.get("/api/provision/export").text
+    roh = _yaml.safe_load(text)
+    assert roh["verbindungen"]["hoert"] == {"Intercom/Regie": ["Intercom/Kameras"]}
+
+    _schreibe(client, "put", "/api/pult/verbindung",
+              {"art": "hoert", "von": regie, "nach": kameras, "an": False})
+    assert client.get(f"/api/pult/platz/{regie}").json()["hoert"] == []
+
+    wieder = _schreibe(client, "post", "/api/sicherung/einspielen", {"yaml_text": text})
+    assert wieder.status_code == 200, wieder.text
+    assert wieder.json()["verbindungen"]["uebernommen"] == 1
+    assert [z["name"] for z in client.get(f"/api/pult/platz/{regie}").json()["hoert"]] == [
+        "Kameras"
+    ]

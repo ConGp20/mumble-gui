@@ -1,0 +1,54 @@
+{#
+  Der Erklaerkopf, den jede Seite traegt.
+
+  Warum er sein muss: eine Anleitung auf einer eigenen Seite liest niemand,
+  waehrend er arbeitet. Die Erklaerung gehoert dorthin, wo geklickt wird -- mit
+  drei festen Teilen, damit sie ueberall gleich gelesen werden kann:
+
+    was      Ein Satz: was man auf dieser Seite tut.
+    wann     Ein Satz: wann man sie braucht (und wann nicht).
+    achtung  Der eine Stolperstein, ueber den hier alle fallen. Optional.
+
+  Der Kopf laesst sich zuklappen und merkt sich das je Seite im Browser. Wer
+  die Oberflaeche kennt, soll nicht jedes Mal darueber hinweglesen muessen --
+  aber der Normalfall beim ersten Mal ist aufgeklappt.
+#}
+{% macro seitenkopf(schluessel, titel, was, wann, achtung=None, schritte=None) %}
+<div class="seitenkopf"
+     x-data="{
+       offen: true,
+       init() {
+         try { this.offen = localStorage.getItem('kopf:{{ schluessel }}') !== 'zu'; }
+         catch (e) { /* Privatmodus: dann eben immer offen */ }
+       },
+       schalten() {
+         this.offen = !this.offen;
+         try { localStorage.setItem('kopf:{{ schluessel }}', this.offen ? 'auf' : 'zu'); }
+         catch (e) { /* nicht schlimm */ }
+       }
+     }">
+  <div class="seitenkopf-zeile">
+    <h1>{{ titel }}</h1>
+    <p class="was">{{ was | safe }}</p>
+    <button class="knopf klein" @click="schalten()"
+            :aria-expanded="offen ? 'true' : 'false'"
+            x-text="offen ? 'Weniger' : 'Was ist das?'"></button>
+  </div>
+
+  <div class="seitenkopf-mehr" x-show="offen" x-cloak>
+    <p class="wann"><strong>Wann brauchst du das?</strong> {{ wann | safe }}</p>
+
+    {% if schritte %}
+    <ol class="schritte">
+      {% for schritt in schritte %}<li>{{ schritt | safe }}</li>{% endfor %}
+    </ol>
+    {% endif %}
+
+    {% if achtung %}
+    <p class="achtung"><strong>Aufpassen:</strong> {{ achtung | safe }}</p>
+    {% endif %}
+
+    {{ caller() if caller is defined else '' }}
+  </div>
+</div>
+{% endmacro %}

@@ -26,6 +26,7 @@ from ..ice.permissions import BY_NAME, PERMISSIONS, mask_to_names, names_to_mask
 from ..ice.types import ACLEntry, BanEntry, ChannelACL, ChannelGroup, MumbleChannel
 from ..provision.templates import TEMPLATES, apply_template
 from ..store.db import WUNSCH_ARTEN
+from ..woerter import UEBERALL
 from .auth import Account, require_admin, require_user
 
 router = APIRouter(prefix="/api")
@@ -436,9 +437,11 @@ async def channel_update(
     neuer_pfad = context.live.path_of.get(channel_id)
     if context.store is not None and alter_pfad and neuer_pfad and alter_pfad != neuer_pfad:
         geaendert = context.store.wunsch_umschreiben(alter_pfad, neuer_pfad)
+        geaendert += context.store.verbindung_umschreiben(alter_pfad, neuer_pfad)
         if geaendert:
             channels = await context.ice.get_channels()
             context.enforcer.lade_wuensche(context.store.alle_wuensche(), channels)
+            context.enforcer.lade_verbindungen(context.store.verbindungen(), channels)
     return {"ok": True}
 
 
@@ -448,12 +451,21 @@ async def channel_delete(
 ) -> dict[str, Any]:
     context = ctx(request)
     if channel_id == 0:
-        raise HTTPException(400, "Der Wurzelkanal laesst sich nicht loeschen.")
+        raise HTTPException(
+            400, "Der oberste Platz laesst sich nicht loeschen."
+        )
+    pfad = context.live.path_of.get(channel_id)
     try:
         current = await context.ice.get_channel_state(channel_id)
         await context.ice.remove_channel(channel_id)
     except IceError as exc:
         raise _fail(exc) from exc
+
+    # Verbindungen auf einen Platz, den es nicht mehr gibt, waeren eine Anzeige
+    # ohne Gegenstand. Der gemerkte Platz einer Person bleibt dagegen stehen:
+    # ein gleichnamiger Platz kann wiederkommen, etwa aus einer Sicherung.
+    if context.store is not None and pfad:
+        context.store.verbindung_vergessen(pfad)
 
     context.audit(
         account.name,
@@ -632,7 +644,7 @@ async def acl_preview(
             if root_only:
                 warnings.append(
                     f"@{entry.group or entry.userid}: {', '.join(root_only)} wertet "
-                    "murmur nur am Wurzelkanal aus -- hier bleibt es wirkungslos."
+                    "murmur nur ganz oben aus -- an diesem Platz bleibt es wirkungslos."
                 )
     return {"diff": _diff_lines(current.own_acls(), wanted), "warnings": warnings}
 
@@ -902,7 +914,7 @@ class GroupMatrix(BaseModel):
 async def registered_groups(
     request: Request, body: GroupMatrix, account: Account = Depends(require_admin)
 ) -> dict[str, Any]:
-    """Schreibt die Gruppenmitgliedschaft am Wurzelkanal.
+    """Schreibt die Rollenzugehoerigkeit ganz oben (am Wurzelkanal).
 
     Nur ``setACL`` macht Mitgliedschaft dauerhaft; ``addUserToGroup`` waere
     temporaer und ueberlebte keinen Serverneustart (siehe DECISIONS D-005).
@@ -935,7 +947,7 @@ async def registered_groups(
     context.audit(
         account.name,
         "registered.groups",
-        "(Wurzel)",
+        UEBERALL,
         before=before,
         after=json.dumps(body.groups, ensure_ascii=False, sort_keys=True),
     )
@@ -1381,7 +1393,42 @@ async def sicherung_einspielen(
 
     antwort = plan.to_json()
     antwort["wunsch"] = await _wunsch_einspielen(context, body, account.name)
+    antwort["verbindungen"] = _verbindungen_einspielen(context, body, account.name)
     return antwort
+
+
+def _verbindungen_einspielen(
+    context: Any, body: SicherungBody, actor: str
+) -> dict[str, Any]:
+    """Uebernimmt den Abschnitt ``verbindungen`` aus einer Sicherung.
+
+    Pfade auf Plaetze, die es (noch) nicht gibt, werden trotzdem uebernommen:
+    sie loesen sich auf, sobald der Platz wieder da ist. Das ist derselbe Grund,
+    aus dem Wuensche als Pfad gespeichert werden.
+    """
+    roh = yaml.safe_load(body.yaml_text) or {}
+    abschnitt = roh.get("verbindungen") if isinstance(roh, dict) else None
+    if not isinstance(abschnitt, dict) or context.store is None:
+        return {"uebernommen": 0}
+
+    uebernommen = 0
+    for art, je_platz in abschnitt.items():
+        if not isinstance(je_platz, dict):
+            continue
+        for von, zielen in je_platz.items():
+            for nach in zielen or []:
+                try:
+                    context.store.set_verbindung(
+                        str(art), str(von), str(nach), an=True, author=actor
+                    )
+                except ValueError:
+                    continue
+                uebernommen += 1
+    if uebernommen:
+        context.audit(
+            actor, "sicherung.verbindungen", f"{uebernommen} uebernommen"
+        )
+    return {"uebernommen": uebernommen}
 
 
 async def _wunsch_einspielen(context: Any, body: SicherungBody, actor: str) -> dict[str, Any]:
@@ -1444,9 +1491,13 @@ async def provision_export(
     # unvollstaendig, und nach dem Einspielen fehlten feste Plaetze, Mithoeren
     # und Vorrang -- ohne dass es jemandem auffiele.
     wunsch = context.store.alle_wuensche() if context.store is not None else None
+    verbindungen = context.store.verbindungen() if context.store is not None else None
     try:
         text = await context.ice.run(
-            lambda client: export_yaml(client, wunsch=wunsch), context.ice.sync
+            lambda client: export_yaml(
+                client, wunsch=wunsch, verbindungen=verbindungen
+            ),
+            context.ice.sync,
         )
     except IceError as exc:
         raise _fail(exc) from exc

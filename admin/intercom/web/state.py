@@ -35,6 +35,7 @@ from ..config import Settings
 from ..ice.types import MumbleChannel, MumbleUser
 from ..provision.schema import NetworkSpec
 from ..runtime import build_paths
+from ..woerter import UEBERALL
 
 log = logging.getLogger(__name__)
 
@@ -324,10 +325,15 @@ class LiveState:
     # ------------------------------------------------------------------ #
 
     def channel_name(self, channel_id: int) -> str:
-        path = self.path_of.get(channel_id)
-        if path is None:
-            return f"#{channel_id}"
-        return path or "(Wurzel)"
+        """Anzeigename eines Platzes.
+
+        Der oberste heisst immer :data:`~intercom.woerter.UEBERALL` -- murmur
+        traegt dort je nach Alter des Servers "Root" oder gar nichts ein, und
+        beides ist vor Ort keine Auskunft.
+        """
+        if channel_id == 0:
+            return UEBERALL
+        return self.path_of.get(channel_id) or UEBERALL
 
     def user_rows(self, deviations: list[Any] | None = None) -> list[dict[str, Any]]:
         """Eine Zeile je verbundenem Client -- die Datengrundlage der Tabelle."""

@@ -1,12 +1,21 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "acl",
+  "Rechte im Original",
+  "Die Rechte so, wie Mumble sie fuehrt: Eintrag fuer Eintrag, mit allen siebzehn Bits.",
+  "Nur wenn das Raster im <a href='/pult'>Pult</a> nicht reicht – etwa fuer Zugangswoerter, Bedingungen wie <code>in</code>/<code>out</code> oder mehrere Eintraege derselben Rolle an einem Platz. Fuer den Alltag ist diese Seite nicht gedacht.",
+  achtung="Die <strong>Reihenfolge zaehlt</strong>: gelesen wird von oben nach unten, und der letzte passende Eintrag gewinnt. Ein Verbot weiter unten sticht eine Erlaubnis weiter oben.",
+) }}
+
 <div x-data="aclEditor()" x-init="start()">
 
   <div class="werkzeugleiste">
     <label>Kanal
       <select x-model="kanalId" @change="ladeAcl()" style="min-width:280px">
         <template x-for="k in flach" :key="k.id">
-          <option :value="k.id" x-text="k.path || '(Wurzel)'"></option>
+          <option :value="k.id" x-text="Intercom.platzname(k)"></option>
         </template>
       </select>
     </label>
@@ -131,7 +140,7 @@
         </table>
       </div>
       <div class="inhalt hinweis">
-        Ausgegraute Rechte wertet murmur nur am Wurzelkanal aus.
+        Ausgegraute Rechte wirken nur ganz oben („Überall“) – an einem einzelnen Platz bleiben sie folgenlos.
       </div>
     </div>
   </div>

@@ -386,6 +386,7 @@ def export_yaml(
     *,
     roots: list[str] | None = None,
     wunsch: Mapping[str, Mapping[int, list[str]]] | None = None,
+    verbindungen: Mapping[str, Mapping[str, list[str]]] | None = None,
 ) -> str:
     """Wie :func:`export_state`, aber gleich als YAML-Text.
 
@@ -401,6 +402,15 @@ def export_yaml(
         abschnitt = _wunsch_mit_namen(client, wunsch)
         if abschnitt:
             document["wunsch"] = abschnitt
+    if verbindungen:
+        # Verbindungen stehen ohnehin als Pfade -- hier ist nichts aufzuloesen.
+        gefiltert = {
+            art: {von: list(nach) for von, nach in je_platz.items() if nach}
+            for art, je_platz in verbindungen.items()
+            if je_platz
+        }
+        if gefiltert:
+            document["verbindungen"] = gefiltert
     header = (
         "# Aus dem laufenden Server exportiert.\n"
         "#\n"
@@ -410,12 +420,13 @@ def export_yaml(
         "# an der Sitzung), networks und devices (reine Dokumentation).\n"
         "# Diese Abschnitte aus der bisherigen intercom.yaml uebernehmen.\n"
     )
-    if document.get("wunsch"):
+    if document.get("wunsch") or document.get("verbindungen"):
         header += (
             "#\n"
-            "# Der Abschnitt 'wunsch' kommt nicht vom Server, sondern aus dieser\n"
-            "# Oberflaeche: fester Platz, dauerhaftes Mithoeren und Vorrang merkt\n"
-            "# sich Mumble nicht. Beim Einspielen wird er wieder uebernommen.\n"
+            "# Die Abschnitte 'wunsch' und 'verbindungen' kommen nicht vom\n"
+            "# Server, sondern aus dieser Oberflaeche: fester Platz, dauerhaftes\n"
+            "# Mithoeren, Vorrang und die Verbindungen zwischen zwei Plaetzen\n"
+            "# merkt sich Mumble nicht. Beim Einspielen werden sie uebernommen.\n"
         )
     for hinweis in ausgelassen:
         header += "#\n# Nicht uebernommen: " + hinweis + "\n"

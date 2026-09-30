@@ -36,7 +36,8 @@ from ..ice.wirkung import (
     rechte_einer_person,
     rechte_einer_rolle,
 )
-from ..store.db import WUNSCH_ARTEN
+from ..store.db import VERBINDUNGSARTEN, WUNSCH_ARTEN
+from ..woerter import UEBERALL
 from .auth import Account, require_admin, require_user
 
 router = APIRouter(prefix="/api/pult")
@@ -138,14 +139,15 @@ def _bearbeitbar(acl: ChannelACL, rolle: str) -> tuple[bool, str]:
     eintraege = _eigene_eintraege(acl, rolle)
     if len(eintraege) > 1:
         return False, (
-            f"Dieser Platz hat {len(eintraege)} eigene Eintraege fuer diese Rolle. "
-            "Welcher gewinnt, haengt an ihrer Reihenfolge -- das kann das Raster "
-            "nicht abbilden. In der Expertensicht bearbeiten."
+            f"An diesem Platz stehen {len(eintraege)} eigene Regeln fuer diese Rolle. "
+            "Welche gewinnt, haengt an ihrer Reihenfolge -- das kann ein Raster "
+            "mit drei Zustaenden nicht abbilden. Unter 'Rechte im Original' "
+            "bearbeiten."
         )
     if eintraege and not eintraege[0].apply_here:
         return False, (
-            "Der vorhandene Eintrag gilt nur fuer Unterplaetze, nicht hier. "
-            "In der Expertensicht bearbeiten."
+            "Die vorhandene Regel gilt nur fuer Plaetze darunter, nicht fuer diesen. "
+            "Unter 'Rechte im Original' bearbeiten."
         )
     return True, ""
 
@@ -165,7 +167,10 @@ def _baum(kanaele: dict[int, MumbleChannel]) -> list[dict[str, Any]]:
         kanal = kanaele.get(kanal_id)
         if kanal is None:
             return
-        name = kanal.name or "(Wurzel)"
+        # Der oberste Platz heisst hier immer "Ueberall", egal wie murmur ihn
+        # nennt: frisch aufgesetzte Server tragen dort "Root" ein, aeltere
+        # nichts. Beides sagt vor Ort niemandem etwas.
+        name = UEBERALL if kanal_id == 0 else (kanal.name or UEBERALL)
         voll = name if not pfad else f"{pfad}/{name}"
         reihen.append(
             {
@@ -261,10 +266,33 @@ async def pult(request: Request, account: Account = Depends(require_user)) -> di
             }
         rechte[str(kanal_id)] = je_rolle
 
+    # Verbindungen, gleich nach Kanal-ID aufgeloest -- die Uebersicht soll sie
+    # zeigen koennen, ohne je Platz noch einmal nachzufragen.
+    baum = _baum(kanaele)
+    nach_pfad = {k["pfad"]: k["id"] for k in baum if k["id"] != 0}
+    roh = context.store.verbindungen() if context.store is not None else {}
+    verbindungen: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for art, je_platz in roh.items():
+        eintraege: dict[str, list[dict[str, Any]]] = {}
+        for von, zielen in je_platz.items():
+            quelle = nach_pfad.get(von)
+            if quelle is None:
+                continue
+            eintraege[str(quelle)] = [
+                {
+                    "kanal": nach_pfad.get(z),
+                    "pfad": z,
+                    "name": z.rsplit("/", 1)[-1],
+                }
+                for z in zielen
+            ]
+        verbindungen[art] = eintraege
+
     return {
-        "kanaele": _baum(kanaele),
+        "kanaele": baum,
         "rollen": rollen,
         "personen": personen,
+        "verbindungen": verbindungen,
         "verbunden": {str(k): v for k, v in verbunden.items()},
         "rechte": rechte,
         "spalten": [
@@ -439,8 +467,8 @@ async def rolle_setzen(
     if body.rolle in {name for name, _ in EINGEBAUTE_ROLLEN}:
         raise HTTPException(
             400,
-            f"{body.rolle!r} ist eine eingebaute Gruppe von Mumble. "
-            "Ihre Mitglieder ergeben sich von selbst und lassen sich nicht setzen.",
+            f"{body.rolle!r} ist eine eingebaute Rolle von Mumble. Wer dazugehoert, "
+            "ergibt sich von selbst und laesst sich nicht von Hand setzen.",
         )
     context = ctx(request)
     try:
@@ -548,9 +576,9 @@ async def platz_setzen(
         if body.userid is None:
             raise HTTPException(
                 400,
-                "Ein fester Platz braucht ein registriertes Konto -- "
-                "ohne Registrierung kennt der Server die Person beim naechsten "
-                "Verbinden nicht wieder.",
+                "Ein fester Platz braucht eine registrierte Person -- ohne "
+                "Registrierung erkennt der Server sie beim naechsten Verbinden "
+                "nicht wieder. Anzulegen unter Personen.",
             )
         try:
             kanaele = await context.ice.get_channels()
@@ -666,3 +694,238 @@ def _pfad_von(kanaele: dict[int, MumbleChannel], kanal_id: int) -> str | None:
     if kanal_id == 0:
         return ""
     return _alle_pfade(kanaele).get(kanal_id)
+
+
+# --------------------------------------------------------------------------- #
+#  Der einzelne Platz: die Sicht, in der eine Intercom gedacht wird
+# --------------------------------------------------------------------------- #
+
+
+def _rollen_die_sprechen(
+    kanal_id: int,
+    kanaele: dict[int, MumbleChannel],
+    acls: dict[int, ChannelACL],
+    rollen: list[str],
+) -> list[str]:
+    """Wer darf an diesem Platz senden?
+
+    Das ist die Menge, um die es bei einer Verbindung geht: wenn Kampfgericht 1
+    die Zeitmessung hoeren soll, dann brauchen **die** das Recht -- nicht
+    irgendwer.
+    """
+    duerfen = []
+    for rolle in rollen:
+        w = rechte_einer_rolle(
+            rolle=rolle, ziel=kanal_id, kanaele=kanaele, acls=acls
+        )
+        if w.darf(SPEAK) is True:
+            duerfen.append(rolle)
+    return duerfen
+
+
+def _eigene_rollen(acls: dict[int, ChannelACL]) -> list[str]:
+    """Die selbst angelegten Rollen -- ohne Mumbles eingebaute."""
+    wurzel = acls.get(0)
+    if wurzel is None:
+        return []
+    return sorted((g.name for g in wurzel.own_groups()), key=str.lower)
+
+
+@router.get("/platz/{kanal_id}")
+async def platz(
+    kanal_id: int, request: Request, account: Account = Depends(require_user)
+) -> dict[str, Any]:
+    """Alles ueber einen Platz -- aus der Sicht des Platzes.
+
+    Beantwortet die beiden Fragen, die man vor Ort stellt:
+
+    * **Wer ist hier?** Welche Rollen duerfen betreten, sprechen, schreiben.
+    * **Mit wem?** Welche anderen Plaetze hoert man von hier, in welche darf
+      man von hier reinschalten -- und umgekehrt, wer hoert diesen Platz und
+      wer darf hier hineinsprechen.
+    """
+    context = ctx(request)
+    try:
+        kanaele, acls = await _alles_lesen(context)
+    except IceError as exc:
+        raise _fail(exc) from exc
+    if kanal_id not in kanaele:
+        raise HTTPException(404, "Diesen Platz gibt es nicht.")
+
+    baum = _baum(kanaele)
+    nach_id = {k["id"]: k for k in baum}
+    pfade = {k["id"]: k["pfad"] for k in baum}
+    nach_pfad = {pfad: kid for kid, pfad in pfade.items()}
+
+    rollen = _eigene_rollen(acls)
+    eingebaut = [name for name, _ in EINGEBAUTE_ROLLEN]
+
+    hier = []
+    for rolle in eingebaut + rollen:
+        w = rechte_einer_rolle(
+            rolle=rolle, ziel=kanal_id, kanaele=kanaele, acls=acls
+        )
+        acl = acls.get(kanal_id)
+        frei, grund = _bearbeitbar(acl, rolle) if acl else (False, "Nicht lesbar.")
+        hier.append(
+            {
+                "name": rolle,
+                "titel": dict(EINGEBAUTE_ROLLEN).get(rolle, rolle),
+                "eingebaut": rolle in eingebaut,
+                "wirkung": _antwort(w),
+                "eigen": _eigener_stand(acl, rolle) if acl else {},
+                "bearbeitbar": frei,
+                "grund": grund,
+            }
+        )
+
+    store = context.store
+    roh = store.verbindungen() if store is not None else {}
+    eigener_pfad = pfade.get(kanal_id, "")
+
+    def ziele(art: str) -> list[dict[str, Any]]:
+        return [
+            {"kanal": nach_pfad.get(p), "pfad": p, "name": _kurzname(p)}
+            for p in roh.get(art, {}).get(eigener_pfad, [])
+        ]
+
+    def quellen(art: str) -> list[dict[str, Any]]:
+        gefunden = []
+        for von, zielliste in roh.get(art, {}).items():
+            if eigener_pfad in zielliste:
+                gefunden.append(
+                    {"kanal": nach_pfad.get(von), "pfad": von, "name": _kurzname(von)}
+                )
+        return gefunden
+
+    return {
+        "platz": nach_id.get(kanal_id),
+        "kanaele": baum,
+        "hier": hier,
+        "spricht_hier": _rollen_die_sprechen(kanal_id, kanaele, acls, rollen),
+        "hoert": ziele("hoert"),
+        "reinschalten": ziele("reinschalten"),
+        "wird_gehoert_von": quellen("hoert"),
+        "reinschalten_von": quellen("reinschalten"),
+        "spalten": [{"name": n, "titel": t, "hilfe": h} for n, _, t, h in RECHTE],
+    }
+
+
+def _kurzname(pfad: str) -> str:
+    return pfad.rsplit("/", 1)[-1] if pfad else UEBERALL
+
+
+class VerbindungBody(BaseModel):
+    art: str
+    von: int
+    nach: int
+    an: bool = True
+
+
+@router.put("/verbindung")
+async def verbindung_setzen(
+    request: Request, body: VerbindungBody, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Verbindet zwei Plaetze -- oder loest die Verbindung wieder.
+
+    Was dabei wirklich passiert, ist zweierlei, und die Oberflaeche bekommt es
+    zurueckgemeldet, statt es zu verschweigen:
+
+    * Am **Zielplatz** wird das noetige Recht fuer die Rollen gesetzt, die am
+      Ausgangsplatz sprechen duerfen -- ``Mithoeren`` bzw. ``Reinschalten``.
+    * Beim Mithoeren wird die Verbindung zusaetzlich hinterlegt, weil
+      ``startListening`` an der Sitzung haengt und kein Trennen ueberlebt. Der
+      Enforcer zieht sie nach.
+
+    Wer eine Verbindung aufloest, verliert das Recht am Ziel nicht automatisch:
+    es koennte von Hand oder fuer etwas anderes gesetzt worden sein, und ein
+    Automatismus, der eine bewusste Entscheidung zurueckdreht, ist schlimmer als
+    ein Recht zuviel. Das Ergebnis sagt, was stehen geblieben ist.
+    """
+    if body.art not in VERBINDUNGSARTEN:
+        raise HTTPException(400, f"Unbekannte Verbindungsart {body.art!r}.")
+    if body.von == body.nach:
+        raise HTTPException(400, "Ein Platz kann sich nicht mit sich selbst verbinden.")
+
+    context = ctx(request)
+    try:
+        kanaele, acls = await _alles_lesen(context)
+    except IceError as exc:
+        raise _fail(exc) from exc
+    for kid in (body.von, body.nach):
+        if kid not in kanaele:
+            raise HTTPException(404, f"Platz {kid} gibt es nicht.")
+
+    pfade = {k["id"]: k["pfad"] for k in _baum(kanaele)}
+    von_pfad, nach_pfad = pfade.get(body.von, ""), pfade.get(body.nach, "")
+    rollen = _rollen_die_sprechen(
+        body.von, kanaele, acls, _eigene_rollen(acls)
+    )
+    recht = "hoeren" if body.art == "hoert" else "reinschalten"
+    bit = _bit(recht)
+
+    gesetzt: list[str] = []
+    uebersprungen: list[str] = []
+    if body.an:
+        if not rollen:
+            raise HTTPException(
+                409,
+                f"An {_kurzname(von_pfad)!r} darf zurzeit keine eigene Rolle "
+                "sprechen. Ohne das gibt es niemanden, dem die Verbindung "
+                "etwas nuetzen wuerde -- erst dort das Sprechen erlauben.",
+            )
+        ziel_acl = acls[body.nach]
+        for rolle in rollen:
+            frei, grund = _bearbeitbar(ziel_acl, rolle)
+            if not frei:
+                uebersprungen.append(f"{rolle}: {grund}")
+                continue
+            eintraege = _eigene_eintraege(ziel_acl, rolle)
+            if eintraege:
+                eintrag = eintraege[0]
+            else:
+                eintrag = ACLEntry(
+                    apply_here=True, apply_subs=True, allow=0, deny=0, group=rolle
+                )
+                ziel_acl.acls.append(eintrag)
+            eintrag.deny &= ~bit
+            eintrag.allow |= bit
+            gesetzt.append(rolle)
+        if gesetzt:
+            try:
+                await context.ice.set_channel_acl(ziel_acl)
+            except IceError as exc:
+                raise _fail(exc) from exc
+
+    store = _store(context)
+    try:
+        store.set_verbindung(
+            body.art, von_pfad, nach_pfad, an=body.an, author=account.name
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        kanaele = await context.ice.get_channels()
+        context.enforcer.lade_verbindungen(store.verbindungen(), kanaele)
+    except IceError:
+        pass
+
+    context.audit(
+        account.name,
+        f"pult.verbindung.{body.art}",
+        f"{von_pfad} -> {nach_pfad}",
+        after="verbunden" if body.an else "getrennt",
+    )
+    return {
+        "ok": True,
+        "an": body.an,
+        "rollen": gesetzt,
+        "uebersprungen": uebersprungen,
+        "hinweis": (
+            ""
+            if body.an
+            else "Die Verbindung ist weg. Das Recht am Zielplatz bleibt stehen – "
+            "es koennte fuer etwas anderes gesetzt worden sein."
+        ),
+    }

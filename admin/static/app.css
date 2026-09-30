@@ -627,3 +627,117 @@ label { font-size: 12px; color: var(--text-leise); }
 
 .hinweistext { color: var(--text-leise); font-size: 12px; margin: 6px 0 0; }
 .hinweistext.warnung { color: var(--warnung); }
+
+/* --- Erklaerkopf je Seite ------------------------------------------------
+   Steht ueber allem und beantwortet drei Fragen, bevor man das erste Mal
+   klickt: was tue ich hier, wann brauche ich das, worueber fallen alle.
+   Zuklappbar, weil er beim zehnten Mal nur noch im Weg steht. */
+
+.seitenkopf {
+  border: 1px solid var(--border); border-left: 3px solid var(--akzent);
+  border-radius: var(--radius); background: var(--surface);
+  padding: 9px 12px; margin-bottom: 12px;
+}
+.seitenkopf-zeile { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.seitenkopf-zeile h1 {
+  margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em;
+  white-space: nowrap;
+}
+.seitenkopf-zeile .was { margin: 0; flex: 1; min-width: 220px; color: var(--text-leise); }
+.seitenkopf-zeile .knopf { margin-left: auto; flex: none; }
+
+.seitenkopf-mehr { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+.seitenkopf-mehr p { margin: 0 0 6px; max-width: 86ch; line-height: 1.5; }
+.seitenkopf-mehr p:last-child { margin-bottom: 0; }
+.seitenkopf-mehr .wann { color: var(--text-leise); }
+.seitenkopf-mehr .wann strong,
+.seitenkopf-mehr .achtung strong { color: var(--text); }
+.seitenkopf-mehr .achtung {
+  border-left: 2px solid var(--warnung); background: var(--warnung-bg);
+  padding: 5px 9px; border-radius: 0 var(--radius) var(--radius) 0;
+}
+.seitenkopf-mehr .achtung strong { color: var(--warnung); }
+.seitenkopf-mehr .schritte { margin: 0 0 6px; }
+
+/* Navigation: Alltag und Fachsicht sind zwei verschiedene Dinge und sollen
+   nicht wie neun gleichwertige Woerter nebeneinanderstehen. */
+.navigation .trenner {
+  width: 1px; align-self: center; height: 16px;
+  background: var(--border-hell); margin: 0 5px; flex: none;
+}
+.navigation .gruppe {
+  align-self: center; font-size: 9px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-still);
+  padding: 0 4px 0 2px; flex: none; white-space: nowrap;
+}
+
+/* --- Das Platzblatt ------------------------------------------------------
+   Ein Platz aus seiner eigenen Sicht: links wer hier sitzen darf, rechts mit
+   wem er verbunden ist. Die zweite Frage ist die, die eine Intercom stellt --
+   Mumble kennt sie nicht als solche, deshalb steht sie hier gross. */
+
+.platz-spalten {
+  display: grid; gap: 16px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+@media (max-width: 1100px) { .platz-spalten { grid-template-columns: minmax(0, 1fr); } }
+
+.platz-teil h3 {
+  margin: 0 0 4px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-still);
+}
+
+.verbindung {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); padding: 7px 9px; margin-bottom: 8px;
+}
+.verbindung.gegenrichtung { background: transparent; border-style: dashed; }
+.verbindung-kopf {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  margin-bottom: 5px; font-size: 12px;
+}
+.verbindung-kopf .pfeil { color: var(--akzent); font-weight: 700; }
+.verbindung.gegenrichtung .verbindung-kopf .pfeil { color: var(--text-still); }
+.verbindung-kopf .still { font-size: 11px; }
+
+.marken { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 5px; }
+.marken:last-child { margin-bottom: 0; }
+.marken .etikett {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-still); margin-right: 2px;
+}
+.marke {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 4px 1px 7px; border-radius: 10px;
+  border: 1px solid var(--akzent); background: var(--akzent-bg);
+  color: var(--text); font-size: 11px;
+}
+.marke.leise { border-color: var(--border-hell); background: var(--surface-3); }
+.marke .weg {
+  border: 0; background: transparent; color: var(--text-still);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px;
+}
+.marke .weg:hover { color: var(--kritisch); }
+
+select.zufuegen { font-size: 11px; padding: 2px 4px; max-width: 100%; }
+
+/* Der Platzbaum: wer gehoert hierher. Vorher stand hier 14 Mal "leer". */
+.platz .wer, .platz .besetzung {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px;
+  margin-top: 3px; font-size: 11px;
+}
+.platz .wer .etikett, .platz .besetzung .etikett {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-still);
+}
+.platz .wer .rollen { margin-right: 8px; }
+.platz .wer .rolle-marke {
+  display: inline-block; padding: 0 4px; border-radius: 3px;
+  background: var(--surface-3); border: 1px solid var(--border-hell);
+}
+.platz .wer .alle { color: var(--ok); }
+.platz .wer.verbunden { margin-top: 2px; }
+.platz .wer .strang { display: inline-flex; align-items: baseline; gap: 4px; margin-right: 10px; }
+.platz .wer.verbunden .rolle-marke {
+  border-color: var(--akzent); background: var(--akzent-bg); color: var(--akzent);
+}

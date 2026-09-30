@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ..ice.permissions import describe_mask
 from ..ice.types import ACLEntry, ChannelACL, ChannelGroup, MumbleChannel
+from ..woerter import UEBERALL
 from .acl_map import DesiredChannel, DesiredState, build_desired_state
 from .schema import META_GROUPS, IntercomConfig, Issue
 
@@ -600,7 +601,7 @@ class Reconciler:
             self._record(
                 Change(
                     kind="acl_update",
-                    target="(Wurzel)",
+                    target=UEBERALL,
                     summary="ACL nicht lesbar",
                     error=str(exc),
                 )
@@ -621,7 +622,7 @@ class Reconciler:
             if group.name not in META_GROUPS:
                 geloescht = Change(
                     kind="group_update",
-                    target=f"(Wurzel) @{group.name}",
+                    target=f"{UEBERALL} @{group.name}",
                     summary="Gruppe loeschen (steht nicht in groups:)",
                     before=[_group_line(group)],
                     destructive=True,
@@ -647,7 +648,7 @@ class Reconciler:
         for entry in fremde_acls:
             geloescht = Change(
                 kind="acl_update",
-                target=f"(Wurzel) {_acl_line(entry)}",
+                target=f"{UEBERALL} {_acl_line(entry)}",
                 summary="ACL-Eintrag loeschen (steht nicht in der YAML)",
                 before=[_acl_line(entry)],
                 destructive=True,
@@ -669,7 +670,7 @@ class Reconciler:
 
         change = Change(
             kind="acl_update",
-            target="(Wurzel)",
+            target=UEBERALL,
             summary="Gruppen und Richtlinien am Wurzelkanal setzen",
             before=[line for line, _ in group_diff] + [line for line, _ in acl_diff],
             after=[line for _, line in group_diff] + [line for _, line in acl_diff],

@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "audit",
+  "Protokoll",
+  "Wer hat wann was geaendert – jede Aenderung aus dieser Oberflaeche mit Vorher und Nachher.",
+  "Wenn etwas anders ist als erwartet und die Frage aufkommt, seit wann.",
+) }}
+
 <div x-data="auditSeite()" x-init="lade()">
   <div class="karte">
     <header>

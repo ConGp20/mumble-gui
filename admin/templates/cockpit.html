@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "cockpit",
+  "Cockpit",
+  "Der Blick waehrend der Veranstaltung: wer ist verbunden, wie ist seine Leitung, wo hakt es.",
+  "Im Betrieb. Zum Aufbauen ist das <a href='/pult'>Pult</a> da – hier wird nichts eingerichtet, hier wird zugesehen und im Zweifel eingegriffen.",
+  achtung="Paketverlust und Jitter misst nur der Monitor-Bot. Ist er aus, bleiben diese Spalten leer – das heisst <em>nicht gemessen</em>, nicht <em>alles gut</em>.",
+) }}
+
 
 <div x-data="cockpit()" x-init="start()">
 
@@ -80,10 +89,10 @@
 
   <div class="raster zwei" style="margin-bottom:12px">
 
-    <!-- Kanalbaum ------------------------------------------------------ -->
+    <!-- Platzbaum ------------------------------------------------------ -->
     <div class="karte">
       <header>
-        Kanalbaum
+        Plätze
         <span class="rechts leise">gestrichelt = Verlinkung bzw. Mithoeren</span>
       </header>
       <div class="inhalt baum">
@@ -160,7 +169,7 @@
     </header>
     <div class="inhalt" style="padding-bottom:0">
       <div class="werkzeugleiste">
-        <input type="search" x-model="filter" placeholder="Filter (Name, IP, Kanal, Version …)"
+        <input type="search" x-model="filter" placeholder="Filter (Name, IP, Platz, Version …)"
                style="min-width:280px">
         <span class="fueller"></span>
         <div class="spaltenwahl" @click.outside="spaltenOffen = false">
@@ -221,9 +230,9 @@
           {% if account.can_write %}
           <div class="werkzeugleiste">
             <select x-model="zielKanal">
-              <option value="">Kanal wählen …</option>
+              <option value="">Platz wählen …</option>
               <template x-for="k in flacheKanaele" :key="k.id">
-                <option :value="k.id" x-text="k.path || '(Wurzel)'"></option>
+                <option :value="k.id" x-text="Intercom.platzname(k)"></option>
               </template>
             </select>
             <button class="knopf" :disabled="!zielKanal"
@@ -263,10 +272,10 @@
           <!-- Soll/Ist -->
           <h3>Soll gegen Ist</h3>
           <dl class="feldliste">
-            <dt>Soll-Kanal</dt>
+            <dt>Fester Platz</dt>
             <dd :class="detail.user.channel_ok ? '' : 'fehlertext'"
                 x-text="detail.user.expected_channel || '(keiner festgelegt)'"></dd>
-            <dt>Ist-Kanal</dt>
+            <dt>Steht gerade auf</dt>
             <dd x-text="detail.user.channel_name"></dd>
             <dt>Priority Speaker</dt>
             <dd :class="(detail.expects_priority && !detail.user.priority_speaker) ? 'fehlertext' : ''"
@@ -285,7 +294,7 @@
           <h3>Client</h3>
           <dl class="feldliste">
             <dt>Name</dt>       <dd x-text="detail.user.name"></dd>
-            <dt>Nutzer-ID</dt>  <dd x-text="detail.user.registered ? detail.user.userid : 'nicht registriert'"></dd>
+            <dt>Personen-ID</dt>  <dd x-text="detail.user.registered ? detail.user.userid : 'nicht registriert'"></dd>
             <dt>Adresse</dt>    <dd x-text="detail.user.address"></dd>
             <dt>Segment</dt>    <dd x-text="detail.user.segment"></dd>
             <dt>UDP-Ping</dt>   <dd x-text="I.fmtPing(detail.user.udp_ping) + ' ms'"></dd>
@@ -361,7 +370,7 @@ function cockpit() {
 
     spalten: [
       {key: "name",          label: "Name"},
-      {key: "channel_name",  label: "Kanal"},
+      {key: "channel_name",  label: "Platz"},
       {key: "address",       label: "IP"},
       {key: "segment",       label: "Segment"},
       {key: "udp_ping",      label: "UDP", zahl: true},
@@ -440,7 +449,7 @@ function cockpit() {
         case "name": {
           let html = '<span class="mono">' + e(z.name) + "</span>";
           if (z.bytes_per_sec > 0) { html += ' <span class="spricht">▮</span>'; }
-          if (!z.channel_ok) { html += ' <span class="abzeichen stumm">Kanal</span>'; }
+          if (!z.channel_ok) { html += ' <span class="abzeichen stumm">falscher Platz</span>'; }
           if (z.vox_suspect) { html += ' <span class="abzeichen stumm">VOX?</span>'; }
           return html;
         }
@@ -480,7 +489,7 @@ function cockpit() {
       const e = (s) => String(s === null || s === undefined ? "" : s)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       let html = '<div class="baum-knoten"><div class="baum-zeile kanal">';
-      html += "<span>" + e(knoten.name || "(Wurzel)") + "</span>";
+      html += "<span>" + e(Intercom.platzname(knoten)) + "</span>";
       html += ' <span class="anzahl">' + knoten.total_users + "</span>";
       if (knoten.speaking > 0) { html += ' <span class="spricht">▮</span>'; }
       (knoten.link_names || []).forEach((n) => {
@@ -541,7 +550,7 @@ function cockpit() {
       if (!confirm("Client mit seinem aktuellen Zertifikat registrieren?")) return;
       this.I.post("/api/users/" + this.detail.user.session + "/register", {})
         .then(d => {
-          alert("Registriert als Nutzer-ID " + d.userid);
+          alert("Registriert – Personen-ID " + d.userid);
           this.zeigeDetail(this.detail.user.session);
         })
         .catch(err => alert("Fehlgeschlagen: " + err.message));

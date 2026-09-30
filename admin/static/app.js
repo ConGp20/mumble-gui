@@ -328,6 +328,18 @@
   }
 
   global.Intercom = {
+    /* Der oberste Platz. murmur liefert ihn ohne Namen; "Wurzel" sagt vor Ort
+       niemandem etwas. Was dort gilt, gilt ueberall -- genau das ist der Name.
+       Begruendung steht in intercom/woerter.py. */
+    UEBERALL: "Überall",
+
+    /* Anzeigename eines Platzes. Der oberste heisst immer "Ueberall": murmur
+       traegt dort je nach Alter des Servers "Root" oder gar nichts ein. */
+    platzname: function (knoten) {
+      if (!knoten) { return "Überall"; }
+      if (knoten.id === 0 || knoten.parent === -1) { return "Überall"; }
+      return knoten.path || knoten.name || "Überall";
+    },
     fmtZahl: fmtZahl,
     fmtPing: fmtPing,
     fmtPct: fmtPct,

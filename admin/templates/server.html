@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "server",
+  "Server",
+  "Serverkonfiguration, Baenne und das Protokoll des Mumble-Servers.",
+  "Selten. Im Normalbetrieb muss hier nichts angefasst werden.",
+  achtung="Die Konfigurationsansicht zeigt, <strong>woher</strong> ein Wert kommt: aus der Compose-Datei oder aus der Serverdatenbank. Was du hier aenderst, landet in der Datenbank und ueberstimmt die Datei – die naechste Aenderung an der Compose bliebe dann wirkungslos.",
+) }}
+
 <div x-data="serverSeite()" x-init="start()">
   <div class="karte" style="margin-bottom:12px">
     <header>

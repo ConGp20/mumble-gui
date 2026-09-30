@@ -1,15 +1,24 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "kanaele",
+  "Plätze",
+  "Die Raeume, in denen gesprochen wird – anlegen, umbenennen, verschieben. Mumble nennt sie Kanaele.",
+  "Wenn ein Baukasten nicht genau passt. Fuer den Anfang ist <a href='/einrichten'>Einrichten</a> schneller.",
+  achtung="Ein Platz, der unter einem anderen haengt, <strong>erbt dessen Rechte</strong>. Wer hier etwas verschiebt, aendert damit auch, wer dort reden darf – nachsehen kann man das im <a href='/pult'>Pult</a>.",
+) }}
+
 <div x-data="kanaele()" x-init="lade()">
 
   <div class="werkzeugleiste">
     <button class="knopf" @click="lade()">Neu laden</button>
     {% if account.can_write %}
     <span class="fueller"></span>
-    <input type="text" x-model="neuName" placeholder="Neuer Kanalname" style="min-width:200px">
+    <input type="text" x-model="neuName" placeholder="Name des neuen Platzes" style="min-width:200px">
     <select x-model="neuEltern">
       <template x-for="k in flach" :key="k.id">
-        <option :value="k.id" x-text="k.path || '(Wurzel)'"></option>
+        <option :value="k.id" x-text="Intercom.platzname(k)"></option>
       </template>
     </select>
     <button class="knopf haupt" :disabled="!neuName.trim()" @click="anlegen()">Anlegen</button>
@@ -19,9 +28,9 @@
   <div class="raster zwei">
     <div class="karte">
       <header>
-        Kanalbaum
+        Plätze
         {% if account.can_write %}
-        <span class="rechts leise">Nutzer per Ziehen in einen Kanal schieben</span>
+        <span class="rechts leise">Verbundene per Ziehen auf einen Platz schieben</span>
         {% endif %}
       </header>
       <div class="inhalt baum">
@@ -32,17 +41,17 @@
     </div>
 
     <div class="karte">
-      <header>Kanal bearbeiten</header>
+      <header>Platz bearbeiten</header>
       <div class="inhalt">
         <template x-if="!gewaehlt">
-          <div class="still">Einen Kanal im Baum anklicken.</div>
+          <div class="still">Links einen Platz anklicken.</div>
         </template>
         <template x-if="gewaehlt">
           <div>
             <dl class="feldliste" style="margin-bottom:10px">
-              <dt>Pfad</dt><dd x-text="gewaehlt.path || '(Wurzel)'"></dd>
+              <dt>Pfad</dt><dd x-text="Intercom.platzname(gewaehlt)"></dd>
               <dt>ID</dt><dd x-text="gewaehlt.id"></dd>
-              <dt>Nutzer</dt><dd x-text="gewaehlt.total_users"></dd>
+              <dt>Gerade da</dt><dd x-text="gewaehlt.total_users"></dd>
             </dl>
 
             {% if account.can_write %}
@@ -56,7 +65,7 @@
             <label>Elternkanal
               <select x-model="form.parent" style="width:100%">
                 <template x-for="k in flach" :key="k.id">
-                  <option :value="k.id" x-text="k.path || '(Wurzel)'"
+                  <option :value="k.id" x-text="Intercom.platzname(k)"
                           :disabled="istNachfahre(k.id)"></option>
                 </template>
               </select>
@@ -64,7 +73,7 @@
             <label>Verlinkt mit
               <select x-model="form.links" multiple size="5" style="width:100%">
                 <template x-for="k in flach" :key="k.id">
-                  <option :value="String(k.id)" x-text="k.path || '(Wurzel)'"
+                  <option :value="String(k.id)" x-text="Intercom.platzname(k)"
                           x-show="k.id !== gewaehlt.id"></option>
                 </template>
               </select>
@@ -74,10 +83,10 @@
               <button class="knopf" @click="nachricht()">Textnachricht senden</button>
               <span class="fueller"></span>
               <button class="knopf gefahr" :disabled="gewaehlt.id === 0"
-                      @click="loeschen()">Kanal loeschen</button>
+                      @click="loeschen()">Platz löschen</button>
             </div>
             <div class="hinweis">
-              Ein Kanal wird samt Unterkanaelen geloescht. Steht er in der
+              Ein Platz wird samt allem darunter gelöscht. Steht er in der
               intercom.yaml, legt der naechste <code>apply</code> ihn wieder an.
             </div>
             {% else %}
@@ -149,7 +158,7 @@ function kanaele() {
               'ondragover="event.preventDefault()" ' +
               'data-kanal="' + knoten.id + '">';
       html += '<span onclick="window.__kanalWahl(' + knoten.id + ')">' +
-              e(knoten.name || "(Wurzel)") + "</span>";
+              e(Intercom.platzname(knoten)) + "</span>";
       html += ' <span class="anzahl">' + knoten.total_users + "</span>";
       (knoten.link_names || []).forEach(n => {
         html += ' <span class="verlinkt">↔ ' + e(n) + "</span>";
@@ -189,7 +198,7 @@ function kanaele() {
     },
 
     loeschen() {
-      if (!confirm("Kanal „" + this.gewaehlt.name + "“ samt Unterkanaelen loeschen?")) return;
+      if (!confirm("Platz „" + this.gewaehlt.name + "“ samt allem darunter löschen?")) return;
       this.I.entferne("/api/channels/" + this.gewaehlt.id)
         .then(() => { this.gewaehlt = null; this.lade(); })
         .catch(err => alert("Loeschen fehlgeschlagen: " + err.message));

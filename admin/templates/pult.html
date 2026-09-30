@@ -13,6 +13,20 @@
 #}
 
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "pult",
+  "Pult",
+  "Hier stellst du zusammen, wer wo mitredet.",
+  "Beim Aufbauen einer Veranstaltung, und immer wenn jemand dazukommt oder die Aufgabe wechselt. Das ist die Seite, auf der du im Normalfall arbeitest.",
+  achtung="Rechte haengen am <strong>Platz</strong>, nicht an der Person. Und: nur wer unter <a href='/nutzer'>Personen</a> registriert ist, kann ueberhaupt in einer Rolle sein – der Server erkennt Leute am Zertifikat, nicht am Namen.",
+  schritte=[
+    "<strong>Person in eine Rolle ziehen.</strong> Rollen sind Schubladen wie <em>Technik</em> oder <em>Kampfgericht</em>. Rechte vergibt man an die Rolle, nie an einzelne Leute – sonst darf man bei jedem Neuen wieder alles durchgehen.",
+    "<strong>Rechte am Platz verteilen.</strong> Auf „Rechte“ neben einem Platz klicken. Dort steht je Rolle, ob sie hier betreten, sprechen, mithoeren, reinschalten und schreiben darf.",
+    "<strong>Personen auf Plaetze ziehen.</strong> Wer verbunden ist, wird sofort verschoben. Wer nicht verbunden ist, bekommt einen <em>festen Platz</em> – dort landet er dann nach jedem Anmelden.",
+  ],
+) }}
+
 <div x-data="pult()" x-init="laden()" class="pult">
 
   <div class="banner" x-show="fehler" x-cloak>
@@ -24,10 +38,8 @@
 
   <div class="pult-kopf">
     <div class="pult-erklaerung">
-      <b>Ziehen und ablegen.</b>
-      Eine Person auf einen Platz zieht sie dorthin. Eine Person auf eine Rolle
-      nimmt sie in die Rolle auf. Einen Platz auf einen anderen haengt ihn
-      darunter. Wer lieber klickt: erst auf <em>Aufnehmen</em>, dann auf das Ziel.
+      Ziehen mit der Maus – oder erst auf eine Person klicken
+      (<em>aufnehmen</em>), dann auf das Ziel.
     </div>
     <div class="pult-werkzeuge">
       <button class="knopf klein" @click="laden()" :disabled="laedt">
@@ -77,7 +89,7 @@
           </div>
         </template>
         <p class="leer" x-show="!gefiltertePersonen.length" x-cloak>
-          Keine Person gefunden. Registriert wird unter <a href="/nutzer">Nutzer</a>.
+          Keine Person gefunden. Angelegt werden sie unter <a href="/nutzer">Personen</a>.
         </p>
       </div>
 
@@ -96,7 +108,7 @@
         </template>
         <p class="leer" x-show="!rollen.filter(r => !r.eingebaut).length" x-cloak>
           Noch keine eigene Rolle. Eine entsteht, sobald du unter
-          <a href="/acl">ACL</a> eine Gruppe anlegst – oder mit einer Vorlage unter
+          <a href="/acl">Rechte im Original</a> eine Rolle anlegst – oder mit einem Baukasten unter
           <a href="/einrichten">Einrichten</a>.
         </p>
       </div>
@@ -129,13 +141,45 @@
             <div class="kopfzeile">
               <span class="name" x-text="k.name"></span>
               <span class="rechts">
-                <button class="knopf winzig" @click.stop="gewaehlt = (gewaehlt === k.id ? null : k.id)"
+                <button class="knopf winzig" @click.stop="waehle(k.id)"
                         :title="'Rechte an diesem Platz ' + (gewaehlt === k.id ? 'zuklappen' : 'zeigen')">
                   Rechte
                 </button>
               </span>
             </div>
-            <div class="besetzung">
+            {# Wer gehoert hierher? Das ist die Frage beim Aufbauen -- und sie
+               laesst sich beantworten, auch wenn niemand verbunden ist. Vorher
+               stand hier 14 Mal "leer". #}
+            <div class="wer" x-show="!k.wurzel">
+              <span class="etikett">spricht</span>
+              <span class="rollen" x-html="rollenText(k.id, 'sprechen')"></span>
+            </div>
+
+            {# Die Verbindungen sind die Auskunft, die eine Intercom braucht --
+               sie stehen deshalb in der Uebersicht und nicht nur im Blatt. #}
+            <div class="wer verbunden"
+                 x-show="verbindungenVon(k.id, 'hoert').length ||
+                         verbindungenVon(k.id, 'reinschalten').length">
+              <template x-if="verbindungenVon(k.id, 'hoert').length">
+                <span class="strang">
+                  <span class="etikett">hört</span>
+                  <template x-for="z in verbindungenVon(k.id, 'hoert')" :key="'h'+z.pfad">
+                    <span class="rolle-marke" x-text="z.name"></span>
+                  </template>
+                </span>
+              </template>
+              <template x-if="verbindungenVon(k.id, 'reinschalten').length">
+                <span class="strang">
+                  <span class="etikett">schaltet rein nach</span>
+                  <template x-for="z in verbindungenVon(k.id, 'reinschalten')" :key="'r'+z.pfad">
+                    <span class="rolle-marke" x-text="z.name"></span>
+                  </template>
+                </span>
+              </template>
+            </div>
+
+            <div class="besetzung" x-show="besetzung(k.id).length">
+              <span class="etikett">jetzt da</span>
               <template x-for="u in besetzung(k.id)" :key="u.session">
                 <span class="client mono"
                       draggable="true"
@@ -149,7 +193,6 @@
                   <span class="abzeichen taub" x-show="u.taub">taub</span>
                 </span>
               </template>
-              <span class="still" x-show="!besetzung(k.id).length">leer</span>
             </div>
           </div>
         </template>
@@ -158,68 +201,154 @@
   </div>
 
   {# ---------------------------------------------------------------- #}
-  {#  Rechte am gewaehlten Platz                                       #}
+  {#  Der gewaehlte Platz -- aus seiner eigenen Sicht                   #}
   {# ---------------------------------------------------------------- #}
-  <section class="karte" x-show="gewaehlt !== null" x-cloak style="margin-top:12px">
+  <section class="karte platzblatt" x-show="gewaehlt !== null" x-cloak
+           style="margin-top:12px">
     <header>
-      Rechte an <b x-text="platzName(gewaehlt)"></b>
+      <span x-text="platzName(gewaehlt)"></span>
       <span class="rechts">
         <button class="knopf klein" @click="gewaehlt = null">Zuklappen</button>
       </span>
     </header>
-    <div class="inhalt">
-      <p class="hinweistext">
-        Das Zeichen sagt, was am Ende gilt. Die Farbe sagt, ob es <em>hier</em>
-        gesetzt ist: gruen erlaubt, rot verboten, grau von weiter oben geerbt.
-        Klicken wechselt zwischen geerbt, erlaubt und verboten.
-      </p>
 
-      <div class="tabellenrahmen">
-        <table class="dicht matrix">
-          <thead>
-            <tr>
-              <th>Rolle</th>
-              <template x-for="s in spalten" :key="s.name">
-                <th class="zahl" :title="s.hilfe" x-text="s.titel"></th>
-              </template>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="r in rollen" :key="r.name">
+    <div class="inhalt" x-show="blatt">
+      <div class="platz-spalten">
+
+        {# --- Wer sitzt hier --------------------------------------------- #}
+        <div class="platz-teil">
+          <h3>Wer ist hier</h3>
+          <p class="hinweistext">
+            Was jemand darf, der auf diesem Platz sitzt. Klicken wechselt
+            zwischen geerbt, erlaubt und verboten.
+          </p>
+          <table class="dicht matrix">
+            <thead>
               <tr>
-                <td>
-                  <span x-text="r.titel"></span>
-                  <span class="still" x-show="r.eingebaut">(eingebaut)</span>
-                </td>
+                <th>Rolle</th>
                 <template x-for="s in spalten" :key="s.name">
-                  <td class="zelle">
-                    <button class="rechtzelle"
-                            :class="zellenKlasse(gewaehlt, r.name, s.name)"
-                            :disabled="!darfBearbeiten(gewaehlt, r.name)"
-                            :title="zellenTitel(gewaehlt, r.name, s.name)"
-                            @click="weiterschalten(gewaehlt, r.name, s.name)"
-                            x-text="zellenZeichen(gewaehlt, r.name, s.name)"></button>
-                  </td>
+                  <th class="zahl" :title="s.hilfe" x-text="s.titel"></th>
                 </template>
               </tr>
-            </template>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              <template x-for="r in (blatt ? blatt.hier : [])" :key="r.name">
+                <tr>
+                  <td>
+                    <span x-text="r.titel"></span>
+                    <span class="still" x-show="r.eingebaut">(eingebaut)</span>
+                  </td>
+                  <template x-for="s in spalten" :key="s.name">
+                    <td class="zelle">
+                      <button class="rechtzelle"
+                              :class="zellenKlasse(gewaehlt, r.name, s.name)"
+                              :disabled="!darfBearbeiten(gewaehlt, r.name)"
+                              :title="zellenTitel(gewaehlt, r.name, s.name)"
+                              @click="weiterschalten(gewaehlt, r.name, s.name)"
+                              x-text="zellenZeichen(gewaehlt, r.name, s.name)"></button>
+                    </td>
+                  </template>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p class="hinweistext" x-show="unbestimmtHier()" x-cloak>
+            Ein Fragezeichen heisst: haengt an etwas, das erst beim Verbinden
+            feststeht – ein geprüftes Zertifikat, ein Zugangswort. Das wird
+            hier nicht geraten.
+          </p>
+          <template x-for="r in (blatt ? blatt.hier : [])" :key="'g-' + r.name">
+            <p class="hinweistext warnung" x-show="r.grund" x-cloak>
+              <b x-text="r.titel"></b>: <span x-text="r.grund"></span>
+            </p>
+          </template>
+        </div>
+
+        {# --- Mit wem ist er verbunden ------------------------------------ #}
+        <div class="platz-teil">
+          <h3>Mit wem</h3>
+          <p class="hinweistext">
+            Die eigentliche Intercomfrage. Betrifft alle, die hier sprechen
+            dürfen:
+            <b x-text="blatt && blatt.spricht_hier.length
+                       ? blatt.spricht_hier.join(', ') : 'zurzeit niemand'"></b>.
+          </p>
+
+          <div class="verbindung">
+            <div class="verbindung-kopf">
+              <span class="pfeil">→</span>
+              <b>hört von hier aus mit</b>
+              <span class="still">läuft im Hintergrund weiter, auch beim Platzwechsel</span>
+            </div>
+            <div class="marken">
+              <template x-for="z in (blatt ? blatt.hoert : [])" :key="'h' + z.pfad">
+                <span class="marke">
+                  <span x-text="z.name"></span>
+                  <button class="weg" title="Verbindung lösen"
+                          @click="verbinden('hoert', z.kanal, false)">×</button>
+                </span>
+              </template>
+              <span class="still" x-show="blatt && !blatt.hoert.length">nichts</span>
+            </div>
+            <select class="zufuegen" @change="verbindenAus($event, 'hoert')">
+              <option value="">＋ Platz hinzufügen …</option>
+              <template x-for="k in andereplaetze()" :key="'ho' + k.id">
+                <option :value="k.id" x-text="k.pfad"></option>
+              </template>
+            </select>
+          </div>
+
+          <div class="verbindung">
+            <div class="verbindung-kopf">
+              <span class="pfeil">→</span>
+              <b>kann von hier aus reinschalten nach</b>
+              <span class="still">hineinsprechen, ohne den Platz zu wechseln</span>
+            </div>
+            <div class="marken">
+              <template x-for="z in (blatt ? blatt.reinschalten : [])" :key="'r' + z.pfad">
+                <span class="marke">
+                  <span x-text="z.name"></span>
+                  <button class="weg" title="Verbindung lösen"
+                          @click="verbinden('reinschalten', z.kanal, false)">×</button>
+                </span>
+              </template>
+              <span class="still" x-show="blatt && !blatt.reinschalten.length">nichts</span>
+            </div>
+            <select class="zufuegen" @change="verbindenAus($event, 'reinschalten')">
+              <option value="">＋ Platz hinzufügen …</option>
+              <template x-for="k in andereplaetze()" :key="'re' + k.id">
+                <option :value="k.id" x-text="k.pfad"></option>
+              </template>
+            </select>
+          </div>
+
+          <div class="verbindung gegenrichtung"
+               x-show="blatt && (blatt.wird_gehoert_von.length || blatt.reinschalten_von.length)"
+               x-cloak>
+            <div class="verbindung-kopf">
+              <span class="pfeil">←</span>
+              <b>Gegenrichtung</b>
+              <span class="still">dort eingestellt, hier nur zur Kenntnis</span>
+            </div>
+            <div class="marken" x-show="blatt && blatt.wird_gehoert_von.length">
+              <span class="etikett">wird gehört von</span>
+              <template x-for="z in (blatt ? blatt.wird_gehoert_von : [])" :key="'wg' + z.pfad">
+                <span class="marke leise"><a :href="'#'" @click.prevent="gewaehlt = z.kanal; blattLaden()"
+                                             x-text="z.name"></a></span>
+              </template>
+            </div>
+            <div class="marken" x-show="blatt && blatt.reinschalten_von.length">
+              <span class="etikett">reinschalten dürfen</span>
+              <template x-for="z in (blatt ? blatt.reinschalten_von : [])" :key="'rv' + z.pfad">
+                <span class="marke leise"><a :href="'#'" @click.prevent="gewaehlt = z.kanal; blattLaden()"
+                                             x-text="z.name"></a></span>
+              </template>
+            </div>
+          </div>
+        </div>
       </div>
-
-      <template x-for="r in rollen" :key="'grund-' + r.name">
-        <p class="hinweistext warnung" x-show="grundFuer(gewaehlt, r.name)" x-cloak>
-          <b x-text="r.titel"></b>: <span x-text="grundFuer(gewaehlt, r.name)"></span>
-          <a href="/acl">In der Expertensicht oeffnen</a>
-        </p>
-      </template>
-
-      <p class="hinweistext" x-show="unbestimmtHier()" x-cloak>
-        Ein Fragezeichen heisst: haengt an etwas, das erst beim Verbinden
-        feststeht – ein geprueftes Zertifikat, ein Zugangswort. Das wird hier
-        nicht geraten.
-      </p>
     </div>
+    <div class="inhalt" x-show="!blatt"><span class="still">lädt …</span></div>
   </section>
 
   {# ---------------------------------------------------------------- #}
@@ -236,17 +365,17 @@
           <tr>
             <td>Person in eine Rolle aufnehmen</td>
             <td><span class="status status-ok">ja</span></td>
-            <td class="text-leise">Steht als Gruppe am Wurzelkanal.</td>
+            <td class="text-leise">Steht als Rolle ganz oben und gilt damit überall.</td>
           </tr>
           <tr>
             <td>Rechte verteilen</td>
             <td><span class="status status-ok">ja</span></td>
-            <td class="text-leise">Steht als ACL am Platz.</td>
+            <td class="text-leise">Steht als Regel am Platz.</td>
           </tr>
           <tr>
             <td>Platz unter einen anderen haengen</td>
             <td><span class="status status-ok">ja</span></td>
-            <td class="text-leise">Der Kanalbaum steht in der Serverdatenbank.</td>
+            <td class="text-leise">Die Plätze stehen in der Serverdatenbank.</td>
           </tr>
           <tr>
             <td>Jemanden auf einen Platz ziehen</td>
@@ -286,8 +415,13 @@ function pult() {
 
     kanaele: [],
     rollen: [],
+    /* Das Blatt zum gewaehlten Platz. Wird eigens geholt: es enthaelt die
+       Verbindungen und die Gegenrichtung, die in der Uebersicht nichts zu
+       suchen haben. */
+    blatt: null,
     personen: [],
     verbunden: {},
+    verbindungen: {},
     rechte: {},
     spalten: [],
     wunsch: {},
@@ -311,6 +445,7 @@ function pult() {
         this.rollen = daten.rollen;
         this.personen = daten.personen;
         this.verbunden = daten.verbunden;
+        this.verbindungen = daten.verbindungen || {};
         this.rechte = daten.rechte;
         this.spalten = daten.spalten;
         this.wunsch = wunsch.wunsch || {};
@@ -323,6 +458,57 @@ function pult() {
       }).finally(() => {
         this.laedt = false;
       });
+    },
+
+    blattLaden() {
+      if (this.gewaehlt === null) { this.blatt = null; return Promise.resolve(); }
+      const fuer = this.gewaehlt;
+      return Intercom.get("/api/pult/platz/" + fuer)
+        .then((d) => { if (this.gewaehlt === fuer) { this.blatt = d; } })
+        .catch((e) => { this.fehler = e.message; this.blatt = null; });
+    },
+
+    waehle(id) {
+      this.gewaehlt = (this.gewaehlt === id ? null : id);
+      this.blatt = null;
+      return this.blattLaden();
+    },
+
+    andereplaetze() {
+      return this.kanaele.filter((k) => !k.wurzel && k.id !== this.gewaehlt);
+    },
+
+    verbindenAus(ereignis, art) {
+      const id = Number(ereignis.target.value);
+      ereignis.target.value = "";
+      if (id) { this.verbinden(art, id, true); }
+    },
+
+    /* Eine Verbindung setzen heisst: das Recht am *Zielplatz* fuer die Rollen
+       vergeben, die am Ausgangsplatz sprechen duerfen. Was dabei wirklich
+       passiert ist, kommt zurueck und wird gemeldet -- nicht die Absicht. */
+    verbinden(art, ziel, an) {
+      const wort = art === "hoert" ? "Mithören" : "Reinschalten";
+      this.fehler = "";
+      return Intercom.put("/api/pult/verbindung",
+                          { art: art, von: this.gewaehlt, nach: ziel, an: an })
+        .then((d) => {
+          let text;
+          if (!an) {
+            text = wort + ": Verbindung gelöst. " + (d.hinweis || "");
+          } else if (d.rollen.length) {
+            text = wort + " eingerichtet für: " + d.rollen.join(", ") + ".";
+          } else {
+            text = wort + " eingetragen – aber keine Rolle konnte das Recht "
+                 + "bekommen.";
+          }
+          if (d.uebersprungen && d.uebersprungen.length) {
+            text += " Übersprungen: " + d.uebersprungen.join("; ");
+          }
+          this.melde(text);
+          return Promise.all([this.laden(), this.blattLaden()]);
+        })
+        .catch((e) => { this.fehler = e.message; });
     },
 
     melde(text) {
@@ -390,7 +576,7 @@ function pult() {
 
     aufPlatz(k) {
       const h = this.inDerHand();
-      if (!h) { this.gewaehlt = (this.gewaehlt === k.id ? null : k.id); return; }
+      if (!h) { this.waehle(k.id); return; }
       this.zug = null;
       this.aufnahme = null;
 
@@ -432,7 +618,7 @@ function pult() {
       const h = this.inDerHand();
       if (!h) { return; }
       if (r.eingebaut) {
-        this.fehler = '"' + r.titel + '" ist eine eingebaute Gruppe von Mumble. ' +
+        this.fehler = '"' + r.titel + '" ist eine eingebaute Rolle von Mumble. ' +
                       "Wer dazugehoert, ergibt sich von selbst.";
         this.zug = null; this.aufnahme = null;
         return;
@@ -457,9 +643,10 @@ function pult() {
 
     schreibe(versprechen, meldung) {
       this.fehler = "";
+      const danach = () => Promise.all([this.laden(), this.blattLaden()]);
       return versprechen
-        .then(() => { this.melde(meldung); return this.laden(); })
-        .catch((e) => { this.fehler = e.message; return this.laden(); });
+        .then(() => { if (meldung) { this.melde(meldung); } return danach(); })
+        .catch((e) => { this.fehler = e.message; return danach(); });
     },
 
     /* --- Anzeige ------------------------------------------------------ */
@@ -472,8 +659,54 @@ function pult() {
         p.rollen.some((r) => r.toLowerCase().indexOf(s) !== -1));
     },
 
+    verbindungenVon(kanalId, art) {
+      return ((this.verbindungen || {})[art] || {})[String(kanalId)] || [];
+    },
+
     besetzung(kanalId) {
       return this.verbunden[String(kanalId)] || [];
+    },
+
+    /* Welche Rollen duerfen hier was? Das ist die Auskunft, die beim Aufbauen
+       zaehlt -- und sie steht schon in den ausgerechneten Rechten, es musste
+       sie nur jemand hinschreiben.
+
+       Darf "Alle" es, ist die Aufzaehlung der einzelnen Rollen sinnlos: dann
+       duerfen es ohnehin alle. Und ein Fragezeichen wird nicht zu einem Ja
+       gerundet, sondern als solches genannt. */
+    rollenText(kanalId, recht) {
+      const je = this.rechte[String(kanalId)];
+      if (!je) { return '<span class="still">–</span>'; }
+
+      const wert = (name) => (je[name] || {}).wirkung?.[recht];
+      if (wert("all") === true) { return '<span class="alle">alle</span>'; }
+
+      const duerfen = [];
+      const vielleicht = [];
+      for (const r of this.rollen) {
+        if (r.eingebaut) { continue; }
+        const w = wert(r.name);
+        if (w === true) { duerfen.push(r.titel); }
+        else if (w === null) { vielleicht.push(r.titel); }
+      }
+      if (wert("auth") === true) { duerfen.unshift("alle Angemeldeten"); }
+
+      const teile = [];
+      if (duerfen.length) {
+        teile.push(duerfen.map((t) => '<span class="rolle-marke">' +
+                                      this.sicher(t) + "</span>").join(" "));
+      }
+      if (vielleicht.length) {
+        teile.push('<span class="still">' + this.sicher(vielleicht.join(", ")) +
+                   " (kommt drauf an)</span>");
+      }
+      return teile.length ? teile.join(" ") : '<span class="still">niemand</span>';
+    },
+
+    sicher(text) {
+      return String(text).replace(/[&<>"]/g, (z) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"
+      })[z]);
     },
 
     platzName(id) {
@@ -494,6 +727,9 @@ function pult() {
     /* --- Rechtematrix ------------------------------------------------- */
 
     zelle(kanalId, rolle) {
+      if (this.blatt && this.blatt.platz && this.blatt.platz.id === kanalId) {
+        return (this.blatt.hier || []).find((r) => r.name === rolle) || null;
+      }
       const k = this.rechte[String(kanalId)];
       return (k && k[rolle]) || null;
     },
@@ -547,10 +783,9 @@ function pult() {
     },
 
     unbestimmtHier() {
-      const k = this.rechte[String(this.gewaehlt)];
-      if (!k) { return false; }
-      return Object.keys(k).some((rolle) =>
-        this.spalten.some((s) => k[rolle].wirkung[s.name] === null));
+      if (!this.blatt) { return false; }
+      return (this.blatt.hier || []).some((r) =>
+        this.spalten.some((s) => r.wirkung[s.name] === null));
     },
 
     weiterschalten(kanalId, rolle, recht) {

@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "einrichten",
+  "Einrichten",
+  "Fertige Baukaesten fuer den Anfang, und die Sicherung.",
+  "Einmal ganz am Anfang. Und die Sicherung immer dann, wenn der Aufbau steht und bevor etwas Grosses ansteht.",
+  achtung="Ein Baukasten ist ein <strong>einmaliger Startschuss</strong>, keine laufende Bindung. Wer danach einen Platz umbenennt, hat einen umbenannten Platz – es schreibt nichts wieder zurueck. Vor dem Anwenden zeigt ein Testlauf, was entstehen wuerde.",
+) }}
+
 <div x-data="einrichten()" x-init="start()">
 
   {# --- Hinweis, wenn der Server gar nicht erreichbar ist -------------------
@@ -20,7 +29,7 @@
     <header>Baukästen</header>
     <div class="inhalt">
       <p class="hinweis">
-        Ein Baukasten legt einmalig Kanäle und Gruppen an – danach ist er fertig
+        Ein Baukasten legt einmalig Plätze und Rollen an – danach ist er fertig
         und bindet nichts. Was du anschließend umbenennst, löschst oder
         hinzufügst, bleibt so. Es gibt keinen Neustart, der einen Baukasten
         wieder herstellt.
@@ -77,7 +86,7 @@
     <div class="inhalt">
       <p class="hinweis">
         Die Sicherung ist ein Abbild dessen, was <em>gerade</em> im Server steht:
-        Kanäle, Gruppen, Rechte. Sie ist eine Momentaufnahme zum Wegheften, keine
+        Plätze, Rollen, Rechte. Sie ist eine Momentaufnahme zum Wegheften, keine
         Steuerdatei – der Server bleibt die Wahrheit.
       </p>
 
@@ -156,8 +165,8 @@
         <template x-if="plan.unknown_users && plan.unknown_users.length">
           <p class="hinweis">
             Diese Namen sind noch nicht registriert und können deshalb in keiner
-            Gruppe sein: <span x-text="plan.unknown_users.join(', ')"></span>.
-            Sie müssen sich einmal verbinden, dann kannst du sie unter „Nutzer“
+            Rolle sein: <span x-text="plan.unknown_users.join(', ')"></span>.
+            Sie müssen sich einmal verbinden, dann kannst du sie unter „Personen“
             registrieren.
           </p>
         </template>

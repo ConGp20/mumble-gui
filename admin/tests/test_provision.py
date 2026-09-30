@@ -15,6 +15,7 @@ import textwrap
 import pytest
 import yaml
 
+from intercom.woerter import UEBERALL
 from tests.conftest import needs_ice
 
 pytestmark = needs_ice
@@ -900,7 +901,7 @@ def test_gescheitertes_setacl_meldet_nichts_als_angewendet(ice_client, config, m
     monkeypatch.setattr(ice_client, "set_channel_acl", kaputt)
 
     plan = reconcile(ice_client, config, prune=True, dry_run=False)
-    geloescht = [c for c in plan.changes if c.target == "(Wurzel) @haustechnik"]
+    geloescht = [c for c in plan.changes if c.target == f"{UEBERALL} @haustechnik"]
     assert len(geloescht) == 1
     assert geloescht[0].applied is False, "Loeschung wurde faelschlich gemeldet"
     assert "murmur mag nicht" in geloescht[0].error
@@ -923,7 +924,7 @@ def test_erfolgreiches_prune_wird_als_angewendet_gemeldet(ice_client, config):
     ice_client.set_channel_acl(root)
 
     plan = reconcile(ice_client, config, prune=True, dry_run=False)
-    geloescht = next(c for c in plan.changes if c.target == "(Wurzel) @haustechnik")
+    geloescht = next(c for c in plan.changes if c.target == f"{UEBERALL} @haustechnik")
     assert geloescht.applied is True
     assert geloescht.error == ""
     assert "haustechnik" not in {g.name for g in ice_client.get_acl(0).own_groups()}
