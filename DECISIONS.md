@@ -775,8 +775,149 @@ ein Geraet ohne Anmeldung ziehen kann, muss die Sichtbarkeit einmal in der
 Oberflaeche umgestellt werden. Die Verknuepfung selbst stellt das Etikett
 `org.opencontainers.image.source` im Dockerfile her.
 
-**Nicht geprueft.** Der Arbeitsablauf ist hier nie gelaufen -- GitHub Actions
-laesst sich in dieser Umgebung nicht ausfuehren. Geprueft sind: die
-YAML-Gueltigkeit, das Verhalten von Compose bei `image` plus `build`, beide
-Zweige in `setup.sh` gegen eine lokale Registry, und dass die Etiketten im
-fertigen Image ankommen. Der erste echte Lauf ist der erste Beweis.
+**Geprueft.** Zunaechst nur mittelbar -- GitHub Actions laesst sich in dieser
+Umgebung nicht ausfuehren -- naemlich ueber die YAML-Gueltigkeit, das Verhalten
+von Compose bei `image` plus `build`, beide Zweige in `setup.sh` gegen eine
+lokale Registry und die Etiketten im fertigen Image. Inzwischen ist der
+Arbeitsablauf selbst mehrfach durchgelaufen und hat das Multi-Arch-Image
+veroeffentlicht; der erste Lauf brauchte 2 min 20 s.
+
+---
+
+## D-029 - Der Server ist die Quelle der Wahrheit, nicht die `intercom.yaml`
+
+**Problem.** `PROVISION_ON_START` stand ueberall auf `true`. Bei jedem Start des
+Containers wurde die YAML wieder auf den Server geschrieben -- was jemand in der
+Oberflaeche an einem verwalteten Kanal geaendert hatte, war danach weg. Die
+Datei gewann, immer. Damit war jede Aenderung in der Oberflaeche bestenfalls
+vorlaeufig, und die Oberflaeche fuehlte sich an wie ein Betrachter mit Knoepfen.
+
+**Entscheidung.** Umgekehrt: angelegt und geaendert wird in der Oberflaeche, und
+was dort steht, bleibt dort.
+
+* `PROVISION_ON_START` ist per Vorgabe **aus** (`config.py`,
+  `docker-compose.yml`, `.env.example`).
+* Eine **fehlende** `intercom.yaml` ist der Normalfall, kein Fehler: kein
+  Banner, kein Log-Eintrag. Eine Datei, die da ist und sich nicht lesen laesst,
+  bleibt ein Fehler -- dann wollte jemand etwas und es ging schief.
+* `setup.sh` legt nichts mehr an. Eine Einrichtung, die ungefragt elf Kanaele
+  mit fremden Namen hinstellt, nimmt die Entscheidung vorweg.
+
+**Was an die Stelle tritt.** Baukaesten in der Oberflaeche
+(`admin/intercom/provision/vorlagen.py`) als einmaliger Startschuss, keine
+laufende Bindung: wer danach einen Kanal umbenennt, hat einen umbenannten Kanal.
+Dazu eine Sicherung zum Herunterladen und Einspielen -- beim Einspielen ist
+Aufraeumen per Vorgabe aus, denn eine Sicherung einzuspielen soll nichts
+wegwerfen, was jemand seither angelegt hat.
+
+Jede Vorlage ist der Text einer `intercom.yaml` und laeuft durch dieselbe
+Pruefung wie eine eingespielte Sicherung. Sie kann also nichts, was eine
+Sicherung nicht auch koennte, und ein Fehler faellt im Test auf statt beim
+Anwenden.
+
+**Die Provisionierung bleibt.** Sie ist jetzt ein Werkzeug (Testlauf, Anwenden,
+Export) statt ein Herr, der bei jedem Start durchgreift.
+
+---
+
+## D-030 - Die Rechte-Auswertung ist nachgebaut, nicht erfragt
+
+**Problem.** Die Oberflaeche soll zeigen, was eine Rolle an einem Platz darf --
+auch dann, wenn niemand verbunden ist. Beim Aufbauen einer Veranstaltung sitzt
+noch keiner im Kanal, und genau dann will man die Rechte sehen.
+
+`Server::effectivePermissions` beantwortet die Frage, aber nur fuer eine
+**verbundene Sitzung**. Es gibt in der Slice nichts, was "was duerfte jemand aus
+Gruppe X in Kanal Y" ohne Sitzung beantwortet.
+
+**Entscheidung.** `ChanACL::effectivePermissions` (src/ACL.cpp) und
+`Group::appliesToUser` (src/Group.cpp) sind in `admin/intercom/ice/wirkung.py`
+nachgebaut, Stand v1.5.735.
+
+**Warum nicht naeherungsweise.** Weil eine Naeherung hier genau das erzeugt, was
+nicht passieren darf: eine Anzeige, die etwas behauptet, das der Server anders
+sieht. Drei Details kommen aus dem Gedaechtnis falsch heraus, und jedes einzelne
+haette die Anzeige zum Luegen gebracht:
+
+1. **Innerhalb eines Eintrags gilt erst `allow`, dann `deny`.** Ein Eintrag, der
+   dasselbe Recht erlaubt und verbietet, verbietet es. Die umgekehrte Annahme
+   zeigt ein erteiltes Recht, das der Server verweigert.
+2. **`bInheritACL` bricht die Kette nicht ab.** Sie laeuft *immer* bis zur
+   Wurzel; ein nicht erbender Kanal setzt nur die gesammelten Rechte auf die
+   Grundausstattung zurueck (`if (!ch->bInheritACL) granted = def;`). `Traverse`
+   und `Write` laufen daran vorbei weiter -- ein fehlendes `Traverse` von oben
+   nimmt auch einem nicht erbenden Unterkanal alles.
+3. **`Write` impliziert fast alles, aber weder `Speak` noch `Whisper`.** Ein
+   Admin darf alles verwalten und trotzdem nicht ueberall reinreden.
+
+Ein vierter Punkt kam aus dem Zufallstest: **`getACL` liefert geerbte Gruppen
+mit leerer `add`-Liste** (`impl_Server_getACL` fuellt bei ihnen nur `members`).
+Wer sie zur Aufloesung heranzieht, haelt jede vererbte Rolle fuer unbesetzt und
+zeigt zu wenig Rechte an. Die Aufloesung laeuft deshalb ueber die *eigenen*
+Gruppen jedes Kanals -- so wie `Group::appliesToUser` ueber `qhGroups` laeuft.
+
+**Was nicht nachgebaut wird.** Alles, was an einer echten Verbindung haengt:
+`strong` (geprueftes Zertifikat), `#zugangswort`, `$zertifikatshash`. Das wird
+**nicht geraten**, sondern eingeklammert: jede Kombination der offenen Fragen
+wird durchgerechnet, und nur was in allen Durchlaeufen gleich herauskommt, gilt
+als sicher. Der Rest kommt als "kommt drauf an" in die Oberflaeche.
+
+Zwei Extremlaeufe ("alle treffen zu" / "keine trifft zu") genuegen dafuer
+**nicht** -- auch das hat der Zufallstest gefunden: zwei Angaben koennen sich
+gegenseitig aufheben, und ein Bit, das in beiden Extremen gleich ist, kann in
+einer Mischung abweichen. Gezaehlt wird deshalb ueber alle 2^n Kombinationen,
+mit einer Reissleine bei zehn verschiedenen Angaben (in der Praxis sind es null
+oder eine).
+
+`sub` wird ausgerechnet statt eingeklammert -- es haengt nur am Aufenthaltsort,
+und der ist bekannt.
+
+**Belegt.** 642 gewuerfelte ACL-Konstellationen gegen murmur v1.5.735, jeweils
+mit einem wirklich verbundenen pymumble-Client und `effectivePermissions` als
+Massstab. Geprueft wird die Eigenschaft, auf die sich die Oberflaeche verlaesst:
+**kein Bit, das als sicher ausgegeben wird, weicht ab.** Ergebnis: keines. Der
+Kern davon steht als Integrationstest in
+`test_gerechnete_rechte_stimmen_mit_dem_server_ueberein`.
+
+---
+
+## D-031 - Der Wunschzustand fuer das, was murmur nicht behaelt, steht in SQLite
+
+**Problem.** Drei Dinge ueberleben in Mumble keine Verbindung:
+
+| Was | Warum nicht |
+|-----|-------------|
+| Fester Platz je Person | `enum UserInfo` hat kein Kanalfeld; `defaultchannel` gilt fuer alle gleich |
+| Dauerhaftes Mithoeren | `startListening` nimmt eine **Sitzung**, kein Konto |
+| Vorrang beim Sprechen | Priority Speaker ist ein Flag am verbundenen Client |
+
+Frueher stand das in der `intercom.yaml`. Die ist als Quelle der Wahrheit weg
+(D-029), also brauchte es einen neuen Ort.
+
+**Entscheidung.** Tabelle `wunsch` in `/data/history.sqlite`, Migrationsschritt
+3. Der `Enforcer` zieht sie nach dem Verbinden nach.
+
+**Als Pfad, nicht als Kanal-ID.** murmur vergibt IDs neu, sobald ein Kanal
+geloescht und wieder angelegt wird. Nach dem Einspielen einer Sicherung zeigte
+eine gespeicherte ID auf den falschen Platz oder ins Leere. Beim Umbenennen und
+Verschieben werden die Pfade mitgezogen (`wunsch_umschreiben`), samt Unterpfaden
+und ohne Namensverwandte zu treffen.
+
+**Beim Abmelden wird geloescht.** murmur vergibt Nutzer-IDs weiter; ein
+stehengebliebener Wunsch erbte irgendwann die naechste Person mit derselben ID.
+
+**Der Platz wird einmal je Sitzung hergestellt, nicht dauernd.** Wer danach
+bewusst woanders hingeht, soll dort bleiben duerfen. Ein Automatismus, der
+jemanden mitten im Wettkampf zurueckzieht, ist schlimmer als gar keiner. Die
+Merkliste haengt an der Sitzung und wird beim Trennen geleert.
+
+**In der Sicherung, nach Namen.** Ein eigener Abschnitt `wunsch:` im Export --
+`parse_config` laesst unbekannte Schluessel auf oberster Ebene stehen, der
+Provisioning-Weg bleibt also unberuehrt. Geschluesselt nach Nutzernamen, aus
+demselben Grund wie oben bei den Pfaden. Wen es beim Einspielen nicht gibt,
+meldet die Antwort als fehlend, statt ihn zu verschlucken.
+
+**Sichtbar getrennt.** Das Pult sagt in einer eigenen Tafel, was der Server
+haelt und was nicht: Rollen, Rechte und der Kanalbaum ueberleben einen Neustart,
+ein Zug in einen Kanal gilt nur fuer diese Verbindung, und ein fester Platz
+kommt gar nicht von Mumble, sondern von uns.

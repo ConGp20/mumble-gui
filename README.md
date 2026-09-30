@@ -5,9 +5,14 @@ PTT-Intercom im Leichtathletik-Stadion: Regie, Kameras, Zeitnahme (FinishLynx),
 Stadionsprecher, Technik, Kampfgericht.
 
 Kein Dashboard zum Anschauen, sondern ein Betriebs-Cockpit: jeder Client mit
-IP, Ping, Paketverlust, Version und Zertifikat; jede ACL; jede Gruppe; und ein
-Server, der sich aus einer YAML in den Wunschzustand bringt, statt dass jemand
-dreissig Kanaele von Hand klickt.
+IP, Ping, Paketverlust, Version und Zertifikat; jede ACL; jede Gruppe.
+
+**Die Wahrheit steht im Server.** Angelegt und geaendert wird in der
+Oberflaeche, und was dort steht, bleibt dort — es gibt keine Datei, die beim
+naechsten Start etwas zurueckschreibt. Fuer den Anfang gibt es Baukaesten, fuer
+den Notfall eine Sicherung zum Herunterladen und Einspielen. Die
+YAML-Provisionierung gibt es weiterhin, aber als Werkzeug, nicht als Herrn:
+`PROVISION_ON_START` ist per Vorgabe aus.
 
 ---
 
@@ -266,16 +271,35 @@ gibt es in der Slice nicht. `good/late/lost/resync` stehen ausschliesslich in
 der `UserStats`-Nachricht des Mumble-Protokolls, die nur ein angemeldeter
 Client abfragen kann. Genau dafuer haengt der Monitor-Bot im Server.
 
+### Die Seiten
+
+| Seite | Wofuer |
+|-------|--------|
+| `/` Cockpit | Betrieb: wer ist verbunden, wie ist die Leitung, was alarmiert |
+| `/pult` | Alltag: Personen, Rollen und Plaetze per Ziehen verbinden, Rechte verteilen |
+| `/anleitung` | Mumbles Modell in Klartext — Vererbung, Richtung der Rechte, Raster lesen |
+| `/einrichten` | Baukaesten fuer den Anfang, Sicherung herunterladen und einspielen |
+| `/kanaele`, `/acl`, `/nutzer` | Expertensicht: dieselben Dinge so, wie Mumble sie nennt |
+| `/server` | Serverkonfiguration, Baenne, Protokoll |
+| `/audit` | Wer hat wann was geaendert |
+
+Das Pult ist die Alltagsansicht, die Expertensichten bleiben daneben stehen.
+Wo das Raster im Pult etwas nicht verlustfrei abbilden kann — mehrere eigene
+ACL-Eintraege derselben Rolle an einem Kanal, deren Reihenfolge entscheidet —
+sperrt es die Zelle und verweist auf `/acl`, statt zu raten.
+
 ### Verzeichnisse
 
 | Pfad | Inhalt |
 |------|--------|
 | `admin/intercom/ice/` | Ice-Anbindung: Client, Callbacks, Rechtetabelle, Domaenenmodell |
 | `admin/intercom/provision/` | YAML-Schema, ACL-Abbildung, Planer, Anwender, Exporter |
-| `admin/intercom/runtime.py` | Laufzeit-Abgleich: Priority Speaker und Listener |
+| `admin/intercom/ice/wirkung.py` | Nachgebaute Rechte-Auswertung (ACL.cpp, Group.cpp) |
+| `admin/intercom/runtime.py` | Laufzeit-Abgleich: fester Platz, Priority Speaker, Listener |
 | `admin/intercom/monitor/` | pymumble-Bot und Auswertung der `UserStats` |
 | `admin/intercom/store/` | SQLite: Verlauf, Audit-Log, Notizen |
 | `admin/intercom/web/` | FastAPI, SSE, Anmeldung, JSON-Schnittstelle |
+| `admin/intercom/web/pult.py` | Pult: Plaetze, Rollen, Personen und die Rechtematrix |
 | `admin/templates/`, `admin/static/` | Oberflaeche (htmx + Alpine, kein Bauschritt) |
 | `admin/tests/` | Tests inkl. murmur-Doppel ueber echtes Ice |
 
