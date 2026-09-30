@@ -753,3 +753,19 @@ select.zufuegen { font-size: 11px; padding: 2px 4px; max-width: 100%; }
 
 /* Eingabefelder in dichten Tabellen sollen die Zeilenhoehe nicht sprengen. */
 table.dicht td input[type="text"] { padding: 1px 5px; font-size: 12px; }
+
+/* Rollen als anklickbare Marken statt als Kreuztabelle mit gedrehten
+   Spaltenkoepfen. Bei neun Rollen waren das neun diagonale Woerter und ein
+   Feld unbeschrifteter Kaestchen -- so denkt niemand ueber Rollen nach. */
+.rollenwahl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.rollenmarke {
+  padding: 1px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border-hell); background: var(--surface-2);
+  color: var(--text-leise); font-size: 11px; font-family: var(--mono);
+}
+.rollenmarke:hover:not(:disabled) { border-color: var(--akzent); color: var(--text); }
+.rollenmarke.drin {
+  border-color: var(--ok); background: var(--ok-bg); color: var(--ok);
+  font-weight: 600;
+}
+.rollenmarke:disabled { cursor: not-allowed; opacity: .5; }

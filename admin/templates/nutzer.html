@@ -38,9 +38,22 @@
                 </td>
                 <td>
                   {% if account.can_write %}
-                  <button class="knopf klein" @click="umbenennen(u)">Name</button>
-                  <button class="knopf klein" @click="passwort(u)">Passwort</button>
-                  <button class="knopf klein" @click="loeschen(u)">✕</button>
+                  {# Der SuperUser ist kein gewoehnliches Konto: sein Passwort
+                     geht ueber einen eigenen Aufruf, und loeschen laesst er
+                     sich gar nicht. Der eigene Knopf dafuer stand vorher in
+                     der Rollenkarte -- an der falschen Stelle. #}
+                  <template x-if="u.userid !== 0">
+                    <span>
+                      <button class="knopf klein" @click="umbenennen(u)">Name</button>
+                      <button class="knopf klein" @click="passwort(u)">Passwort</button>
+                      <button class="knopf klein" @click="loeschen(u)"
+                              title="Registrierung entfernen">✕</button>
+                    </span>
+                  </template>
+                  <template x-if="u.userid === 0">
+                    <button class="knopf klein" @click="superuser()"
+                            title="Der SuperUser wird fuer diese Oberflaeche nicht gebraucht – nur fuer die Anmeldung mit dem Mumble-Programm">Passwort</button>
+                  </template>
                   {% endif %}
                 </td>
               </tr>
@@ -84,49 +97,60 @@
     </div>
   </div>
 
-  <!-- Rollenmatrix ---------------------------------------------------------- -->
+  {# --- Rollen --------------------------------------------------------------
+     Vorher eine Kreuztabelle mit gedrehten Spaltenkoepfen: bei neun Rollen
+     neun diagonale Woerter, die man einzeln entziffert, und ein Feld von
+     Kaestchen ohne Beschriftung. So denkt niemand ueber Rollen nach -- man
+     denkt "Anna ist im Kampfgericht". Also eine Zeile je Person und die Rollen
+     als anklickbare Marken. #}
   <div class="karte" style="margin-top:12px">
     <header>
       Rollen
       <span class="rechts leise">Gilt überall – von hier aus nach unten auf alle Plätze</span>
     </header>
-    <div class="tabellenrahmen">
-      <table class="dicht matrix">
+    <div class="inhalt">
+      <p class="hinweistext">
+        Anklicken schaltet um. Rechte vergibt man an die Rolle, nicht an die
+        Person – wer wo sprechen darf, stellst du im
+        <a href="/pult">Pult</a> ein.
+      </p>
+
+      <table class="dicht">
         <thead>
-          <tr>
-            <th>Person</th>
-            <template x-for="g in gruppen" :key="g">
-              <th class="dreh"><div x-text="g"></div></th>
-            </template>
-          </tr>
+          <tr><th style="width:26%">Person</th><th>Rollen</th></tr>
         </thead>
         <tbody>
           <template x-for="u in eintraege" :key="u.userid">
             <tr>
               <td class="mono" x-text="u.name"></td>
-              <template x-for="g in gruppen" :key="g">
-                <td class="zelle" :class="istMitglied(u.userid, g) ? 'erlaubt' : ''">
-                  <label>
-                    <input type="checkbox" :checked="istMitglied(u.userid, g)"
-                           {% if not account.can_write %}disabled{% endif %}
-                           @change="schalte(u.userid, g, $event.target.checked)">
-                  </label>
-                </td>
-              </template>
+              <td>
+                <div class="rollenwahl">
+                  <template x-for="g in gruppen" :key="g">
+                    <button type="button" class="rollenmarke"
+                            :class="istMitglied(u.userid, g) ? 'drin' : ''"
+                            {% if not account.can_write %}disabled{% endif %}
+                            @click="schalte(u.userid, g, !istMitglied(u.userid, g))"
+                            x-text="g"></button>
+                  </template>
+                  <span class="still" x-show="!gruppen.length">
+                    Noch keine Rolle angelegt – ein Baukasten unter
+                    <a href="/einrichten">Einrichten</a> bringt welche mit.
+                  </span>
+                </div>
+              </td>
             </tr>
           </template>
         </tbody>
       </table>
     </div>
     {% if account.can_write %}
-    <div class="inhalt">
+    <div class="inhalt" style="padding-top:0">
       <div class="werkzeugleiste">
         <button class="knopf haupt" :disabled="!geaendert" @click="matrixSpeichern()">
           Rollen speichern
         </button>
-        <button class="knopf" @click="start()">Verwerfen</button>
-        <span class="fueller"></span>
-        <button class="knopf" @click="superuser()">SuperUser-Passwort aendern</button>
+        <button class="knopf" @click="start()" :disabled="!geaendert">Verwerfen</button>
+        <span class="leise" x-show="geaendert" x-cloak>nicht gespeichert</span>
       </div>
     </div>
     {% endif %}
