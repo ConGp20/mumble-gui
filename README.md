@@ -105,7 +105,7 @@ docker compose version
 ### Einrichten
 
 ```bash
-git clone <dieses-repo> ~/stadion-intercom
+git clone https://github.com/ConGp20/mumble-gui.git ~/stadion-intercom
 cd ~/stadion-intercom
 ./setup.sh
 ```
@@ -113,13 +113,47 @@ cd ~/stadion-intercom
 `setup.sh` prueft Docker, legt `./server` und `./admin-data` an, setzt sie auf
 UID/GID 10000, ersetzt alle `ERSETZEN_*`-Werte in der `.env` durch
 Zufallswerte, startet den Mumble-Server, wartet auf dessen Ice-Schnittstelle,
-gleicht `MUMBLE_VERSION` an die tatsaechlich laufende Serverversion an, baut das
-Admin-Image, zeigt den Provisioning-Plan und wendet ihn nach Bestaetigung an.
+gleicht `MUMBLE_VERSION` an die tatsaechlich laufende Serverversion an und
+**zieht** das Admin-Image aus der Registry (gebaut wird nur, wenn das
+fehlschlaegt). Der Server bleibt dabei **leer** — Kanaele legt man danach in
+der Oberflaeche an.
+
+Das Skript stellt keine Rueckfragen und ist wiederholbar: ein zweiter Lauf
+aendert nur, was noch nicht stimmt.
 
 ```bash
 ./setup.sh --check    # nur pruefen, nichts aendern
-./setup.sh --yes      # ohne Rueckfragen
 ```
+
+Am Ende nennt es die Adresse, den Benutzernamen und die fuenf Schritte, mit
+denen es weitergeht. Das Passwort steht in der erzeugten `.env` als
+`ADMIN_PASSWORD`.
+
+### Und dann?
+
+| Schritt | Wo |
+|---------|-----|
+| 1. Einen Baukasten anwenden (erst Testlauf, dann Anwenden) | `/einrichten` |
+| 2. Alle einmal mit dem Mumble-Programm verbinden lassen | — |
+| 3. Jeden registrieren — der Server erkennt Leute am Zertifikat, nicht am Namen | `/nutzer` |
+| 4. Personen per Ziehen in Rollen und auf Plaetze setzen, Rechte verteilen | `/pult` |
+| 5. Sicherung herunterladen | `/einrichten` |
+
+Wenn Mumbles Modell unklar ist: `/anleitung` erklaert es in Klartext — vor
+allem, warum Rechte am Platz haengen und nicht an der Person.
+
+### Auf den neuesten Stand bringen
+
+```bash
+cd ~/stadion-intercom
+git pull
+docker compose pull
+docker compose up -d
+```
+
+Kanaele, Rollen, Rechte und registrierte Nutzer stehen in `./server` und
+bleiben davon unberuehrt; der Verlauf und der Wunschzustand liegen in
+`./admin-data`.
 
 Danach liegt das GUI auf `http://<rechner>:8080/`. Benutzer und Passwort stehen in
 der `.env` (`ADMIN_USER`, `ADMIN_PASSWORD`).
