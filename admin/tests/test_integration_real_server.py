@@ -458,3 +458,145 @@ def test_eingeschraenkter_export_bleibt_einlesbar(echter_client):
         parse_config(yaml.safe_load(drin))
     finally:
         echter_client.set_conf("defaultchannel", vorher)
+
+
+# --------------------------------------------------------------------------- #
+#  Die Rechte-Auswertung gegen das Original
+# --------------------------------------------------------------------------- #
+
+
+@needs_real_server
+def test_gerechnete_rechte_stimmen_mit_dem_server_ueberein(echter_client):
+    """Haelt :mod:`intercom.ice.wirkung` gegen ``effectivePermissions``.
+
+    Die Oberflaeche muss Rechte auch dann anzeigen, wenn niemand verbunden ist --
+    beim Aufbauen einer Veranstaltung sitzt noch keiner im Kanal. Dafuer ist die
+    Auswertung aus ACL.cpp nachgebaut, und dieser Test ist der Beleg, dass der
+    Nachbau stimmt: fuer einen *wirklich* verbundenen Client muss beides aufs
+    Bit genau dasselbe sagen.
+
+    Geprueft wird die Sicherheitseigenschaft, auf die sich die Oberflaeche
+    verlaesst: **was als sicher ausgegeben wird, stimmt.** Bits, die als
+    unbestimmt gelten, duerfen abweichen -- sie werden nirgends behauptet.
+    """
+    pytest.importorskip("pymumble_py3")
+    import time
+
+    import pymumble_py3
+
+    from intercom.ice import wirkung
+    from intercom.ice.permissions import mask_to_names
+    from intercom.ice.types import ACLEntry, ChannelGroup
+
+    wurzel = echter_client.add_channel("ITest-Rechte", 0)
+    mitte = echter_client.add_channel("Mitte", wurzel)
+    unten = echter_client.add_channel("Unten", mitte)
+    kette = [wurzel, mitte, unten]
+
+    name = "itest-rechte-pruefling"
+    passwort = "pruef-geheim-123"
+    try:
+        uid = echter_client.register_user(name=name, password=passwort)
+    except Exception:  # noqa: BLE001 -- schon vorhanden
+        uid = next(
+            u for u, n in echter_client.get_registered_users().items() if n == name
+        )
+
+    root_acl = echter_client.get_acl(0)
+    alte_gruppen = list(root_acl.own_groups())
+    root_acl.groups = [
+        g for g in alte_gruppen if g.name != "itestrolle"
+    ] + [ChannelGroup(name="itestrolle", add=[uid])]
+    echter_client.set_channel_acl(root_acl)
+
+    S = wirkung
+    # Bewusst die drei Faelle, die beim Nachbauen schieflaufen:
+    # allow+deny im selben Eintrag, Vererbung aus, und Write ohne Sprechen.
+    a = echter_client.get_acl(wurzel)
+    a.acls = [
+        ACLEntry(apply_here=True, apply_subs=True, allow=0, deny=S.SPEAK, group="all"),
+        ACLEntry(
+            apply_here=True, apply_subs=True, allow=S.SPEAK, deny=0, group="itestrolle"
+        ),
+    ]
+    echter_client.set_channel_acl(a)
+
+    a = echter_client.get_acl(mitte)
+    a.acls = [
+        ACLEntry(
+            apply_here=True,
+            apply_subs=True,
+            allow=S.WHISPER,
+            deny=S.WHISPER,
+            group="all",
+        ),
+        ACLEntry(
+            apply_here=True, apply_subs=True, allow=S.WRITE, deny=0, group="itestrolle"
+        ),
+    ]
+    echter_client.set_channel_acl(a)
+
+    a = echter_client.get_acl(unten)
+    a.inherit = False
+    a.acls = [
+        ACLEntry(apply_here=True, apply_subs=True, allow=0, deny=S.LISTEN, group="out"),
+    ]
+    echter_client.set_channel_acl(a)
+
+    bot = pymumble_py3.Mumble(
+        ICE_HOST,
+        name,
+        port=int(os.environ.get("MUMBLE_TEST_PORT", "64739")),
+        password=passwort,
+        reconnect=False,
+    )
+    bot.set_application_string("intercom-itest")
+    bot.start()
+    bot.is_ready()
+    try:
+        time.sleep(1.0)
+        session = next(
+            u.session for u in echter_client.get_users().values() if u.name == name
+        )
+        kanaele = echter_client.get_channels()
+        acls = {cid: echter_client.get_acl(cid) for cid in kanaele}
+
+        geprueft = 0
+        for ziel in kette:
+            echter_client.set_user_state(session, channel=ziel)
+            time.sleep(0.3)
+            wo = echter_client.get_state(session).channel
+            vom_server = echter_client.effective_permissions(session, ziel)
+            gerechnet = wirkung.rechte_einer_person(
+                userid=uid, ziel=ziel, kanaele=kanaele, acls=acls, sitzt_in=wo
+            )
+            sicher = ~gerechnet.unbestimmt
+            assert (vom_server & sicher) == (gerechnet.maske & sicher), (
+                f"Kanal {kanaele[ziel].name}: Server sagt "
+                f"{sorted(mask_to_names(vom_server & sicher))}, "
+                f"gerechnet {sorted(mask_to_names(gerechnet.maske & sicher))}"
+            )
+            geprueft += 1
+
+        assert geprueft == len(kette)
+
+        # Und die Aussage, die man sich merkt: Write macht keinen Redner.
+        gerechnet = wirkung.rechte_einer_person(
+            userid=uid, ziel=mitte, kanaele=kanaele, acls=acls, sitzt_in=mitte
+        )
+        assert gerechnet.darf(wirkung.WRITE) is True
+        assert gerechnet.darf(wirkung.WHISPER) is False
+    finally:
+        with contextlib.suppress(Exception):
+            bot.stop()
+        with contextlib.suppress(Exception):
+            echter_client.unregister_user(uid)
+        root_acl = echter_client.get_acl(0)
+        root_acl.groups = [
+            g for g in root_acl.own_groups() if g.name != "itestrolle"
+        ]
+        with contextlib.suppress(Exception):
+            echter_client.set_channel_acl(root_acl)
+        for cid in reversed(kette):
+            with contextlib.suppress(Exception):
+                echter_client.remove_channel(cid)
