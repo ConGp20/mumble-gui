@@ -86,8 +86,10 @@
                       @click="loeschen()">Platz löschen</button>
             </div>
             <div class="hinweis">
-              Ein Platz wird samt allem darunter gelöscht. Steht er in der
-              intercom.yaml, legt der naechste <code>apply</code> ihn wieder an.
+              Ein Platz wird samt allem darunter gelöscht – auch die Rechte,
+              die dort hängen, und die Verbindungen von und zu ihm. Wer ihn
+              gemerkt hatte („fester Platz“), behält den Eintrag: er greift
+              wieder, wenn ein Platz desselben Namens zurückkommt.
             </div>
             {% else %}
             <div class="hinweis">Dieser Zugang darf nur lesen.</div>

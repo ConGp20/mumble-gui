@@ -712,6 +712,11 @@ class MonitorBot:
         )
 
         path = self._settings.monitor_channel
+        if not path:
+            # Kein Platz vorgegeben: der Bot bleibt, wo der Server ihn
+            # hinstellt, und misst von dort. Das ist die Vorgabe -- ein fester
+            # Platz lohnt nur, wenn er dort bessere Rechte hat.
+            return
         channel_id = resolve_channel_path(mumble.channels, path)
         if channel_id is None:
             # Kein Abbruch: ausserhalb seines Zielkanals sieht der Bot immer
@@ -719,8 +724,9 @@ class MonitorBot:
             # alles. Ein Bot, der wegen eines Tippfehlers gar nicht laeuft,
             # waere schlechter.
             message = (
-                f"Kanal {path!r} nicht gefunden. Der Monitor-Bot bleibt im "
-                "Wurzelkanal; MONITOR_BOT_CHANNEL pruefen."
+                f"Den Platz {path!r} gibt es nicht. Der Monitor-Bot bleibt "
+                "ganz oben und misst von dort; MONITOR_BOT_CHANNEL pruefen "
+                "oder leer lassen."
             )
             log.warning("%s", message)
             with self._lock:

@@ -948,3 +948,23 @@ def test_ohne_ban_recht_wird_weiter_voll_gefragt(settings):
     mumble = _MumbleErsatz()
     bot._request_stats(mumble, 5)
     assert mumble.kommandos[0][0].parameters["stats_only"] is False
+
+
+def test_ohne_vorgegebenen_platz_bleibt_der_bot_wo_er_ist(monkeypatch):
+    """Die Vorgabe zeigte auf „Intercom/Regie“ – einen Platz aus der alten YAML.
+
+    Nach einem Baukasten gibt es den nicht, und der Bot meldete bei jedem Start
+    einen Fehler für etwas, das gar nicht eingestellt war. Leer heißt jetzt:
+    bleib oben und miss von dort.
+    """
+    from intercom.config import Settings
+
+    monkeypatch.delenv("MONITOR_BOT_CHANNEL", raising=False)
+    for pflicht, wert in (
+        ("ICE_SECRET", "x" * 16),
+        ("ADMIN_PASSWORD", "y" * 12),
+        ("SESSION_SECRET", "z" * 32),
+    ):
+        monkeypatch.setenv(pflicht, wert)
+    einstellungen = Settings.load()
+    assert einstellungen.monitor_channel == ""

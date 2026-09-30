@@ -229,7 +229,7 @@ class Settings:
             provision_prune=_bool("PROVISION_PRUNE", False),
             monitor_enabled=_bool("MONITOR_BOT_ENABLED", True),
             monitor_name=_str("MONITOR_BOT_NAME", "monitor"),
-            monitor_channel=_str("MONITOR_BOT_CHANNEL", "Intercom/Regie"),
+            monitor_channel=_str("MONITOR_BOT_CHANNEL", ""),
             monitor_password=monitor_password,
             monitor_cert=Path(_str("MONITOR_BOT_CERT", "/data/monitor-cert.pem")),
             monitor_stats_interval_ms=_int("MONITOR_STATS_INTERVAL_MS", 5000),

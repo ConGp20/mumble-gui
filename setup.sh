@@ -105,10 +105,11 @@ else
   ok "Docker-Daemon erreichbar"
 fi
 
-for datei in docker-compose.yml intercom.yaml; do
-  [ -f "${datei}" ] || abbruch "${datei} fehlt. Wird dieses Skript im Projektverzeichnis ausgeführt?"
-done
-ok "docker-compose.yml und intercom.yaml vorhanden"
+# Nur die Compose-Datei ist Voraussetzung. Die intercom.yaml wurde frueher
+# mitgeprueft -- sie ist seit der Umkehr keine Quelle der Wahrheit mehr,
+# sondern nur noch das Format fuer Sicherungen, und fehlt im Normalfall.
+[ -f docker-compose.yml ] || abbruch "docker-compose.yml fehlt. Wird dieses Skript im Projektverzeichnis ausgeführt?"
+ok "docker-compose.yml gefunden"
 
 # =============================================================================
 #  2. Verzeichnisse
@@ -323,7 +324,7 @@ fi
 # =============================================================================
 #  6. Admin-GUI bauen und starten
 # =============================================================================
-titel "Admin-GUI bauen und starten"
+titel "Oberfläche starten"
 # Erst versuchen, das fertige Image zu ziehen -- es wird von GitHub fuer
 # x86-64 und arm64 gebaut. Nur wenn das nicht klappt (eigene Abspaltung ohne
 # Registry, kein Internet, geaenderter Quelltext), wird selbst gebaut.
@@ -361,7 +362,7 @@ ok "GUI antwortet"
 # =============================================================================
 #  7. Provisionierung
 # =============================================================================
-titel "Kanäle anlegen"
+titel "Plätze"
 
 # Hier wird bewusst NICHTS angelegt.
 #
@@ -373,10 +374,7 @@ titel "Kanäle anlegen"
 # Stattdessen steht in der Oberfläche unter „Einrichten" ein Baukasten bereit:
 # ein Knopf, vorher ein Testlauf, der zeigt was entsteht, und danach gehört
 # alles dir.
-info "Der Server bleibt leer – angelegt wird in der Oberfläche."
-info "Dort liegen fertige Baukästen bereit (z. B. Leichtathletik-Wettkampf"
-info "mit acht Kampfgerichten, Zeitmessung, Wettkampfbüro und Technik)."
-ok "Bereit"
+ok "Der Server bleibt leer – angelegt wird gleich in der Oberfläche"
 
 # =============================================================================
 #  8. Abschluss
@@ -388,47 +386,40 @@ HOST_IP="$(ip route get 1.1.1.1 2> /dev/null | awk '{for(i=1;i<=NF;i++) if($i=="
 [ -n "${HOST_IP}" ] || HOST_IP="<rechner-ip>"
 
 printf '\n'
-printf '    %sGUI%s        http://%s:%s/\n' "${C_FETT}" "${C_AUS}" "${HOST_IP}" "${LISTEN_PORT}"
-printf '    %sBenutzer%s   %s (Passwort steht in der .env als ADMIN_PASSWORD)\n' \
+printf '    %sOberfläche%s  http://%s:%s/\n' "${C_FETT}" "${C_AUS}" "${HOST_IP}" "${LISTEN_PORT}"
+printf '    %sAnmeldung%s   %s / Passwort steht in der .env als ADMIN_PASSWORD\n' \
        "${C_FETT}" "${C_AUS}" "${ADMIN_USER}"
 printf '\n'
-printf '    %sErste Schritte%s\n' "${C_FETT}" "${C_AUS}"
-printf '      1. http://%s:%s/einrichten – einen Baukasten anwenden.\n' "${HOST_IP}" "${LISTEN_PORT}"
-printf '         Erst Testlauf, der zeigt was entsteht, dann Anwenden.\n'
-printf '      2. Alle einmal mit dem Mumble-Programm verbinden lassen.\n'
-printf '      3. /nutzer – jeden registrieren. Der Server erkennt Leute am\n'
-printf '         Zertifikat, nicht am Namen; ohne Verbindung geht es nicht.\n'
-printf '      4. /pult – Personen per Ziehen in ihre Rollen und auf ihre\n'
-printf '         Plätze setzen, Rechte verteilen.\n'
-printf '      5. /einrichten – Sicherung herunterladen. Das ist dein Netz.\n'
+printf '    %s─── So geht es weiter ────────────────────────────────────%s\n' "${C_BLAU}" "${C_AUS}"
+printf '      1  Einrichten   einen Baukasten anwenden (erst Testlauf)\n'
+printf '      2  –            alle einmal mit Mumble verbinden lassen\n'
+printf '      3  Personen     jeden registrieren – der Server erkennt Leute\n'
+printf '                      am Zertifikat, nicht am Namen\n'
+printf '      4  Pult         per Ziehen in Rollen und auf Plätze, Rechte\n'
+printf '                      verteilen\n'
+printf '      5  Einrichten   Sicherung herunterladen\n'
 printf '\n'
-printf '    %sWenn Mumble unklar ist%s  http://%s:%s/anleitung erklärt das\n' \
-       "${C_FETT}" "${C_AUS}" "${HOST_IP}" "${LISTEN_PORT}"
-printf '               Modell dahinter in Klartext – vor allem, warum Rechte am\n'
-printf '               Platz hängen und nicht an der Person.\n'
+printf '      Die Seite „Anleitung“ erklärt Mumbles Modell in Klartext –\n'
+printf '      vor allem, warum Rechte am Platz hängen und nicht an der Person.\n'
 printf '\n'
-printf '    %sSuperUser%s  Das Mumble-SuperUser-Passwort steht in der .env als\n' "${C_FETT}" "${C_AUS}"
-printf '               MUMBLE_SUPERUSER_PASSWORD. Es wird für das Admin-GUI\n'
-printf '               NICHT gebraucht – nur, falls jemand sich direkt mit dem\n'
-printf '               Mumble-Client als SuperUser anmelden will. Ändern geht\n'
-printf '               im GUI unter „Nutzer“.\n'
+printf '    %s─── Im Betrieb ───────────────────────────────────────────%s\n' "${C_BLAU}" "${C_AUS}"
+printf '      %s ps                     was läuft\n' "${COMPOSE}"
+printf '      %s logs -f mumble-admin   mitlesen\n' "${COMPOSE}"
+printf '      %s stop                   anhalten, Daten bleiben\n' "${COMPOSE}"
+printf '      %s down                   beenden, Daten bleiben\n' "${COMPOSE}"
+printf '      %s up -d                  wieder hoch\n' "${COMPOSE}"
 printf '\n'
-printf '    %sNur HTTP%s   Das Cockpit läuft unverschlüsselt. Passwort und\n' "${C_FETT}" "${C_AUS}"
-printf '               Sitzungscookie gehen im Klartext über das Netz. Das ist\n'
-printf '               für ein abgeschlossenes Stadionnetz vertretbar, aber nur\n'
-printf '               dann. LISTEN_HOST in der .env auf die Netzkarte des\n'
-printf '               Stadionnetzes setzen, nicht 0.0.0.0 stehen lassen, wenn\n'
-printf '               der Rechner noch woanders hängt.\n'
+printf '      Immer aus %s – sonst findet Compose die Datei nicht.\n' "$(pwd)"
 printf '\n'
-printf '    %sIm Betrieb%s\n' "${C_FETT}" "${C_AUS}"
-printf '      Status      %s ps\n' "${COMPOSE}"
-printf '      Protokoll   %s logs -f mumble-admin\n' "${COMPOSE}"
-printf '      Selbsttest  %s exec mumble-admin intercom status\n' "${COMPOSE}"
-printf '      Anhalten    %s stop        (Daten bleiben, startet mit up -d)\n' "${COMPOSE}"
-printf '      Beenden     %s down        (Container weg, Daten bleiben)\n' "${COMPOSE}"
+printf '    %s─── Bitte beachten ───────────────────────────────────────%s\n' "${C_BLAU}" "${C_AUS}"
+printf '      Unverschlüsselt. Passwort und Sitzungscookie gehen im Klartext\n'
+printf '      über das Netz – für ein abgeschlossenes Stadionnetz vertretbar,\n'
+printf '      sonst nicht. Hängt der Rechner noch woanders, LISTEN_HOST in der\n'
+printf '      .env auf die Netzkarte des Stadionnetzes setzen statt 0.0.0.0.\n'
 printf '\n'
-printf '      Alle Befehle aus diesem Verzeichnis (%s) ausfuehren –\n' "$(pwd)"
-printf '      Compose findet die docker-compose.yml sonst nicht.\n'
+printf '      Das SuperUser-Passwort (MUMBLE_SUPERUSER_PASSWORD in der .env)\n'
+printf '      wird für die Oberfläche nicht gebraucht – nur, falls sich jemand\n'
+printf '      direkt mit dem Mumble-Programm als SuperUser anmelden will.\n'
 printf '\n'
 
 if [ "${PROBLEME}" -gt 0 ]; then

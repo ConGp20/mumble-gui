@@ -192,10 +192,17 @@ def cmd_status(args: argparse.Namespace, settings: Settings) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="intercom",
-        description="Provisioniert den Mumble-Server des Stadion-Intercoms aus intercom.yaml.",
+        description=(
+            "Werkzeuge fuer das Stadion-Intercom auf der Kommandozeile. "
+            "Angelegt wird im Normalfall in der Oberflaeche -- diese Befehle "
+            "sind fuer Selbsttest, Sicherung und den Fall, dass die "
+            "Oberflaeche nicht erreichbar ist."
+        ),
     )
     parser.add_argument(
-        "-c", "--config", help="Pfad zur intercom.yaml (Vorgabe: INTERCOM_CONFIG)."
+        "-c",
+        "--config",
+        help="Pfad zu einer Vorgabedatei bzw. Sicherung (Vorgabe: INTERCOM_CONFIG).",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Ausfuehrliches Log."
@@ -209,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
             dest="prune",
             action="store_true",
             default=None,
-            help="Kanaele und Gruppen loeschen, die nicht in der YAML stehen.",
+            help="Plaetze und Rollen loeschen, die nicht in der Datei stehen.",
         )
         group.add_argument(
             "--no-prune", dest="prune", action="store_false", help="Nichts loeschen."
