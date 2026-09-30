@@ -3,7 +3,8 @@
 #  Stadion-Intercom – Einrichtung
 #
 #  Bringt einen frischen Docker-Host von null auf ein laufendes Intercom:
-#  Verzeichnisse, Secrets, Mumble-Server, Admin-GUI, Provisionierung.
+#  Verzeichnisse, Secrets, Mumble-Server, Admin-GUI. Kanäle legt man danach
+#  in der Oberfläche an – der Server ist die Wahrheit, nicht eine Datei.
 #
 #  Idempotent: ein zweiter Lauf ändert nur, was noch nicht stimmt.
 #
@@ -390,6 +391,21 @@ printf '\n'
 printf '    %sGUI%s        http://%s:%s/\n' "${C_FETT}" "${C_AUS}" "${HOST_IP}" "${LISTEN_PORT}"
 printf '    %sBenutzer%s   %s (Passwort steht in der .env als ADMIN_PASSWORD)\n' \
        "${C_FETT}" "${C_AUS}" "${ADMIN_USER}"
+printf '\n'
+printf '    %sErste Schritte%s\n' "${C_FETT}" "${C_AUS}"
+printf '      1. http://%s:%s/einrichten – einen Baukasten anwenden.\n' "${HOST_IP}" "${LISTEN_PORT}"
+printf '         Erst Testlauf, der zeigt was entsteht, dann Anwenden.\n'
+printf '      2. Alle einmal mit dem Mumble-Programm verbinden lassen.\n'
+printf '      3. /nutzer – jeden registrieren. Der Server erkennt Leute am\n'
+printf '         Zertifikat, nicht am Namen; ohne Verbindung geht es nicht.\n'
+printf '      4. /pult – Personen per Ziehen in ihre Rollen und auf ihre\n'
+printf '         Plätze setzen, Rechte verteilen.\n'
+printf '      5. /einrichten – Sicherung herunterladen. Das ist dein Netz.\n'
+printf '\n'
+printf '    %sWenn Mumble unklar ist%s  http://%s:%s/anleitung erklärt das\n' \
+       "${C_FETT}" "${C_AUS}" "${HOST_IP}" "${LISTEN_PORT}"
+printf '               Modell dahinter in Klartext – vor allem, warum Rechte am\n'
+printf '               Platz hängen und nicht an der Person.\n'
 printf '\n'
 printf '    %sSuperUser%s  Das Mumble-SuperUser-Passwort steht in der .env als\n' "${C_FETT}" "${C_AUS}"
 printf '               MUMBLE_SUPERUSER_PASSWORD. Es wird für das Admin-GUI\n'
