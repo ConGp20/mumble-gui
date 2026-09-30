@@ -846,8 +846,19 @@ class Reconciler:
 
         if not wanted:
             return
+        # get_effective_conf, nicht get_all_conf: verglichen wird gegen das, was
+        # der Server TATSAECHLICH benutzt -- Datenbankeintrag, sonst Dateiwert
+        # bzw. eingebaute Vorgabe.
+        #
+        # Mit get_all_conf (nur die Datenbank) war eine Sicherungsrunde nicht
+        # neutral: der Export liest den wirksamen Wert, und beim Einspielen galt
+        # jede Vorgabe als "nicht gesetzt" und wurde in die Datenbank
+        # geschrieben. Eine zurueckgespielte Sicherung haette damit ein Dutzend
+        # murmur-Vorgaben festgenagelt, die vorher frei waren -- und die
+        # naechste Aenderung an der Compose waere wirkungslos geblieben, ohne
+        # dass jemand sieht warum.
         try:
-            current = self.client.get_all_conf()
+            current = self.client.get_effective_conf()
         except Exception as exc:  # noqa: BLE001
             self._record(
                 Change(

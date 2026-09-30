@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block inhalt %}
+<div x-data="einrichten()" x-init="start()">
+
+  {# --- Hinweis, wenn der Server gar nicht erreichbar ist -------------------
+     Ohne Verbindung kann nichts angelegt werden. Dann werden die Knoepfe
+     nicht nur gesperrt, es steht auch da warum -- ein grauer Knopf ohne
+     Begruendung ist die schlechteste Auskunft. #}
+  <template x-if="!verbunden">
+    <div class="banner">
+      Keine Verbindung zum Mumble-Server. Solange die fehlt, laesst sich nichts
+      anlegen und nichts einspielen. Unter „Server“ steht, woran es liegt.
+    </div>
+  </template>
+
+  <!-- =================================================================== -->
+  <!--  Baukaesten                                                          -->
+  <!-- =================================================================== -->
+  <div class="karte" style="margin-bottom:12px">
+    <header>Baukästen</header>
+    <div class="inhalt">
+      <p class="hinweis">
+        Ein Baukasten legt einmalig Kanäle und Gruppen an – danach ist er fertig
+        und bindet nichts. Was du anschließend umbenennst, löschst oder
+        hinzufügst, bleibt so. Es gibt keinen Neustart, der einen Baukasten
+        wieder herstellt.
+      </p>
+
+      <template x-for="v in vorlagen" :key="v.schluessel">
+        <div class="karte" style="margin-top:10px">
+          <header>
+            <span x-text="v.titel"></span>
+            <span class="rechts leise" x-show="gewaehlt === v.schluessel && plan"
+                  x-text="plan ? plan.summary : ''"></span>
+          </header>
+          <div class="inhalt">
+            <p x-text="v.beschreibung"></p>
+            <ul class="feldliste">
+              <template x-for="z in v.legt_an" :key="z"><li x-text="z"></li></template>
+            </ul>
+
+            <div class="werkzeugleiste" style="margin-top:8px">
+              <button class="knopf" :disabled="laeuft || !verbunden"
+                      @click="testlauf(v.schluessel)">
+                Testlauf – zeigt nur, was passieren würde
+              </button>
+              {% if account.can_write %}
+              <button class="knopf haupt"
+                      :disabled="laeuft || !verbunden || gewaehlt !== v.schluessel || !plan || planLeer"
+                      @click="anwenden(v.schluessel)">
+                Anwenden
+              </button>
+              {% endif %}
+            </div>
+
+            {# Der Anwenden-Knopf bleibt gesperrt, bis ein Testlauf gelaufen ist.
+               Niemand soll etwas schreiben, das er nicht vorher gesehen hat. #}
+            <p class="leise" x-show="gewaehlt !== v.schluessel || !plan">
+              Erst Testlauf, dann Anwenden.
+            </p>
+            <p class="leise" x-show="gewaehlt === v.schluessel && plan && planLeer">
+              Es gibt nichts zu tun – der Server enthält das bereits.
+            </p>
+          </div>
+        </div>
+      </template>
+
+      <p class="leise" x-show="vorlagen.length === 0">Keine Baukästen vorhanden.</p>
+    </div>
+  </div>
+
+  <!-- =================================================================== -->
+  <!--  Sicherung                                                           -->
+  <!-- =================================================================== -->
+  <div class="karte" style="margin-bottom:12px">
+    <header>Sicherung</header>
+    <div class="inhalt">
+      <p class="hinweis">
+        Die Sicherung ist ein Abbild dessen, was <em>gerade</em> im Server steht:
+        Kanäle, Gruppen, Rechte. Sie ist eine Momentaufnahme zum Wegheften, keine
+        Steuerdatei – der Server bleibt die Wahrheit.
+      </p>
+
+      <div class="werkzeugleiste">
+        <a class="knopf" href="/api/provision/export" download="intercom-sicherung.yaml">
+          Sicherung herunterladen
+        </a>
+        {% if account.can_write %}
+        <label class="knopf">
+          Datei wählen …
+          <input type="file" accept=".yaml,.yml,text/yaml" style="display:none"
+                 @change="dateiGewaehlt($event)">
+        </label>
+        {% endif %}
+        <span class="leise" x-show="dateiName" x-text="dateiName"></span>
+      </div>
+
+      <template x-if="dateiInhalt">
+        <div style="margin-top:10px">
+          <label>
+            <input type="checkbox" x-model="aufraeumen">
+            auch löschen, was in der Sicherung fehlt
+          </label>
+          <p class="leise">
+            Ohne Haken bleibt alles stehen, was seit der Sicherung dazugekommen ist.
+            Mit Haken wird der Server exakt auf den Stand der Datei gebracht.
+          </p>
+          <div class="werkzeugleiste">
+            <button class="knopf" :disabled="laeuft || !verbunden" @click="sicherungTestlauf()">
+              Testlauf
+            </button>
+            {% if account.can_write %}
+            <button class="knopf haupt"
+                    :disabled="laeuft || !verbunden || !plan || quelle !== 'sicherung'"
+                    @click="sicherungEinspielen()">
+              Einspielen
+            </button>
+            {% endif %}
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- =================================================================== -->
+  <!--  Ergebnis des Testlaufs / der Anwendung                              -->
+  <!-- =================================================================== -->
+  <template x-if="plan">
+    <div class="karte">
+      <header>
+        <span x-text="angewendet ? 'Das wurde geändert' : 'Das würde passieren'"></span>
+        <span class="rechts leise" x-text="plan.summary"></span>
+      </header>
+      <div class="inhalt">
+        <p class="leise" x-show="planLeer">Nichts zu tun.</p>
+        <div class="plan" x-show="!planLeer">
+          <template x-for="(c, i) in plan.changes" :key="i">
+            <div class="diff">
+              <div>
+                <span x-text="c.applied ? '✔' : (c.error ? '✘' : '·')"></span>
+                <strong x-text="c.target"></strong>
+                <span x-text="c.summary"></span>
+                <span class="abzeichen stumm" x-show="c.needs_prune">nur mit Aufräumen</span>
+              </div>
+              <div class="fehlertext" x-show="c.error" x-text="c.error"></div>
+              <template x-for="z in (c.before || [])" :key="z">
+                <div class="leise">− <span x-text="z"></span></div>
+              </template>
+              <template x-for="z in (c.after || [])" :key="z">
+                <div>+ <span x-text="z"></span></div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <template x-if="plan.unknown_users && plan.unknown_users.length">
+          <p class="hinweis">
+            Diese Namen sind noch nicht registriert und können deshalb in keiner
+            Gruppe sein: <span x-text="plan.unknown_users.join(', ')"></span>.
+            Sie müssen sich einmal verbinden, dann kannst du sie unter „Nutzer“
+            registrieren.
+          </p>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="fehler">
+    <div class="banner" x-text="fehler"></div>
+  </template>
+</div>
+
+<script>
+function einrichten() {
+  return {
+    I: window.Intercom,
+    vorlagen: [], plan: null, gewaehlt: null, quelle: null,
+    laeuft: false, angewendet: false, fehler: "",
+    dateiName: "", dateiInhalt: "", aufraeumen: false,
+    verbunden: false,
+
+    start() {
+      this.I.get("/api/vorlagen")
+        .then(d => { this.vorlagen = d.vorlagen || []; })
+        .catch(e => { this.fehler = "Baukästen nicht lesbar: " + e.message; });
+      this.zustand();
+      /* Der Verbindungszustand kommt vom Server, nicht aus einer Annahme. */
+      setInterval(() => this.zustand(), 5000);
+    },
+
+    zustand() {
+      this.I.get("/healthz")
+        .then(d => { this.verbunden = !!(d.ice && d.ice.connected); })
+        .catch(() => { this.verbunden = false; });
+    },
+
+    get planLeer() {
+      return !!this.plan && (this.plan.changes || []).filter(c => !c.needs_prune).length === 0;
+    },
+
+    testlauf(schluessel) {
+      this.laeuft = true; this.fehler = ""; this.angewendet = false;
+      this.gewaehlt = schluessel; this.quelle = "vorlage";
+      this.I.post("/api/vorlagen/" + encodeURIComponent(schluessel) + "/plan")
+        .then(p => { this.plan = p; })
+        .catch(e => { this.plan = null; this.fehler = e.message; })
+        .finally(() => { this.laeuft = false; });
+    },
+
+    anwenden(schluessel) {
+      if (!confirm("Baukasten jetzt anwenden?")) { return; }
+      this.laeuft = true; this.fehler = "";
+      this.I.post("/api/vorlagen/" + encodeURIComponent(schluessel) + "/anwenden")
+        .then(p => { this.plan = p; this.angewendet = true; })
+        .catch(e => { this.fehler = e.message; })
+        .finally(() => { this.laeuft = false; });
+    },
+
+    dateiGewaehlt(ereignis) {
+      const datei = ereignis.target.files && ereignis.target.files[0];
+      if (!datei) { return; }
+      this.dateiName = datei.name;
+      this.plan = null; this.angewendet = false; this.fehler = "";
+      const leser = new FileReader();
+      leser.onload = () => { this.dateiInhalt = String(leser.result); };
+      leser.onerror = () => { this.fehler = "Datei nicht lesbar."; };
+      leser.readAsText(datei);
+    },
+
+    sicherungTestlauf() {
+      this.laeuft = true; this.fehler = ""; this.angewendet = false;
+      this.gewaehlt = null; this.quelle = "sicherung";
+      this.I.post("/api/sicherung/plan",
+                  {yaml_text: this.dateiInhalt, aufraeumen: this.aufraeumen})
+        .then(p => { this.plan = p; })
+        .catch(e => { this.plan = null; this.fehler = e.message; })
+        .finally(() => { this.laeuft = false; });
+    },
+
+    sicherungEinspielen() {
+      if (!confirm("Sicherung jetzt einspielen?")) { return; }
+      this.laeuft = true; this.fehler = "";
+      this.I.post("/api/sicherung/einspielen",
+                  {yaml_text: this.dateiInhalt, aufraeumen: this.aufraeumen})
+        .then(p => { this.plan = p; this.angewendet = true; })
+        .catch(e => { this.fehler = e.message; })
+        .finally(() => { this.laeuft = false; });
+    }
+  };
+}
+</script>
+{% endblock %}

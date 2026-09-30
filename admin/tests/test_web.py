@@ -143,8 +143,13 @@ def test_secrets_stehen_nicht_im_html(app_client):
     """Das Ice-Secret darf nirgends im Frontend landen."""
     client, fake = app_client
     _anmelden(client)
-    for pfad in ("/", "/kanaele", "/acl", "/nutzer", "/server", "/provisioning", "/audit"):
-        text = client.get(pfad).text
+    for pfad in ("/", "/kanaele", "/acl", "/nutzer", "/server", "/einrichten", "/audit"):
+        antwort = client.get(pfad)
+        # Erst pruefen, DASS die Seite da ist. Ohne das lief dieser Test
+        # stillschweigend ins Leere, als eine Seite umbenannt wurde: eine
+        # 404-Seite enthaelt naemlich auch kein Secret.
+        assert antwort.status_code == 200, f"{pfad} antwortet mit {antwort.status_code}"
+        text = antwort.text
         assert fake.secret not in text, f"Secret steht in {pfad}"
         assert "geheim" not in text, f"Admin-Passwort steht in {pfad}"
     assert fake.secret not in client.get("/healthz").text
@@ -1185,3 +1190,113 @@ def test_herunterfahren_gibt_nach_der_frist_auf(app_client, monkeypatch):
     begonnen = zeit.monotonic()
     asyncio.run(kontext._abbau_der_threads())
     assert zeit.monotonic() - begonnen < 2.0
+
+
+# --------------------------------------------------------------------------- #
+#  Einrichten: Baukästen und Sicherung
+# --------------------------------------------------------------------------- #
+
+
+def test_baukaesten_werden_mit_klartext_angeboten(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    daten = client.get("/api/vorlagen").json()
+    schluessel = {v["schluessel"] for v in daten["vorlagen"]}
+    assert "leichtathletik" in schluessel
+    for v in daten["vorlagen"]:
+        # Ohne Klartext waere die Seite eine Liste nichtssagender Namen.
+        assert v["titel"] and v["beschreibung"] and v["legt_an"]
+
+
+def test_testlauf_einer_vorlage_schreibt_nichts(app_client):
+    """Der Anwenden-Knopf ist gesperrt, bis das hier gelaufen ist."""
+    client, fake = app_client
+    _anmelden(client)
+    vorher = set(fake.server.channels)
+
+    plan = client.post(
+        "/api/vorlagen/leichtathletik/plan", headers={"X-CSRF-Token": _csrf(client)}
+    ).json()
+
+    assert plan["changes"], "der Testlauf zeigt gar nichts an"
+    assert not any(c["applied"] for c in plan["changes"])
+    assert set(fake.server.channels) == vorher, "der Testlauf hat geschrieben"
+
+
+def test_vorlage_anwenden_legt_die_plaetze_an(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    plan = client.post(
+        "/api/vorlagen/leichtathletik/anwenden", headers={"X-CSRF-Token": _csrf(client)}
+    ).json()
+    assert not [c for c in plan["changes"] if c["error"]]
+
+    namen = {k.name for k in fake.server.channels.values()}
+    for nummer in range(1, 9):
+        assert f"Kampfgericht {nummer}" in namen
+    assert {"Zeitmessung", "Wettkampfbüro", "Technik"} <= namen
+
+
+def test_unbekannte_vorlage_gibt_404(app_client):
+    """Ein Tippfehler darf nicht stillschweigend nichts tun."""
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.post(
+        "/api/vorlagen/gibtsnicht/plan", headers={"X-CSRF-Token": _csrf(client)}
+    )
+    assert antwort.status_code == 404
+
+
+def test_sicherung_runde_ergibt_keine_aenderung(app_client):
+    """Herunterladen und wieder einspielen darf nichts verändern."""
+    client, _ = app_client
+    _anmelden(client)
+    csrf = _csrf(client)
+    client.post("/api/vorlagen/klein/anwenden", headers={"X-CSRF-Token": csrf})
+
+    sicherung = client.get("/api/provision/export").text
+    plan = client.post(
+        "/api/sicherung/plan",
+        json={"yaml_text": sicherung, "aufraeumen": False},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+
+    offen = [c for c in plan["changes"] if not c["needs_prune"]]
+    assert not offen, "die eigene Sicherung will etwas ändern:\n" + str(offen)
+
+
+def test_kaputte_sicherung_meldet_sich_verstaendlich(app_client):
+    """Keine Ausnahme im Log, sondern eine Meldung, mit der man etwas anfangen kann."""
+    client, _ = app_client
+    _anmelden(client)
+    antwort = client.post(
+        "/api/sicherung/plan",
+        json={"yaml_text": "das: ist: kein: yaml:", "aufraeumen": False},
+        headers={"X-CSRF-Token": _csrf(client)},
+    )
+    assert antwort.status_code == 400
+    assert "YAML" in antwort.json()["detail"]
+
+
+def test_sicherung_raeumt_ohne_haken_nichts_weg(app_client):
+    """Eine Sicherung einzuspielen darf nichts wegwerfen, was seither entstand."""
+    client, fake = app_client
+    _anmelden(client)
+    csrf = _csrf(client)
+    client.post("/api/vorlagen/klein/anwenden", headers={"X-CSRF-Token": csrf})
+    sicherung = client.get("/api/provision/export").text
+
+    # Nach der Sicherung kommt ein Kanal dazu.
+    client.post(
+        "/api/channels",
+        json={"name": "Spaeter angelegt", "parent": 0},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert "Spaeter angelegt" in {k.name for k in fake.server.channels.values()}
+
+    client.post(
+        "/api/sicherung/einspielen",
+        json={"yaml_text": sicherung, "aufraeumen": False},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert "Spaeter angelegt" in {k.name for k in fake.server.channels.values()}
