@@ -1890,3 +1890,55 @@ def test_cockpit_verweist_nicht_mehr_auf_die_intercom_yaml(app_client):
     text = client.get("/").text
     assert "intercom.yaml" not in text
     assert 'href="/server"' in text
+
+
+# --------------------------------------------------------------------------- #
+#  Sprache
+# --------------------------------------------------------------------------- #
+
+
+#: Seiten, die in der Sprache der Intercom sprechen muessen. /anleitung ist
+#: ausgenommen: dort *steht* die Uebersetzung, also kommen Mumbles Woerter
+#: absichtlich vor.
+SEITEN_MIT_EIGENER_SPRACHE = (
+    "/", "/pult", "/nutzer", "/kanaele", "/einrichten", "/audit", "/server", "/acl"
+)
+
+
+def test_keine_wurzel_in_der_oberflaeche(app_client):
+    """„Wurzel“ und „Root“ sind Woerter aus der Informatik.
+
+    Sie standen an einem Dutzend Stellen und waren jedes Mal
+    erklaerungsbeduerftig. Der oberste Platz heisst „Überall“ – denn was dort
+    gilt, gilt überall.
+    """
+    client, _ = app_client
+    _anmelden(client)
+    for pfad in SEITEN_MIT_EIGENER_SPRACHE:
+        antwort = client.get(pfad)
+        assert antwort.status_code == 200, f"{pfad} antwortet {antwort.status_code}"
+        for wort in ("Wurzel", "(Root)"):
+            assert wort not in antwort.text, f"{wort!r} steht auf {pfad}"
+
+
+def test_navigation_spricht_die_sprache_der_intercom(app_client):
+    """Vier Namen fuer dieselbe Sache war der Hauptgrund fuer die
+    Unuebersichtlichkeit."""
+    client, _ = app_client
+    _anmelden(client)
+    text = client.get("/pult").text
+    for begriff in ("Pult", "Personen", "Plätze", "Einrichten", "Anleitung"):
+        assert f">{begriff}</a>" in text, f"{begriff} fehlt in der Navigation"
+    # Und die Gruppen, die den neun Punkten Ordnung geben.
+    for gruppe in ("Betrieb", "Aufbauen", "Fachsicht"):
+        assert f'<span class="gruppe">{gruppe}</span>' in text
+
+
+def test_jede_seite_erklaert_sich_selbst(app_client):
+    """Eine Anleitung auf einer eigenen Seite liest niemand beim Arbeiten."""
+    client, _ = app_client
+    _anmelden(client)
+    for pfad in SEITEN_MIT_EIGENER_SPRACHE:
+        text = client.get(pfad).text
+        assert 'class="seitenkopf"' in text, f"{pfad} hat keinen Erklaerkopf"
+        assert "Wann brauchst du das?" in text, f"{pfad} sagt nicht, wann man es braucht"

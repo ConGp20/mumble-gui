@@ -12,7 +12,7 @@
 <div x-data="aclEditor()" x-init="start()">
 
   <div class="werkzeugleiste">
-    <label>Kanal
+    <label>Platz
       <select x-model="kanalId" @change="ladeAcl()" style="min-width:280px">
         <template x-for="k in flach" :key="k.id">
           <option :value="k.id" x-text="Intercom.platzpfad(k)"></option>
@@ -39,10 +39,10 @@
 
   <div class="raster zwei">
 
-    <!-- ACL-Eintraege ---------------------------------------------------- -->
+    <!-- Regeln ------------------------------------------------------------ -->
     <div class="karte">
       <header>
-        ACL-Eintraege
+        Regeln
         <span class="rechts leise">Reihenfolge zaehlt – spaeter schlaegt frueher</span>
       </header>
       <div class="tabellenrahmen">
@@ -58,7 +58,7 @@
               <tr :class="a.inherited ? 'text-leise' : ''">
                 <td class="zahl" x-text="i + 1"></td>
                 <td>
-                  <span class="mono" x-text="a.group ? '@' + a.group : 'Nutzer ' + a.userid"></span>
+                  <span class="mono" x-text="a.group ? '@' + a.group : 'Person ' + a.userid"></span>
                   <template x-if="a.inherited">
                     <span class="abzeichen">geerbt</span>
                   </template>
@@ -81,7 +81,7 @@
               </tr>
             </template>
             <template x-if="acls.length === 0">
-              <tr class="leer"><td colspan="7">Keine ACL-Eintraege.</td></tr>
+              <tr class="leer"><td colspan="7">Keine eigenen Regeln – es gilt, was von oben kommt.</td></tr>
             </template>
           </tbody>
         </table>
@@ -89,13 +89,13 @@
       {% if account.can_write %}
       <div class="inhalt">
         <div class="werkzeugleiste">
-          <input type="text" x-model="neueGruppe" placeholder="Gruppe (z. B. regie, $zerthash, !gast)">
-          <button class="knopf" :disabled="!neueGruppe.trim()" @click="neuerEintrag()">Eintrag hinzufuegen</button>
+          <input type="text" x-model="neueGruppe" placeholder="Rolle (z. B. technik, $zerthash, !gast)">
+          <button class="knopf" :disabled="!neueGruppe.trim()" @click="neuerEintrag()">Regel hinzufügen</button>
           <span class="fueller"></span>
           <label><input type="checkbox" x-model="inherit"> Von oben erben</label>
         </div>
         <div class="hinweis">
-          Praefixe: <code>!</code> kehrt um, <code>~</code> bezieht sich auf den ACL-Kanal,
+          Präfixe: <code>!</code> kehrt um, <code>~</code> bezieht sich auf den Platz der Regel,
           <code>#</code> ist ein Zugriffstoken, <code>$</code> ein Zertifikatshash.
         </div>
       </div>
@@ -147,12 +147,12 @@
 
   <div class="raster zwei" style="margin-top:12px">
 
-    <!-- Gruppen ---------------------------------------------------------- -->
+    <!-- Rollen ------------------------------------------------------------ -->
     <div class="karte">
-      <header>Gruppen an diesem Kanal</header>
+      <header>Rollen an diesem Platz</header>
       <div class="tabellenrahmen">
         <table class="dicht">
-          <thead><tr><th>Gruppe</th><th>erbt</th><th>vererbbar</th><th>Mitglieder</th><th></th></tr></thead>
+          <thead><tr><th>Rolle</th><th>erbt</th><th>vererbbar</th><th>Mitglieder</th><th></th></tr></thead>
           <tbody>
             <template x-for="(g, i) in groups" :key="g.name">
               <tr :class="g.inherited ? 'text-leise' : ''">
@@ -185,7 +185,7 @@
       <header>Effektive Rechte pruefen</header>
       <div class="inhalt">
         <div class="werkzeugleiste">
-          <label>Client
+          <label>Verbindung
             <select x-model="pruefSession" @change="pruefe()">
               <option value="">– waehlen –</option>
               <template x-for="u in clients" :key="u.session">
@@ -334,7 +334,7 @@ function aclEditor() {
       const unbekannt = gesucht.filter(n => umgekehrt[n] === undefined);
       if (unbekannt.length) {
         alert("Nicht registriert: " + unbekannt.join(", ") +
-              "\nNur registrierte Nutzer koennen Mitglied sein.");
+              "\nNur registrierte Personen können Mitglied sein.");
         return;
       }
       g.add = gesucht.map(n => umgekehrt[n]);
@@ -342,7 +342,7 @@ function aclEditor() {
     },
 
     vorlageAnwenden() {
-      const gruppen = prompt("Fuer welche Gruppen? (mit Komma getrennt)", "regie");
+      const gruppen = prompt("Für welche Rollen? (mit Komma getrennt)", "technik");
       if (gruppen === null) return;
       this.I.post("/api/channels/" + this.kanalId + "/acl/template", {
         key: this.vorlage,
@@ -381,7 +381,7 @@ function aclEditor() {
     },
 
     speichern() {
-      if (!confirm("ACLs dieses Kanals ersetzen?")) return;
+      if (!confirm("Alle Regeln dieses Platzes ersetzen?")) return;
       this.I.put("/api/channels/" + this.kanalId + "/acl", this.nutzlast())
         .then(() => { this.ladeAcl(); alert("Gespeichert."); })
         .catch(err => alert("Speichern fehlgeschlagen: " + err.message));

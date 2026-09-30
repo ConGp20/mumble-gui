@@ -92,9 +92,10 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Write",
         label="Schreiben",
         description=(
-            "Vollzugriff auf den Kanal. Impliziert alle anderen Rechte ausser "
-            "Sprechen. Am Wurzelkanal gesetzt gilt es serverweit -- damit ist "
-            "der Nutzer faktisch Admin."
+            "Vollzugriff auf den Platz: verwalten, umbenennen, Rechte aendern. "
+            "Bringt fast alles andere mit -- aber weder Sprechen noch "
+            "Fluestern. Ganz oben (\"Ueberall\") gesetzt gilt es fuer den "
+            "ganzen Server; wer es dort hat, ist faktisch Administrator."
         ),
     ),
     Permission(
@@ -102,51 +103,52 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Traverse",
         label="Durchqueren",
         description=(
-            "Der Kanal darf durchquert werden, um Unterkanaele zu erreichen. "
-            "Ohne dieses Recht sind alle Unterkanaele unerreichbar, egal welche "
-            "Rechte dort gelten."
+            "Der Platz darf durchquert werden, um an die Plaetze darunter zu "
+            "kommen. Fehlt es, ist alles darunter unerreichbar -- egal welche "
+            "Rechte dort stehen."
         ),
     ),
     Permission(
         bit=0x04,
         name="Enter",
         label="Betreten",
-        description="Der Nutzer darf den Kanal betreten.",
+        description="Darf auf diesen Platz wechseln.",
     ),
     Permission(
         bit=0x08,
         name="Speak",
         label="Sprechen",
-        description="Der Nutzer darf in diesem Kanal senden (PTT).",
+        description="Darf hier senden, wenn er auf dem Platz ist.",
     ),
     Permission(
         bit=0x10,
         name="MuteDeafen",
         label="Stummschalten",
-        description="Andere Nutzer in diesem Kanal stumm oder taub schalten.",
+        description="Darf andere auf diesem Platz stumm oder taub schalten.",
     ),
     Permission(
         bit=0x20,
         name="Move",
         label="Verschieben",
         description=(
-            "Nutzer aus diesem Kanal verschieben. Zum Verschieben wird das Recht "
-            "in Quell- UND Zielkanal benoetigt."
+            "Darf andere von diesem Platz wegschieben. Zum Verschieben braucht es "
+            "das Recht auf beiden Plaetzen -- dem alten und dem neuen."
         ),
     ),
     Permission(
         bit=0x40,
         name="MakeChannel",
         label="Kanal anlegen",
-        description="Unterkanaele anlegen.",
+        description="Darf Plaetze darunter anlegen.",
     ),
     Permission(
         bit=0x80,
         name="LinkChannel",
         label="Kanal verlinken",
         description=(
-            "Diesen Kanal verlinken. Zum Verlinken wird das Recht in beiden "
-            "Kanaelen benoetigt, zum Trennen genuegt einer."
+            "Darf diesen Platz mit einem anderen verbinden, sodass beide sich "
+            "hoeren. Zum Verbinden braucht es das Recht auf beiden Plaetzen, "
+            "zum Trennen genuegt einer."
         ),
     ),
     Permission(
@@ -154,28 +156,28 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Whisper",
         label="Fluestern",
         description=(
-            "In diesen Kanal fluestern, ohne ihn zu betreten. Fuer ein Intercom "
-            "das wichtigste Recht neben Sprechen."
+            "Darf hier hineinsprechen, ohne den Platz zu wechseln. Fuer eine "
+            "Intercom das wichtigste Recht neben Sprechen."
         ),
     ),
     Permission(
         bit=0x200,
         name="TextMessage",
         label="Textnachricht",
-        description="Textnachrichten in diesen Kanal senden.",
+        description="Darf hier Textnachrichten schicken.",
     ),
     Permission(
         bit=0x400,
         name="MakeTempChannel",
-        label="Temp-Kanal anlegen",
-        description="Temporaere Unterkanaele anlegen.",
+        label="Platz auf Zeit",
+        description="Darf Plaetze darunter anlegen, die von selbst wieder verschwinden.",
     ),
     Permission(
         bit=0x800,
         name="Listen",
         label="Mithoeren",
         description=(
-            "Den Kanal mithoeren, ohne ihn zu betreten (Channel Listener, ab "
+            "Darf diesen Platz hoeren, ohne darauf zu sein (Channel Listener, ab "
             "Mumble 1.4). ACHTUNG: Die Slice-Datei definiert dafuer KEINE "
             "Konstante; das Bit wird trotzdem vom Server ausgewertet."
         ),
@@ -185,14 +187,14 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         bit=0x10000,
         name="Kick",
         label="Kicken",
-        description="Nutzer vom Server werfen. Nur am Wurzelkanal wirksam.",
+        description="Darf jemanden vom Server werfen. Wirkt nur ganz oben.",
         root_only=True,
     ),
     Permission(
         bit=0x20000,
         name="Ban",
         label="Bannen",
-        description="Nutzer vom Server bannen. Nur am Wurzelkanal wirksam.",
+        description="Darf jemanden aussperren. Wirkt nur ganz oben.",
         root_only=True,
     ),
     Permission(
@@ -200,8 +202,8 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Register",
         label="Registrieren",
         description=(
-            "Andere Nutzer registrieren und deren Registrierung loeschen. "
-            "Nur am Wurzelkanal wirksam."
+            "Darf Personen registrieren und Registrierungen loeschen. Wirkt nur "
+            "ganz oben."
         ),
         root_only=True,
     ),
@@ -210,7 +212,7 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="SelfRegister",
         label="Selbst registrieren",
         description=(
-            "Sich selbst registrieren. Nur am Wurzelkanal wirksam. "
+            "Darf sich selbst registrieren. Wirkt nur ganz oben. "
             "Heisst in der Slice PermissionRegisterSelf."
         ),
         root_only=True,
@@ -221,8 +223,8 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="ResetUserContent",
         label="Inhalte zuruecksetzen",
         description=(
-            "Kommentar oder Avatar eines Nutzers zuruecksetzen. Nur am "
-            "Wurzelkanal wirksam. Heisst in der Slice ResetUserContent."
+            "Darf Kommentar oder Bild einer Person zuruecksetzen. Wirkt nur ganz "
+            "oben. Heisst in der Slice ResetUserContent."
         ),
         root_only=True,
         slice_const="ResetUserContent",
