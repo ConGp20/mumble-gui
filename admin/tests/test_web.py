@@ -1656,3 +1656,24 @@ def test_sicherung_meldet_wen_sie_nicht_zuordnen_kann(app_client):
     antwort = _schreibe(client, "post", "/api/sicherung/einspielen", {"yaml_text": text})
     assert antwort.status_code == 200, antwort.text
     assert antwort.json()["wunsch"]["fehlend"] == ["gibt-es-nicht"]
+
+
+def test_anleitung_nennt_die_richtung_der_rechte(app_client):
+    """Mithoeren und Reinschalten stehen am *gehoerten* Platz, nicht beim Hoerer.
+
+    Belegt am Quelltext von v1.5.735: ``Messages.cpp`` prueft ``ChanACL::Listen``
+    gegen den Kanal aus ``listening_channel_add``, ``Server.cpp`` prueft
+    ``ChanACL::Whisper`` gegen den Zielkanal des Fluesterns. Das ist die eine
+    Sache, die alle einmal falsch herum denken -- steht sie nicht in der
+    Anleitung, sucht man den Fehler am falschen Platz.
+    """
+    client, _ = app_client
+    _anmelden(client)
+    text = client.get("/anleitung").text
+
+    assert "Das Recht steht dort, wo der Ton herkommt" in text
+    assert "Wettkampfbüro" in text
+    # Und die Lesehilfe fuer das Raster, das es jetzt gibt.
+    assert "Das Raster im Pult lesen" in text
+    for begriff in ("Zeichen", "Farbe", "Fragezeichen", "gesperrte Zelle"):
+        assert begriff in text, f"{begriff} fehlt in der Lesehilfe"

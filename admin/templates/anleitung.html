@@ -100,6 +100,95 @@
   </div>
 
   <div class="karte">
+    <header>Die Richtung, die alle einmal falsch herum denken</header>
+    <div class="inhalt">
+      <p>
+        „Kampfgericht 3 soll das Wettkampfbüro hören.“ Wo stellt man das ein?
+        Nicht bei Kampfgericht 3 – sondern <strong>beim Wettkampfbüro</strong>.
+      </p>
+      <p>
+        Der Grund ist Punkt 1 von oben: Rechte hängen am Platz. Ein Recht steht
+        immer an dem Platz, um den es geht, und sagt, wer damit etwas darf. Beim
+        Mithören ist der Platz, um den es geht, der <em>gehörte</em> – nicht der,
+        auf dem der Zuhörer sitzt.
+      </p>
+      <table class="dicht">
+        <thead>
+          <tr><th>Was du willst</th><th>An welchem Platz du es einstellst</th><th>Welches Recht</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Kampfgericht 3 hört das Wettkampfbüro</td>
+            <td><strong>Wettkampfbüro</strong></td>
+            <td>Mithören für die Rolle <em>kampfgericht</em></td>
+          </tr>
+          <tr>
+            <td>Die Technik kann überall reinreden</td>
+            <td><strong>jeder Platz</strong>, in den sie reinreden soll</td>
+            <td>Reinschalten für die Rolle <em>technik</em></td>
+          </tr>
+          <tr>
+            <td>Auf Kampfgericht 3 redet nur das Kampfgericht</td>
+            <td><strong>Kampfgericht 3</strong></td>
+            <td>Sprechen: für <em>Alle</em> weg, für <em>kampfgericht</em> hin</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="hinweis">
+        Merksatz: <strong>Das Recht steht dort, wo der Ton herkommt</strong> –
+        nicht dort, wo der sitzt, der etwas darf.
+      </div>
+    </div>
+  </div>
+
+  <div class="karte">
+    <header>Das Raster im Pult lesen</header>
+    <div class="inhalt">
+      <p>
+        Im <a href="/pult">Pult</a> stehen unter jedem Platz die Rollen und die
+        fünf Rechte. Jede Zelle beantwortet zwei verschiedene Fragen auf einmal,
+        und die darf man nicht verwechseln:
+      </p>
+      <table class="dicht">
+        <thead><tr><th>Was du siehst</th><th>Was es heißt</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Das <strong>Zeichen</strong> (✓ ✗ ?)</td>
+            <td>Was am Ende wirklich gilt – nach allem, was von oben kommt.</td>
+          </tr>
+          <tr>
+            <td>Die <strong>Farbe</strong></td>
+            <td>
+              Grün: hier ausdrücklich erlaubt. Rot: hier ausdrücklich verboten.
+              Grau: hier gar nichts gesetzt, es kommt von weiter oben.
+            </td>
+          </tr>
+          <tr>
+            <td>Ein <strong>Fragezeichen</strong></td>
+            <td>
+              Hängt an etwas, das erst beim Verbinden feststeht – ein geprüftes
+              Zertifikat oder ein Zugangswort. Das wird nicht geraten.
+            </td>
+          </tr>
+          <tr>
+            <td>Eine <strong>gesperrte Zelle</strong></td>
+            <td>
+              An diesem Platz stehen mehrere Einträge für dieselbe Rolle. Welcher
+              gewinnt, hängt an ihrer Reihenfolge – das kann ein Raster mit drei
+              Zuständen nicht abbilden. Dafür ist die <a href="/acl">ACL-Sicht</a> da.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="leise">
+        Ein grünes Feld mit einem ✗ ist kein Fehler, sondern die wichtigste
+        Anzeige überhaupt: hier ist etwas erlaubt, und trotzdem gilt es nicht –
+        weil ein Eintrag weiter unten es wieder wegnimmt.
+      </p>
+    </div>
+  </div>
+
+  <div class="karte">
     <header>Was Mumble sich <em>nicht</em> merkt</header>
     <div class="inhalt">
       <p>
@@ -134,15 +223,22 @@
     <header>Wo fange ich an?</header>
     <div class="inhalt">
       <ol class="feldliste">
-        <li><strong>Einrichten</strong> → einen Baukasten anwenden. Legt die Plätze und Rollen an.</li>
+        <li><a href="/einrichten"><strong>Einrichten</strong></a> → einen Baukasten anwenden. Legt die Plätze und Rollen an.</li>
         <li>Alle einmal verbinden lassen (Mumble-Programm, Serveradresse, Name).</li>
-        <li><strong>Nutzer</strong> → jeden registrieren und in seine Rolle stecken.</li>
-        <li><strong>Kanäle</strong> → Plätze umbenennen, verschieben, ergänzen.</li>
-        <li><strong>Einrichten</strong> → Sicherung herunterladen, wenn es passt. Das ist dein Netz.</li>
+        <li><a href="/nutzer"><strong>Nutzer</strong></a> → jeden registrieren, damit der Server ihn wiedererkennt.</li>
+        <li><a href="/pult"><strong>Pult</strong></a> → Personen in ihre Rollen ziehen und die Rechte verteilen.</li>
+        <li><a href="/einrichten"><strong>Einrichten</strong></a> → Sicherung herunterladen, wenn es passt. Das ist dein Netz.</li>
       </ol>
       <p class="leise">
         Alles, was hier angelegt wird, steht im Server und bleibt dort. Es gibt
         keine Datei, die beim nächsten Start etwas zurücksetzt.
+      </p>
+      <p class="leise">
+        Das <a href="/pult">Pult</a> ist die Alltagsansicht: Personen links,
+        Plätze rechts, verbunden wird per Ziehen. <a href="/kanaele">Kanäle</a>
+        und <a href="/acl">ACL</a> zeigen dieselben Dinge so, wie Mumble sie
+        nennt – dorthin geht es, wenn etwas feiner eingestellt werden muss, als
+        das Raster im Pult es zulässt.
       </p>
     </div>
   </div>
