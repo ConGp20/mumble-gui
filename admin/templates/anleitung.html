@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block inhalt %}
+{% from "_kopf.html" import seitenkopf %}
+{{ seitenkopf(
+  "anleitung",
+  "Anleitung",
+  "Mumbles Modell in Klartext – damit die anderen Seiten Sinn ergeben.",
+  "Beim ersten Mal, und immer dann, wenn etwas nicht so wirkt wie gedacht. Die Reihenfolge der Regeln und die Richtung der Rechte sind die beiden Stellen, an denen alle einmal hängenbleiben.",
+) }}
+
 <div class="raster fliesstext" style="grid-template-columns:1fr; max-width:900px">
 
   <div class="karte">

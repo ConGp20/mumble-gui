@@ -1904,6 +1904,9 @@ SEITEN_MIT_EIGENER_SPRACHE = (
     "/", "/pult", "/nutzer", "/kanaele", "/einrichten", "/audit", "/server", "/acl"
 )
 
+#: Alle Seiten -- jede traegt denselben Erklaerkopf, auch die Anleitung.
+ALLE_SEITEN = (*SEITEN_MIT_EIGENER_SPRACHE, "/anleitung")
+
 
 def test_keine_wurzel_in_der_oberflaeche(app_client):
     """„Wurzel“ und „Root“ sind Woerter aus der Informatik.
@@ -1938,7 +1941,7 @@ def test_jede_seite_erklaert_sich_selbst(app_client):
     """Eine Anleitung auf einer eigenen Seite liest niemand beim Arbeiten."""
     client, _ = app_client
     _anmelden(client)
-    for pfad in SEITEN_MIT_EIGENER_SPRACHE:
+    for pfad in ALLE_SEITEN:
         text = client.get(pfad).text
         assert 'class="seitenkopf"' in text, f"{pfad} hat keinen Erklaerkopf"
         assert "Wann brauchst du das?" in text, f"{pfad} sagt nicht, wann man es braucht"
