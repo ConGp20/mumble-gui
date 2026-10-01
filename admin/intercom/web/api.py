@@ -16,7 +16,6 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -25,7 +24,6 @@ from ..ice.errors import IceError
 from ..ice.permissions import BY_NAME, PERMISSIONS, mask_to_names, names_to_mask
 from ..ice.types import ACLEntry, BanEntry, ChannelACL, ChannelGroup, MumbleChannel
 from ..provision.templates import TEMPLATES, apply_template
-from ..store.db import WUNSCH_ARTEN
 from ..woerter import UEBERALL
 from .auth import Account, require_admin, require_user
 
@@ -438,10 +436,12 @@ async def channel_update(
     if context.store is not None and alter_pfad and neuer_pfad and alter_pfad != neuer_pfad:
         geaendert = context.store.wunsch_umschreiben(alter_pfad, neuer_pfad)
         geaendert += context.store.verbindung_umschreiben(alter_pfad, neuer_pfad)
+        geaendert += context.store.ruftaste_umschreiben(alter_pfad, neuer_pfad)
         if geaendert:
             channels = await context.ice.get_channels()
             context.enforcer.lade_wuensche(context.store.alle_wuensche(), channels)
             context.enforcer.lade_verbindungen(context.store.verbindungen(), channels)
+            context.enforcer.lade_ruftasten(context.store.ruftasten(), channels)
     return {"ok": True}
 
 
@@ -452,7 +452,7 @@ async def channel_delete(
     context = ctx(request)
     if channel_id == 0:
         raise HTTPException(
-            400, "Der oberste Platz laesst sich nicht loeschen."
+            400, "Der oberste Platz lässt sich nicht löschen."
         )
     pfad = context.live.path_of.get(channel_id)
     try:
@@ -466,6 +466,7 @@ async def channel_delete(
     # ein gleichnamiger Platz kann wiederkommen, etwa aus einer Sicherung.
     if context.store is not None and pfad:
         context.store.verbindung_vergessen(pfad)
+        context.store.ruftaste_vergessen(pfad)
 
     context.audit(
         account.name,
@@ -709,9 +710,9 @@ async def acl_write(
         if entry.dangling:
             raise HTTPException(
                 400,
-                "Ein Eintrag gilt weder hier noch fuer Unterkanaele. Solche "
+                "Ein Eintrag gilt weder hier noch für Unterkanäle. Solche "
                 "Leichen legt der Editor nicht an -- bitte einen Geltungsbereich "
-                "waehlen oder den Eintrag entfernen.",
+                "wählen oder den Eintrag entfernen.",
             )
 
     try:
@@ -1160,8 +1161,8 @@ async def conf_write(
     if body.key.lower().startswith("icesecret"):
         raise HTTPException(
             400,
-            "Das Ice-Secret laesst sich hier nicht aendern -- danach waere die "
-            "Verbindung des Admin-Prozesses sofort tot. In der .env aendern und "
+            "Das Ice-Secret lässt sich hier nicht ändern -- danach wäre die "
+            "Verbindung des Admin-Prozesses sofort tot. In der .env ändern und "
             "beide Container neu starten.",
         )
     try:
@@ -1227,7 +1228,7 @@ async def netze_schreiben(
     try:
         context.store.set_netze([e.model_dump() for e in body.netze])
     except ValueError as exc:
-        raise HTTPException(400, f"Ungueltige Netzmaske: {exc}") from exc
+        raise HTTPException(400, f"Ungültige Netzmaske: {exc}") from exc
     context.netze_laden()
     context.audit(
         account.name,
@@ -1261,7 +1262,7 @@ async def server_log(
         try:
             matcher = re.compile(pattern, re.IGNORECASE)
         except re.error as exc:
-            raise HTTPException(400, f"Ungueltiger regulaerer Ausdruck: {exc}") from exc
+            raise HTTPException(400, f"Ungültiger regulärer Ausdruck: {exc}") from exc
         rows = [row for row in rows if matcher.search(row["text"])]
     return {"total": total, "first": first, "entries": rows}
 
@@ -1385,213 +1386,6 @@ async def vorlage_anwenden(
     except (RuntimeError, IceError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return plan.to_json()
-
-
-class SicherungBody(BaseModel):
-    """Der Inhalt einer Sicherungsdatei, so wie er hochgeladen wurde."""
-
-    yaml_text: str
-    #: Auch loeschen, was in der Sicherung fehlt. Aus per Vorgabe -- eine
-    #: Sicherung einzuspielen soll nichts wegraeumen, was jemand seither
-    #: angelegt hat, solange er es nicht ausdruecklich will.
-    aufraeumen: bool = False
-
-
-def _sicherung_lesen(body: SicherungBody) -> Any:
-    """YAML-Text -> geprueft Konfiguration, mit brauchbarer Fehlermeldung."""
-    from ..provision.schema import ConfigInvalid, parse_config
-
-    try:
-        daten = yaml.safe_load(body.yaml_text)
-    except yaml.YAMLError as exc:
-        raise HTTPException(400, f"Das ist kein gueltiges YAML: {exc}") from exc
-    if not isinstance(daten, dict):
-        raise HTTPException(400, "Die Datei enthaelt keine Sicherung.")
-    try:
-        return parse_config(daten, source="Sicherung")
-    except ConfigInvalid as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@router.post("/sicherung/plan")
-async def sicherung_plan(
-    request: Request, body: SicherungBody, account: Account = Depends(require_admin)
-) -> dict[str, Any]:
-    """Testlauf fuer eine hochgeladene Sicherung. Schreibt nichts."""
-    context = ctx(request)
-    config = _sicherung_lesen(body)
-    try:
-        plan = await context.anwenden(
-            config,
-            dry_run=True,
-            actor=account.name,
-            quelle="Sicherung",
-            prune=body.aufraeumen,
-        )
-    except (RuntimeError, IceError) as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return plan.to_json()
-
-
-@router.post("/sicherung/einspielen")
-async def sicherung_einspielen(
-    request: Request, body: SicherungBody, account: Account = Depends(require_admin)
-) -> dict[str, Any]:
-    """Spielt eine Sicherung ein."""
-    context = ctx(request)
-    config = _sicherung_lesen(body)
-    try:
-        plan = await context.anwenden(
-            config,
-            dry_run=False,
-            actor=account.name,
-            quelle="Sicherung",
-            prune=body.aufraeumen,
-        )
-    except (RuntimeError, IceError) as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    antwort = plan.to_json()
-    antwort["wunsch"] = await _wunsch_einspielen(context, body, account.name)
-    antwort["verbindungen"] = _verbindungen_einspielen(context, body, account.name)
-    antwort["netze"] = _netze_einspielen(context, account.name)
-    return antwort
-
-
-def _netze_einspielen(context: Any, actor: str) -> dict[str, Any]:
-    """Uebernimmt ``networks:`` aus einer Sicherung in den Store.
-
-    Die Liste steht schon geparst in ``context.config`` -- das Einspielen hat
-    sie gerade gelesen. Nur wenn sie etwas enthaelt: eine leere Liste soll
-    vorhandene Segmente nicht wegwerfen.
-    """
-    if context.store is None or context.config is None:
-        return {"uebernommen": 0}
-    segmente = [
-        {"name": n.name, "cidr": n.cidr, "notiz": n.note}
-        for n in getattr(context.config, "networks", [])
-    ]
-    if not segmente:
-        return {"uebernommen": 0}
-    try:
-        context.store.set_netze(segmente)
-    except ValueError:
-        return {"uebernommen": 0}
-    context.netze_laden()
-    context.audit(actor, "sicherung.netze", f"{len(segmente)} Segmente")
-    return {"uebernommen": len(segmente)}
-
-
-def _verbindungen_einspielen(
-    context: Any, body: SicherungBody, actor: str
-) -> dict[str, Any]:
-    """Uebernimmt den Abschnitt ``verbindungen`` aus einer Sicherung.
-
-    Pfade auf Plaetze, die es (noch) nicht gibt, werden trotzdem uebernommen:
-    sie loesen sich auf, sobald der Platz wieder da ist. Das ist derselbe Grund,
-    aus dem Wuensche als Pfad gespeichert werden.
-    """
-    roh = yaml.safe_load(body.yaml_text) or {}
-    abschnitt = roh.get("verbindungen") if isinstance(roh, dict) else None
-    if not isinstance(abschnitt, dict) or context.store is None:
-        return {"uebernommen": 0}
-
-    uebernommen = 0
-    for art, je_platz in abschnitt.items():
-        if not isinstance(je_platz, dict):
-            continue
-        for von, zielen in je_platz.items():
-            for nach in zielen or []:
-                try:
-                    context.store.set_verbindung(
-                        str(art), str(von), str(nach), an=True, author=actor
-                    )
-                except ValueError:
-                    continue
-                uebernommen += 1
-    if uebernommen:
-        context.audit(
-            actor, "sicherung.verbindungen", f"{uebernommen} uebernommen"
-        )
-    return {"uebernommen": uebernommen}
-
-
-async def _wunsch_einspielen(context: Any, body: SicherungBody, actor: str) -> dict[str, Any]:
-    """Uebernimmt den Abschnitt ``wunsch`` aus einer Sicherung.
-
-    Er steht dort nach Nutzernamen; hier werden sie gegen die gerade angelegten
-    Registrierungen aufgeloest. Wen es nicht (mehr) gibt, wird ueberschlagen und
-    gemeldet -- stillschweigend fallenlassen waere genau die Sorte Verlust, die
-    erst beim naechsten Wettkampf auffaellt.
-    """
-    roh = yaml.safe_load(body.yaml_text) or {}
-    abschnitt = roh.get("wunsch") if isinstance(roh, dict) else None
-    if not isinstance(abschnitt, dict) or context.store is None:
-        return {"uebernommen": 0, "fehlend": []}
-
-    try:
-        registriert = await context.ice.get_registered_users()
-    except IceError:
-        return {"uebernommen": 0, "fehlend": [], "fehler": "Nutzer nicht lesbar."}
-    nach_name = {name: userid for userid, name in registriert.items()}
-
-    uebernommen = 0
-    fehlend: list[str] = []
-    for art, je_person in abschnitt.items():
-        if art not in WUNSCH_ARTEN or not isinstance(je_person, dict):
-            continue
-        for name, pfade in je_person.items():
-            userid = nach_name.get(str(name))
-            if userid is None:
-                fehlend.append(str(name))
-                continue
-            context.store.set_wunsch(
-                art, userid, [str(p) for p in (pfade or [])], actor
-            )
-            uebernommen += 1
-
-    if uebernommen or fehlend:
-        try:
-            kanaele = await context.ice.get_channels()
-            context.enforcer.lade_wuensche(context.store.alle_wuensche(), kanaele)
-        except IceError:
-            pass
-        context.audit(
-            actor,
-            "sicherung.wunsch",
-            f"{uebernommen} uebernommen",
-            after=", ".join(sorted(set(fehlend))) if fehlend else "",
-        )
-    return {"uebernommen": uebernommen, "fehlend": sorted(set(fehlend))}
-
-
-@router.get("/provision/export", response_class=PlainTextResponse)
-async def provision_export(
-    request: Request, account: Account = Depends(require_user)
-) -> PlainTextResponse:
-    from ..provision.exporter import export_yaml
-
-    context = ctx(request)
-    # Der Wunschzustand steht nicht am Server. Ohne ihn waere die Sicherung
-    # unvollstaendig, und nach dem Einspielen fehlten feste Plaetze, Mithoeren
-    # und Vorrang -- ohne dass es jemandem auffiele.
-    wunsch = context.store.alle_wuensche() if context.store is not None else None
-    verbindungen = context.store.verbindungen() if context.store is not None else None
-    netze = context.store.netze() if context.store is not None else None
-    try:
-        text = await context.ice.run(
-            lambda client: export_yaml(
-                client, wunsch=wunsch, verbindungen=verbindungen, netze=netze
-            ),
-            context.ice.sync,
-        )
-    except IceError as exc:
-        raise _fail(exc) from exc
-    return PlainTextResponse(
-        text,
-        media_type="text/yaml; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="intercom-export.yaml"'},
-    )
 
 
 @router.post("/provision/reload")

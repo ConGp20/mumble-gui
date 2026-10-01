@@ -391,13 +391,13 @@ printf '    %sAnmeldung%s   %s / Passwort steht in der .env als ADMIN_PASSWORD\n
        "${C_FETT}" "${C_AUS}" "${ADMIN_USER}"
 printf '\n'
 printf '    %s─── So geht es weiter ────────────────────────────────────%s\n' "${C_BLAU}" "${C_AUS}"
-printf '      1  Einrichten   einen Baukasten anwenden (erst Testlauf)\n'
+printf '      1  Shows        unten einen Baukasten anwenden (erst Testlauf)\n'
 printf '      2  –            alle einmal mit Mumble verbinden lassen\n'
 printf '      3  Personen     jeden registrieren – der Server erkennt Leute\n'
 printf '                      am Zertifikat, nicht am Namen\n'
 printf '      4  Pult         per Ziehen in Rollen und auf Plätze, Rechte\n'
-printf '                      verteilen\n'
-printf '      5  Einrichten   Sicherung herunterladen\n'
+printf '                      verteilen, Ruftasten belegen\n'
+printf '      5  Shows        aktuellen Stand als Show speichern\n'
 printf '\n'
 printf '      Die Seite „Anleitung“ erklärt Mumbles Modell in Klartext –\n'
 printf '      vor allem, warum Rechte am Platz hängen und nicht an der Person.\n'

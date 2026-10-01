@@ -78,7 +78,7 @@ def test_plan_detailed_exitcode(fake_murmur, tmp_path, capsys):
         capsys.readouterr()
         # Nach dem Anwenden gibt es nichts mehr zu tun.
         assert main(["plan", "--detailed-exitcode"]) == 0
-        assert "Keine Aenderungen" in capsys.readouterr().out
+        assert "Keine Änderungen" in capsys.readouterr().out
 
 
 def test_apply_ohne_tty_bricht_ohne_yes_ab(fake_murmur, tmp_path):

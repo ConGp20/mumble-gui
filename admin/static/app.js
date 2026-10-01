@@ -320,7 +320,12 @@
         if (!antwort.ok) {
           var meldung = (inhalt && inhalt.detail) || inhalt ||
                         ("HTTP " + antwort.status);
-          throw new Error(meldung);
+          var fehler = new Error(meldung);
+          /* Manche Antworten sind eine Frage, kein Fehler -- 409 etwa heisst
+             "gibt es schon, ueberschreiben?". Dafuer braucht der Aufrufer
+             den Code, nicht nur den Text. */
+          fehler.status = antwort.status;
+          throw fehler;
         }
         return inhalt;
       });

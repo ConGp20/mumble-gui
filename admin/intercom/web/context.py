@@ -443,11 +443,27 @@ class AppContext:
             if self.store is not None:
                 self.enforcer.lade_wuensche(self.store.alle_wuensche(), channels)
                 self.enforcer.lade_verbindungen(self.store.verbindungen(), channels)
+                self.enforcer.lade_ruftasten(self.store.ruftasten(), channels)
             await self.ice.run(self.enforcer.refresh_membership)
         except IceError as exc:
             log.warning("Laufzeit-Abgleich nicht scharf: %s", exc)
         except StoreClosed:
             log.debug("Wunschzustand nicht lesbar -- Store geschlossen")
+
+    async def wunschzustand_neu_laden(self) -> None:
+        """Nach dem Laden einer Show: Enforcer neu laden, Sitzungen sofort nachziehen.
+
+        Ohne den zweiten Schritt folgten verbundene Sitzungen erst beim
+        naechsten Abgleich -- feste Plaetze und Ruftasten stuenden dann ein paar
+        Sekunden auf dem alten Stand.
+        """
+        await self._arm_enforcer()
+        if not self.connected:
+            return
+        try:
+            await self.ice.run(self.enforcer.enforce_all, list(self.live.users.values()))
+        except IceError as exc:
+            log.warning("Sitzungen nicht nachgezogen: %s", exc)
 
     # ------------------------------------------------------------------ #
     #  Hintergrundaufgaben

@@ -4,9 +4,9 @@
 {{ seitenkopf(
   "kanaele",
   "Plätze",
-  "Die Raeume, in denen gesprochen wird – anlegen, umbenennen, verschieben. Mumble nennt sie Kanaele.",
-  "Wenn ein Baukasten nicht genau passt. Fuer den Anfang ist <a href='/einrichten'>Einrichten</a> schneller.",
-  achtung="Ein Platz, der unter einem anderen haengt, <strong>erbt dessen Rechte</strong>. Wer hier etwas verschiebt, aendert damit auch, wer dort reden darf – nachsehen kann man das im <a href='/pult'>Pult</a>.",
+  "Die Räume, in denen gesprochen wird – anlegen, umbenennen, verschieben. Mumble nennt sie Kanäle.",
+  "Wenn ein Baukasten nicht genau passt. Für den Anfang ist ein Baukasten unter <a href='/einrichten'>Shows</a> schneller.",
+  achtung="Ein Platz, der unter einem anderen hängt, <strong>erbt dessen Rechte</strong>. Wer hier etwas verschiebt, ändert damit auch, wer dort reden darf – nachsehen kann man das im <a href='/pult'>Pult</a>.",
 ) }}
 
 <div x-data="kanaele()" x-init="lade()">
@@ -209,7 +209,7 @@ function kanaele() {
     nachricht() {
       const text = prompt("Nachricht an „" + this.gewaehlt.name + "“:", "Start in 2 Minuten");
       if (!text) return;
-      const baum = confirm("Auch an alle Unterkanaele senden?");
+      const baum = confirm("Auch an alle Unterkanäle senden?");
       this.I.post("/api/channels/" + this.gewaehlt.id + "/message", {text: text, tree: baum})
         .catch(err => alert("Senden fehlgeschlagen: " + err.message));
     }

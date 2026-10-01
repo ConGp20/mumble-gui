@@ -19,11 +19,11 @@
   "Pult",
   "Hier stellst du zusammen, wer wo mitredet.",
   "Beim Aufbauen einer Veranstaltung, und immer wenn jemand dazukommt oder die Aufgabe wechselt. Das ist die Seite, auf der du im Normalfall arbeitest.",
-  achtung="Rechte haengen am <strong>Platz</strong>, nicht an der Person. Und: nur wer unter <a href='/nutzer'>Personen</a> registriert ist, kann ueberhaupt in einer Rolle sein – der Server erkennt Leute am Zertifikat, nicht am Namen.",
+  achtung="Rechte hängen am <strong>Platz</strong>, nicht an der Person. Und: nur wer unter <a href='/nutzer'>Personen</a> registriert ist, kann überhaupt in einer Rolle sein – der Server erkennt Leute am Zertifikat, nicht am Namen.",
   schritte=[
     "<strong>Person in eine Rolle ziehen.</strong> Rollen sind Schubladen wie <em>Technik</em> oder <em>Kampfgericht</em>. Rechte vergibt man an die Rolle, nie an einzelne Leute – sonst darf man bei jedem Neuen wieder alles durchgehen.",
-    "<strong>Rechte am Platz verteilen.</strong> Auf „Rechte“ neben einem Platz klicken. Dort steht je Rolle, ob sie hier betreten, sprechen, mithoeren, reinschalten und schreiben darf.",
-    "<strong>Personen auf Plaetze ziehen.</strong> Wer verbunden ist, wird sofort verschoben. Wer nicht verbunden ist, bekommt einen <em>festen Platz</em> – dort landet er dann nach jedem Anmelden.",
+    "<strong>Rechte am Platz verteilen.</strong> Auf „Rechte“ neben einem Platz klicken. Dort steht je Rolle, ob sie hier betreten, sprechen, mithören, reinschalten und schreiben darf.",
+    "<strong>Personen auf Plätze ziehen.</strong> Wer verbunden ist, wird sofort verschoben. Wer nicht verbunden ist, bekommt einen <em>festen Platz</em> – dort landet er dann nach jedem Anmelden.",
   ],
 ) }}
 
@@ -43,7 +43,7 @@
     </div>
     <div class="pult-werkzeuge">
       <button class="knopf klein" @click="laden()" :disabled="laedt">
-        <span x-text="laedt ? 'laedt …' : 'Neu laden'"></span>
+        <span x-text="laedt ? 'lädt …' : 'Neu laden'"></span>
       </button>
     </div>
   </div>
@@ -102,14 +102,14 @@
                @drop.prevent="aufRolle(r)"
                @click="aufRolle(r)">
             <span class="name" x-text="r.titel"></span>
-            <span class="still" x-show="r.eingebaut">von Mumble, nicht aenderbar</span>
+            <span class="still" x-show="r.eingebaut">von Mumble, nicht änderbar</span>
             <span class="anzahl" x-show="!r.eingebaut" x-text="mitgliederZahl(r.name)"></span>
           </div>
         </template>
         <p class="leer" x-show="!rollen.filter(r => !r.eingebaut).length" x-cloak>
           Noch keine eigene Rolle. Eine entsteht, sobald du unter
           <a href="/acl">Rechte im Original</a> eine Rolle anlegst – oder mit einem Baukasten unter
-          <a href="/einrichten">Einrichten</a>.
+          <a href="/einrichten">Shows</a>.
         </p>
       </div>
     </aside>
@@ -119,7 +119,7 @@
     {# ---------------------------------------------------------------- #}
     <section class="karte">
       <header>
-        Plaetze
+        Plätze
         <span class="rechts still">Wer hier steht, ist gerade verbunden</span>
       </header>
       <div class="inhalt pult-plaetze">
@@ -157,6 +157,16 @@
 
             {# Die Verbindungen sind die Auskunft, die eine Intercom braucht --
                sie stehen deshalb in der Uebersicht und nicht nur im Blatt. #}
+            <div class="wer tasten" x-show="!k.wurzel && tastenVon(k.id).length">
+              <span class="etikett">tasten</span>
+              <template x-for="t in tastenVon(k.id)" :key="'tt' + t.taste">
+                <span class="tastenmarke" :class="t.eigen ? 'eigen' : 'geerbt'"
+                      :title="t.eigen ? 'hier belegt' : 'von weiter oben geerbt'">
+                  <b x-text="t.taste"></b> <span x-text="t.rolle === 'all' ? 'Alle' : t.rolle"></span>
+                </span>
+              </template>
+            </div>
+
             <div class="wer verbunden"
                  x-show="verbindungenVon(k.id, 'hoert').length ||
                          verbindungenVon(k.id, 'reinschalten').length">
@@ -253,7 +263,7 @@
             </tbody>
           </table>
           <p class="hinweistext" x-show="unbestimmtHier()" x-cloak>
-            Ein Fragezeichen heisst: haengt an etwas, das erst beim Verbinden
+            Ein Fragezeichen heißt: hängt an etwas, das erst beim Verbinden
             feststeht – ein geprüftes Zertifikat, ein Zugangswort. Das wird
             hier nicht geraten.
           </p>
@@ -320,6 +330,15 @@
                 <option :value="k.id" x-text="k.pfad"></option>
               </template>
             </select>
+            {# Ehrlich sein: anders als beim Mithoeren erteilt der Server hier nur
+               das Recht. Eine Taste, mit der man es nutzt, kann er nicht
+               vergeben -- die Slice hat dafuer keine Methode. #}
+            <p class="hinweistext warnung">
+              Erteilt nur das <b>Recht</b>. Eine <b>Taste</b> dafür kann der
+              Server nicht vergeben – die richtet jeder im Mumble-Programm
+              selbst ein. Bequemer: unten eine <b>Ruftaste</b> belegen, dann
+              steuert der Server, wohin sie ruft.
+            </p>
           </div>
 
           <div class="verbindung gegenrichtung"
@@ -347,6 +366,103 @@
           </div>
         </div>
       </div>
+
+      {# --- Ruftasten ------------------------------------------------------
+         Was bei GreenGo oder Riedel die Konfigurationssoftware fuer die
+         Beltpacks festlegt. Mumble kennt das nicht; der Umweg ueber eine feste
+         Rufgruppe je Taste und redirectWhisperGroup ist gegen murmur gemessen
+         (DECISIONS D-032). #}
+      <div class="ruftasten">
+        <h3>Ruftasten an diesem Platz</h3>
+        <p class="hinweistext">
+          Wer hier sitzt und Taste <i>n</i> drückt, ruft die eingestellte Rolle –
+          wo immer deren Leute gerade sind. Eine Belegung gilt auch für alle
+          Plätze darunter, solange dort nichts anderes steht.
+        </p>
+        <p class="hinweistext warnung">
+          Mumble verlangt dafür das Recht zum <b>Reinschalten</b> an jedem Platz,
+          an dem die Gerufenen sitzen können. Fehlt es, setzt das Pult es beim
+          Belegen dazu – und es gilt dann für <b>jedes</b> Flüstern dorthin, nicht
+          nur für diese Taste. Wer zwei Plätze streng getrennt halten will, sieht
+          in der Spalte „Reinschalten“ oben, wo es jetzt erlaubt ist.
+        </p>
+
+        <table class="dicht tasten">
+          <thead>
+            <tr><th>Taste</th><th style="width:34%">ruft</th><th>Kommt an?</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="t in (blatt ? blatt.ruftasten : [])" :key="'t' + t.taste">
+              <tr>
+                <td>
+                  <span class="tastennummer" x-text="t.taste"></span>
+                  <span class="still mono" x-text="t.gruppe"></span>
+                </td>
+                <td>
+                  <select :value="t.eigen || ''" {% if not account.can_write %}disabled{% endif %}
+                          @change="tasteBelegen(t.taste, $event.target.value)">
+                    <option value="" x-text="t.geerbt
+                         ? '– wie oben: ' + rolleTitel(t.geerbt.rolle) + ' (von ' + t.geerbt.von + ') –'
+                         : '– frei –'"></option>
+                    <template x-for="z in (blatt ? blatt.rufziele : [])" :key="'z' + z.name">
+                      <option :value="z.name" :selected="t.eigen === z.name" x-text="z.titel"></option>
+                    </template>
+                  </select>
+                </td>
+                <td>
+                  <template x-if="!t.wirksam">
+                    <span class="still">nicht belegt – die Taste bleibt stumm</span>
+                  </template>
+                  <template x-if="t.wirksam && !t.rufende.length">
+                    <span class="status status-warnung">
+                      Hier darf keine Rolle sprechen – wer nicht sprechen darf, kann auch
+                      nicht rufen.
+                    </span>
+                  </template>
+                  <template x-if="t.wirksam && t.rufende.length && !t.kommt_nicht_an.length">
+                    <span class="status status-ok">
+                      ja – für <span x-text="t.rufende.join(', ')"></span>
+                    </span>
+                  </template>
+                  <template x-if="t.wirksam && t.rufende.length && t.kommt_nicht_an.length">
+                    <span class="status status-warnung" :title="t.kommt_nicht_an.join('\n')">
+                      nicht überall – fehlt an
+                      <span x-text="t.kommt_nicht_an.length"></span>
+                      Stelle(n), dort fehlt das Recht zum Reinschalten
+                    </span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <details class="einrichten-client">
+          <summary>So richtest du die Tasten im Mumble-Programm ein – einmal je Gerät</summary>
+          <ol class="schritte">
+            <li><b>Konfigurieren → Einstellungen → Tastenkürzel</b>, dann <b>Hinzufügen</b>.</li>
+            <li>Bei <b>Funktion</b> „Flüstern/Rufen“ wählen und die gewünschte Taste drücken.</li>
+            <li>In der Spalte <b>Daten</b> auf <b>…</b> klicken.</li>
+            <li><b>Flüster-Ziel</b>: „Kanal“. Als <b>Zielkanal</b> ganz oben <b>Hauptkanal</b>
+                wählen. (Der Eintrag mit dem Servernamen darunter geht auch – „Hauptkanal“
+                lässt sich aber ohne Verbindung einstellen und gilt auf jedem Server.)</li>
+            <li><b>Beschränke auf Gruppe</b>: <code>ruf1</code> für Taste 1, <code>ruf2</code> für
+                Taste 2 – genau so, klein geschrieben.</li>
+            <li>Haken bei <b>An Unterkanäle rufen</b>.</li>
+          </ol>
+          <p class="hinweistext">
+            Das ist alles, was am Gerät passiert. Wen die Taste ruft, entscheidet ab
+            dann der Server – und zwar je nachdem, auf welchem Platz die Person
+            gerade steht.
+          </p>
+          <p class="hinweistext">
+            Die Bezeichnungen stammen aus dem Mumble-Programm 1.5 (deutsch). Gemessen
+            ist die Serverseite: eine so eingerichtete Taste ruft genau die
+            eingestellte Rolle, auch nach einem Platzwechsel. Ob Handy-Apps wie Mumla
+            beim Rufen eine Gruppe beschränken können, ist nicht geprüft.
+          </p>
+        </details>
+      </div>
     </div>
     <div class="inhalt" x-show="!blatt"><span class="still">lädt …</span></div>
   </section>
@@ -355,11 +471,11 @@
   {#  Was dauerhaft ist und was nicht                                  #}
   {# ---------------------------------------------------------------- #}
   <section class="karte fliesstext" style="margin-top:12px">
-    <header>Was davon ueberlebt einen Neustart?</header>
+    <header>Was davon überlebt einen Neustart?</header>
     <div class="inhalt">
       <table class="dicht">
         <thead>
-          <tr><th>Aktion</th><th>Haelt der Server?</th><th>Was heisst das</th></tr>
+          <tr><th>Aktion</th><th>Hält der Server?</th><th>Was heisst das</th></tr>
         </thead>
         <tbody>
           <tr>
@@ -373,7 +489,7 @@
             <td class="text-leise">Steht als Regel am Platz.</td>
           </tr>
           <tr>
-            <td>Platz unter einen anderen haengen</td>
+            <td>Platz unter einen anderen hängen</td>
             <td><span class="status status-ok">ja</span></td>
             <td class="text-leise">Die Plätze stehen in der Serverdatenbank.</td>
           </tr>
@@ -381,13 +497,13 @@
             <td>Jemanden auf einen Platz ziehen</td>
             <td><span class="status status-warnung">nur jetzt</span></td>
             <td class="text-leise">
-              Gilt fuer diese Verbindung. Beim naechsten Anmelden landet die
+              Gilt für diese Verbindung. Beim nächsten Anmelden landet die
               Person wieder dort, wo der Server sie hinstellt.
             </td>
           </tr>
           <tr>
             <td>Fester Platz je Person</td>
-            <td><span class="status status-warnung">nur ueber uns</span></td>
+            <td><span class="status status-warnung">nur über uns</span></td>
             <td class="text-leise">
               Mumble kennt das nicht. Wir merken es uns und stellen es nach jedem
               Verbinden einmal her – danach darf sich jeder frei bewegen.
@@ -423,6 +539,7 @@ function pult() {
     personen: [],
     verbunden: {},
     verbindungen: {},
+    ruftasten: {},
     rechte: {},
     spalten: [],
     wunsch: {},
@@ -447,6 +564,7 @@ function pult() {
         this.personen = daten.personen;
         this.verbunden = daten.verbunden;
         this.verbindungen = daten.verbindungen || {};
+        this.ruftasten = daten.ruftasten || {};
         this.rechte = daten.rechte;
         this.spalten = daten.spalten;
         this.wunsch = wunsch.wunsch || {};
@@ -516,6 +634,41 @@ function pult() {
        kurz nacheinander tut, sah die zweite Rueckmeldung fuer den Rest der
        Sekunde -- und dann nicht mehr. Deshalb haelt die Meldung ihren eigenen
        Timer und raeumt den alten weg. */
+    rolleTitel(name) {
+      const z = (this.blatt && this.blatt.rufziele || []).find((r) => r.name === name);
+      return z ? z.titel : name;
+    },
+
+    /* Eine Taste belegen heisst dreierlei, und alles kommt zurueck: die
+       Belegung, das Recht zum Reinschalten dort, wo der Ruf sonst nicht
+       ankaeme, und die sofortige Umleitung aller Verbundenen. */
+    tasteBelegen(taste, rolle) {
+      this.fehler = "";
+      return Intercom.put("/api/pult/ruftaste",
+                          { kanal: this.gewaehlt, taste: taste, rolle: rolle || null })
+        .then((d) => {
+          let text = rolle
+            ? "Taste " + taste + " ruft jetzt " + this.rolleTitel(rolle) + "."
+            : "Taste " + taste + " ist hier wieder frei.";
+          const erlaubt = Object.keys(d.reinschalten_erlaubt || {});
+          if (erlaubt.length) {
+            text += " Damit der Ruf ankommt, darf jetzt reinschalten: " + erlaubt.map((r) =>
+              r + " an " + d.reinschalten_erlaubt[r].length + " Plätzen").join(", ") +
+              ". Das gilt für jedes Flüstern dorthin, nicht nur für diese Taste.";
+          }
+          if (d.uebersprungen && d.uebersprungen.length) {
+            text += " Übersprungen: " + d.uebersprungen.join("; ");
+          }
+          this.melde(text);
+          return Promise.all([this.laden(), this.blattLaden()]);
+        })
+        .catch((e) => { this.fehler = e.message; });
+    },
+
+    tastenVon(kanalId) {
+      return (this.ruftasten || {})[String(kanalId)] || [];
+    },
+
     melde(text) {
       this.hinweis = text;
       if (this._hinweisTimer) { window.clearTimeout(this._hinweisTimer); }
@@ -593,7 +746,7 @@ function pult() {
         if (h.id === k.id || this.istNachkomme(k.id, h.id)) { return; }
         return this.schreibe(
           Intercom.patch("/api/channels/" + h.id, { parent: k.id }),
-          '"' + h.titel + '" haengt jetzt unter "' + k.name + '".'
+          '"' + h.titel + '" hängt jetzt unter "' + k.name + '".'
         );
       }
 
@@ -619,7 +772,7 @@ function pult() {
         }),
         merken
           ? h.titel + ' hat jetzt den festen Platz "' + k.name + '".'
-          : h.titel + " steht jetzt auf " + k.name + " – nur fuer diese Verbindung."
+          : h.titel + " steht jetzt auf " + k.name + " – nur für diese Verbindung."
       );
     },
 
@@ -628,7 +781,7 @@ function pult() {
       if (!h) { return; }
       if (r.eingebaut) {
         this.fehler = '"' + r.titel + '" ist eine eingebaute Rolle von Mumble. ' +
-                      "Wer dazugehoert, ergibt sich von selbst.";
+                      "Wer dazugehört, ergibt sich von selbst.";
         this.zug = null; this.aufnahme = null;
         return;
       }
@@ -639,7 +792,7 @@ function pult() {
       this.aufnahme = null;
       if (userid === null || userid < 0) {
         this.fehler = h.titel + " ist nicht registriert. Eine Rolle bekommt nur, " +
-                      "wen der Server beim naechsten Mal wiedererkennt.";
+                      "wen der Server beim nächsten Mal wiedererkennt.";
         return;
       }
       const drin = (this.personen.find((p) => p.userid === userid) || {}).rollen || [];
@@ -698,7 +851,7 @@ function pult() {
         if (w === true) { duerfen.push(r.titel); }
         else if (w === null) { vielleicht.push(r.titel); }
       }
-      if (wert("auth") === true) { duerfen.unshift("alle Angemeldeten"); }
+      if (wert("auth") === true) { dürfen.unshift("alle Angemeldeten"); }
 
       const teile = [];
       if (duerfen.length) {
@@ -776,7 +929,7 @@ function pult() {
         ? "hier nicht gesetzt, kommt von weiter oben"
         : "hier " + eigen;
       const ergebnis = w === null
-        ? "haengt an Zertifikat oder Zugangswort"
+        ? "hängt an Zertifikat oder Zugangswort"
         : (w ? "gilt: erlaubt" : "gilt: verboten");
       return hier + " – " + ergebnis;
     },

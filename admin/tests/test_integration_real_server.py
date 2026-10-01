@@ -600,3 +600,136 @@ def test_gerechnete_rechte_stimmen_mit_dem_server_ueberein(echter_client):
         for cid in reversed(kette):
             with contextlib.suppress(Exception):
                 echter_client.remove_channel(cid)
+
+
+# --------------------------------------------------------------------------- #
+#  Ruftasten: wirklich gehoert?
+# --------------------------------------------------------------------------- #
+
+
+@needs_real_server
+def test_ruftaste_wird_ueber_den_enforcer_wirklich_gehoert(echter_client):
+    """Ende-zu-Ende: der Enforcer belegt, echte Clients senden und hoeren.
+
+    Das ist der Nachweis fuer DECISIONS D-032. Ein Client ruft immer dieselbe
+    feste Gruppe ``ruf1``; wen das trifft, entscheidet allein die Belegung des
+    Platzes, auf dem er steht -- und ein Platzwechsel stellt die Taste um, ohne
+    dass am Client etwas passiert.
+
+    Braucht ``opuslib`` (und libopus) fuer Ton; ohne wird uebersprungen.
+    """
+    pytest.importorskip("opuslib")
+    pytest.importorskip("pymumble_py3")
+    import time
+
+    import pymumble_py3
+    from pymumble_py3 import mumble_pb2
+    from pymumble_py3.constants import (
+        PYMUMBLE_CLBK_SOUNDRECEIVED,
+        PYMUMBLE_MSG_TYPES_VOICETARGET,
+    )
+
+    from intercom.ice import wirkung
+    from intercom.ice.types import ACLEntry, ChannelGroup
+    from intercom.runtime import Enforcer
+
+    c = echter_client
+    basis = c.add_channel("ITest-Ruf", 0)
+    platz_a = c.add_channel("A", basis)
+    platz_b = c.add_channel("B", basis)
+    platz_c = c.add_channel("C", basis)
+    acl = c.get_acl(basis)
+    acl.acls = [ACLEntry(
+        apply_here=True, apply_subs=True, group="all", deny=0,
+        allow=wirkung.ENTER | wirkung.SPEAK | wirkung.WHISPER | wirkung.TRAVERSE,
+    )]
+    c.set_channel_acl(acl)
+
+    namen = ("itest-rufer", "itest-tech", "itest-zeit", "itest-nix")
+    ids = {}
+    bekannt = {n: u for u, n in c.get_registered_users().items()}
+    for name in namen:
+        ids[name] = bekannt.get(name) or c.register_user(name=name, password="pw-" + name)
+    wurzel = c.get_acl(0)
+    wurzel.groups = [g for g in wurzel.own_groups() if not g.name.startswith("itestruf")] + [
+        ChannelGroup(name="itestruf_technik", add=[ids["itest-tech"]]),
+        ChannelGroup(name="itestruf_zeit", add=[ids["itest-zeit"]]),
+    ]
+    c.set_channel_acl(wurzel)
+
+    gehoert: dict[str, int] = {}
+    clients = {}
+
+    def verbinde(name, platz):
+        m = pymumble_py3.Mumble(ICE_HOST, name, port=int(os.environ.get("MUMBLE_TEST_PORT", "64739")),
+                                password="pw-" + name, reconnect=False)
+        m.set_receive_sound(True)
+        m.callbacks.set_callback(
+            PYMUMBLE_CLBK_SOUNDRECEIVED,
+            lambda user, chunk, n=name: gehoert.__setitem__(n, gehoert.get(n, 0) + 1)
+            if user["name"] == "itest-rufer" else None,
+        )
+        m.start()
+        m.is_ready()
+        time.sleep(0.6)
+        c.set_user_state(m.users.myself_session, channel=platz)
+        clients[name] = m
+        return m.users.myself_session
+
+    enforcer = Enforcer(c)
+    try:
+        sitzung = verbinde("itest-rufer", platz_a)
+        verbinde("itest-tech", platz_b)
+        verbinde("itest-zeit", platz_c)
+        verbinde("itest-nix", platz_b)
+        time.sleep(1.0)
+
+        # Die eine, einmal im Client eingerichtete Taste.
+        ziel = mumble_pb2.VoiceTarget()
+        ziel.id = 5
+        t = ziel.targets.add()
+        t.channel_id = 0
+        t.children = True
+        t.group = "ruf1"
+        rufer = clients["itest-rufer"]
+        rufer.send_message(PYMUMBLE_MSG_TYPES_VOICETARGET, ziel)
+        rufer.sound_output.target = 5
+        time.sleep(0.5)
+
+        def rufen():
+            gehoert.clear()
+            rufer.sound_output.add_sound(b"\x10\x00" * 48000)
+            time.sleep(2.2)
+            return sorted(n for n, k in gehoert.items() if k > 0)
+
+        enforcer.lade_ruftasten(
+            {"ITest-Ruf/A": {1: "itestruf_technik"}, "ITest-Ruf/C": {1: "itestruf_zeit"}},
+            c.get_channels(),
+        )
+        enforcer.enforce_user(c.get_state(sitzung))
+        assert rufen() == ["itest-tech"], "Taste 1 auf A muss die Technik rufen"
+
+        # Platzwechsel -- am Client aendert sich nichts.
+        c.set_user_state(sitzung, channel=platz_c)
+        time.sleep(0.4)
+        enforcer.enforce_user(c.get_state(sitzung))
+        assert rufen() == ["itest-zeit"], "dieselbe Taste auf C muss die Zeitmessung rufen"
+
+        # Platz ohne Belegung: die Taste bleibt stumm.
+        c.set_user_state(sitzung, channel=platz_b)
+        time.sleep(0.4)
+        enforcer.enforce_user(c.get_state(sitzung))
+        assert rufen() == [], "auf B ist Taste 1 nicht belegt"
+    finally:
+        for m in clients.values():
+            with contextlib.suppress(Exception):
+                m.stop()
+        for name in namen:
+            with contextlib.suppress(Exception):
+                c.unregister_user(ids[name])
+        wurzel = c.get_acl(0)
+        wurzel.groups = [g for g in wurzel.own_groups() if not g.name.startswith("itestruf")]
+        with contextlib.suppress(Exception):
+            c.set_channel_acl(wurzel)
+        with contextlib.suppress(Exception):
+            c.remove_channel(basis)

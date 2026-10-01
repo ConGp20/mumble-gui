@@ -4,7 +4,7 @@
 {{ seitenkopf(
   "nutzer",
   "Personen",
-  "Wen der Server wiedererkennt, wenn er sich das naechste Mal anmeldet.",
+  "Wen der Server wiedererkennt, wenn er sich das nächste Mal anmeldet.",
   "Einmal je Person, bevor sie eine Rolle bekommen kann. Danach nur noch, wenn jemand dazukommt oder geht.",
   achtung="Registrieren geht <strong>erst, wenn jemand verbunden ist</strong>. Der Server merkt sich das Zertifikat, das der Mumble-Client mitbringt – einen Namen kann man abtippen, ein Zertifikat nicht. Also: erst verbinden lassen, dann rechts unter „Verbunden, aber nicht registriert“ auf <em>Jetzt registrieren</em>.",
 ) }}
@@ -15,7 +15,7 @@
     <div class="karte">
       <header>
         Personen
-        <span class="rechts leise" x-text="eintraege.length + ' Eintraege'"></span>
+        <span class="rechts leise" x-text="eintraege.length + ' Einträge'"></span>
       </header>
       <div class="tabellenrahmen">
         <table class="dicht">
@@ -52,7 +52,7 @@
                   </template>
                   <template x-if="u.userid === 0">
                     <button class="knopf klein" @click="superuser()"
-                            title="Der SuperUser wird fuer diese Oberflaeche nicht gebraucht – nur fuer die Anmeldung mit dem Mumble-Programm">Passwort</button>
+                            title="Der SuperUser wird für diese Oberfläche nicht gebraucht – nur für die Anmeldung mit dem Mumble-Programm">Passwort</button>
                   </template>
                   {% endif %}
                 </td>
@@ -134,7 +134,7 @@
                   </template>
                   <span class="still" x-show="!gruppen.length">
                     Noch keine Rolle angelegt – ein Baukasten unter
-                    <a href="/einrichten">Einrichten</a> bringt welche mit.
+                    <a href="/einrichten">Shows</a> bringt welche mit.
                   </span>
                 </div>
               </td>
@@ -158,7 +158,7 @@
 
   <!-- Bans ---------------------------------------------------------------- -->
   <div class="karte" style="margin-top:12px">
-    <header>Bans <span class="rechts leise" x-text="bans.length + ' Eintraege'"></span></header>
+    <header>Bans <span class="rechts leise" x-text="bans.length + ' Einträge'"></span></header>
     <div class="tabellenrahmen">
       <table class="dicht">
         <thead>
@@ -192,7 +192,7 @@
     <div class="inhalt">
       <div class="werkzeugleiste">
         <input type="text" x-model="neuBan.address" placeholder="IP (10.20.30.40)">
-        <input type="number" x-model.number="neuBan.bits" style="width:70px" title="Praefixlaenge">
+        <input type="number" x-model.number="neuBan.bits" style="width:70px" title="Präfixlänge">
         <input type="text" x-model="neuBan.reason" placeholder="Grund" style="min-width:180px">
         <input type="number" x-model.number="neuBan.duration" style="width:110px"
                title="Dauer in Sekunden, 0 = dauerhaft">
@@ -200,7 +200,7 @@
       </div>
       <div class="hinweis">
         murmur kennt nur „ganze Liste ersetzen“ (<code>setBans</code>); das GUI
-        liest, aendert und schreibt sie deshalb immer vollstaendig zurueck.
+        liest, ändert und schreibt sie deshalb immer vollständig zurück.
       </div>
     </div>
     {% endif %}
@@ -260,7 +260,7 @@ function nutzer() {
         .then(d => { alert("Registriert als ID " + d.userid); this.start(); })
         .catch(err => {
           /* Ohne Zertifikat verlangt der Server ein Passwort. */
-          const pw = prompt(err.message + "\n\nPasswort fuer " + u.name + ":");
+          const pw = prompt(err.message + "\n\nPasswort für " + u.name + ":");
           if (!pw) return;
           this.I.post("/api/users/" + u.session + "/register", {password: pw})
             .then(d => { alert("Registriert als ID " + d.userid); this.start(); })
@@ -269,7 +269,7 @@ function nutzer() {
     },
 
     umbenennen(u) {
-      const name = prompt("Neuer Name fuer " + u.name + ":", u.name);
+      const name = prompt("Neuer Name für " + u.name + ":", u.name);
       if (!name || name === u.name) return;
       this.I.patch("/api/registered/" + u.userid, {name: name})
         .then(() => this.start())
@@ -277,7 +277,7 @@ function nutzer() {
     },
 
     passwort(u) {
-      const pw = prompt("Neues Passwort fuer " + u.name + " (leer = abbrechen):");
+      const pw = prompt("Neues Passwort für " + u.name + " (leer = abbrechen):");
       if (!pw) return;
       this.I.patch("/api/registered/" + u.userid, {password: pw})
         .then(() => alert("Passwort gesetzt."))
@@ -285,7 +285,7 @@ function nutzer() {
     },
 
     loeschen(u) {
-      if (!confirm("Registrierung von " + u.name + " loeschen?")) return;
+      if (!confirm("Registrierung von " + u.name + " löschen?")) return;
       this.I.entferne("/api/registered/" + u.userid)
         .then(() => this.start())
         .catch(err => alert("Fehlgeschlagen: " + err.message));

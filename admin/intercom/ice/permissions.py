@@ -92,9 +92,9 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Write",
         label="Schreiben",
         description=(
-            "Vollzugriff auf den Platz: verwalten, umbenennen, Rechte aendern. "
+            "Vollzugriff auf den Platz: verwalten, umbenennen, Rechte ändern. "
             "Bringt fast alles andere mit -- aber weder Sprechen noch "
-            "Fluestern. Ganz oben (\"Ueberall\") gesetzt gilt es fuer den "
+            "Flüstern. Ganz oben (\"Überall\") gesetzt gilt es für den "
             "ganzen Server; wer es dort hat, ist faktisch Administrator."
         ),
     ),
@@ -103,7 +103,7 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Traverse",
         label="Durchqueren",
         description=(
-            "Der Platz darf durchquert werden, um an die Plaetze darunter zu "
+            "Der Platz darf durchquert werden, um an die Plätze darunter zu "
             "kommen. Fehlt es, ist alles darunter unerreichbar -- egal welche "
             "Rechte dort stehen."
         ),
@@ -132,14 +132,14 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         label="Verschieben",
         description=(
             "Darf andere von diesem Platz wegschieben. Zum Verschieben braucht es "
-            "das Recht auf beiden Plaetzen -- dem alten und dem neuen."
+            "das Recht auf beiden Plätzen -- dem alten und dem neuen."
         ),
     ),
     Permission(
         bit=0x40,
         name="MakeChannel",
         label="Kanal anlegen",
-        description="Darf Plaetze darunter anlegen.",
+        description="Darf Plätze darunter anlegen.",
     ),
     Permission(
         bit=0x80,
@@ -147,16 +147,16 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         label="Kanal verlinken",
         description=(
             "Darf diesen Platz mit einem anderen verbinden, sodass beide sich "
-            "hoeren. Zum Verbinden braucht es das Recht auf beiden Plaetzen, "
-            "zum Trennen genuegt einer."
+            "hören. Zum Verbinden braucht es das Recht auf beiden Plätzen, "
+            "zum Trennen genügt einer."
         ),
     ),
     Permission(
         bit=0x100,
         name="Whisper",
-        label="Fluestern",
+        label="Flüstern",
         description=(
-            "Darf hier hineinsprechen, ohne den Platz zu wechseln. Fuer eine "
+            "Darf hier hineinsprechen, ohne den Platz zu wechseln. Für eine "
             "Intercom das wichtigste Recht neben Sprechen."
         ),
     ),
@@ -170,15 +170,15 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         bit=0x400,
         name="MakeTempChannel",
         label="Platz auf Zeit",
-        description="Darf Plaetze darunter anlegen, die von selbst wieder verschwinden.",
+        description="Darf Plätze darunter anlegen, die von selbst wieder verschwinden.",
     ),
     Permission(
         bit=0x800,
         name="Listen",
-        label="Mithoeren",
+        label="Mithören",
         description=(
-            "Darf diesen Platz hoeren, ohne darauf zu sein (Channel Listener, ab "
-            "Mumble 1.4). ACHTUNG: Die Slice-Datei definiert dafuer KEINE "
+            "Darf diesen Platz hören, ohne darauf zu sein (Channel Listener, ab "
+            "Mumble 1.4). ACHTUNG: Die Slice-Datei definiert dafür KEINE "
             "Konstante; das Bit wird trotzdem vom Server ausgewertet."
         ),
         in_slice=False,
@@ -202,7 +202,7 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
         name="Register",
         label="Registrieren",
         description=(
-            "Darf Personen registrieren und Registrierungen loeschen. Wirkt nur "
+            "Darf Personen registrieren und Registrierungen löschen. Wirkt nur "
             "ganz oben."
         ),
         root_only=True,
@@ -221,9 +221,9 @@ PERMISSIONS: Final[tuple[Permission, ...]] = (
     Permission(
         bit=0x100000,
         name="ResetUserContent",
-        label="Inhalte zuruecksetzen",
+        label="Inhalte zurücksetzen",
         description=(
-            "Darf Kommentar oder Bild einer Person zuruecksetzen. Wirkt nur ganz "
+            "Darf Kommentar oder Bild einer Person zurücksetzen. Wirkt nur ganz "
             "oben. Heisst in der Slice ResetUserContent."
         ),
         root_only=True,

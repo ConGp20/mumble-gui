@@ -36,7 +36,9 @@ from ..ice.wirkung import (
     rechte_einer_person,
     rechte_einer_rolle,
 )
-from ..store.db import VERBINDUNGSARTEN, WUNSCH_ARTEN
+from ..ruftasten import EINGEBAUTE_ZIELE, abdeckung, wirksame_belegung
+from ..ruftasten import pfade as pfade_der_plaetze
+from ..store.db import RUFTASTEN, VERBINDUNGSARTEN, WUNSCH_ARTEN, ruf_gruppe
 from ..woerter import UEBERALL
 from .auth import Account, require_admin, require_user
 
@@ -71,14 +73,14 @@ RECHTE: tuple[tuple[str, int, str, str], ...] = (
     (
         "hoeren",
         LISTEN,
-        "Mithoeren",
-        "Darf diesen Platz mithoeren, ohne darauf zu sein.",
+        "Mithören",
+        "Darf diesen Platz mithören, ohne darauf zu sein.",
     ),
     (
         "reinschalten",
         WHISPER,
         "Reinschalten",
-        "Darf von woanders hier hineinsprechen (Fluestern).",
+        "Darf von woanders hier hineinsprechen (Flüstern).",
     ),
     (
         "schreiben",
@@ -288,11 +290,30 @@ async def pult(request: Request, account: Account = Depends(require_user)) -> di
             ]
         verbindungen[art] = eintraege
 
+    # Ruftasten je Platz, mit Vererbung aufgeloest. "eigen" sagt, ob sie hier
+    # gesetzt sind oder von weiter oben kommen -- in der Uebersicht soll man
+    # sehen, wo man sie aendern muss.
+    belegung = context.store.ruftasten() if context.store is not None else {}
+    nach_pfad_alle = pfade_der_plaetze(kanaele)
+    ruftasten_je_platz: dict[str, list[dict[str, Any]]] = {}
+    for kid in kanaele:
+        wirk = wirksame_belegung(kid, kanaele, belegung)
+        if wirk:
+            ruftasten_je_platz[str(kid)] = [
+                {
+                    "taste": b.taste,
+                    "rolle": b.rolle,
+                    "eigen": b.von == nach_pfad_alle.get(kid, ""),
+                }
+                for b in sorted(wirk.values(), key=lambda b: b.taste)
+            ]
+
     return {
         "kanaele": baum,
         "rollen": rollen,
         "personen": personen,
         "verbindungen": verbindungen,
+        "ruftasten": ruftasten_je_platz,
         "verbunden": {str(k): v for k, v in verbunden.items()},
         "rechte": rechte,
         "spalten": [
@@ -467,8 +488,8 @@ async def rolle_setzen(
     if body.rolle in {name for name, _ in EINGEBAUTE_ROLLEN}:
         raise HTTPException(
             400,
-            f"{body.rolle!r} ist eine eingebaute Rolle von Mumble. Wer dazugehoert, "
-            "ergibt sich von selbst und laesst sich nicht von Hand setzen.",
+            f"{body.rolle!r} ist eine eingebaute Rolle von Mumble. Wer dazugehört, "
+            "ergibt sich von selbst und lässt sich nicht von Hand setzen.",
         )
     context = ctx(request)
     try:
@@ -577,7 +598,7 @@ async def platz_setzen(
             raise HTTPException(
                 400,
                 "Ein fester Platz braucht eine registrierte Person -- ohne "
-                "Registrierung erkennt der Server sie beim naechsten Verbinden "
+                "Registrierung erkennt der Server sie beim nächsten Verbinden "
                 "nicht wieder. Anzulegen unter Personen.",
             )
         try:
@@ -596,7 +617,7 @@ async def platz_setzen(
     if not ergebnis["verschoben"] and not ergebnis["gemerkt"]:
         raise HTTPException(
             409,
-            "Diese Person ist nicht verbunden. Ein Platz laesst sich nur "
+            "Diese Person ist nicht verbunden. Ein Platz lässt sich nur "
             "verschieben, solange jemand online ist -- oder als fester Platz "
             "merken.",
         )
@@ -679,7 +700,7 @@ def _store(context: Any) -> Any:
     if context.store is None:
         raise HTTPException(
             503,
-            "Der Verlaufsspeicher ist nicht offen -- ohne ihn laesst sich kein "
+            "Der Verlaufsspeicher ist nicht offen -- ohne ihn lässt sich kein "
             "Wunschzustand hinterlegen.",
         )
     return context.store
@@ -807,8 +828,85 @@ async def platz(
         "reinschalten": ziele("reinschalten"),
         "wird_gehoert_von": quellen("hoert"),
         "reinschalten_von": quellen("reinschalten"),
+        "ruftasten": _ruftasten_blatt(kanal_id, kanaele, acls, rollen, store),
+        "rufziele": [
+            {"name": n, "titel": t} for n, t in EINGEBAUTE_ZIELE.items()
+        ] + [{"name": r, "titel": r} for r in rollen],
         "spalten": [{"name": n, "titel": t, "hilfe": h} for n, _, t, h in RECHTE],
     }
+
+
+def _ruftasten_blatt(
+    kanal_id: int,
+    kanaele: dict[int, MumbleChannel],
+    acls: dict[int, ChannelACL],
+    rollen: list[str],
+    store: Any,
+) -> list[dict[str, Any]]:
+    """Die vier Tasten dieses Platzes: belegt, geerbt oder frei -- und ob es ankommt."""
+    belegung = store.ruftasten() if store is not None else {}
+    eigener_pfad = pfade_der_plaetze(kanaele).get(kanal_id, "")
+    wirk = wirksame_belegung(kanal_id, kanaele, belegung)
+    namen = {k["id"]: k["pfad"] for k in _baum(kanaele)}
+
+    zeilen = []
+    for taste in RUFTASTEN:
+        b = wirk.get(taste)
+        zeile: dict[str, Any] = {
+            "taste": taste,
+            "gruppe": ruf_gruppe(taste),
+            "eigen": b.rolle if b is not None and b.von == eigener_pfad else None,
+            "geerbt": (
+                {"rolle": b.rolle, "von": _kurzname(b.von)}
+                if b is not None and b.von != eigener_pfad
+                else None
+            ),
+            "wirksam": b.rolle if b is not None else None,
+            "rufende": [],
+            "kommt_nicht_an": [],
+        }
+        if b is not None:
+            von_id = next(
+                (k for k, p in pfade_der_plaetze(kanaele).items() if p == b.von), kanal_id
+            )
+            ab = abdeckung(von_id, taste, b.rolle, kanaele, acls, rollen, belegung)
+            zeile["rufende"] = ab.rufende
+            zeile["kommt_nicht_an"] = sorted(
+                {f"{namen.get(platz, platz)} (fuer {rufer})" for rufer, platz in ab.fehlt}
+            )
+        zeilen.append(zeile)
+    return zeilen
+
+
+def _erlauben(
+    acl: ChannelACL, rollen: list[str], bit: int
+) -> tuple[list[str], list[str]]:
+    """Erlaubt ``bit`` fuer jede Rolle im *eigenen* Eintrag dieses Platzes.
+
+    Gibt zurueck, fuer wen es gesetzt wurde und wer uebersprungen wurde -- eine
+    Zelle mit mehreren eigenen Eintraegen derselben Rolle wird nicht angefasst,
+    aus demselben Grund wie im Raster (siehe :func:`_bearbeitbar`).
+    Geschrieben wird hier nicht; das macht der Aufrufer, einmal je Platz.
+    """
+    gesetzt: list[str] = []
+    uebersprungen: list[str] = []
+    for rolle in rollen:
+        frei, grund = _bearbeitbar(acl, rolle)
+        if not frei:
+            uebersprungen.append(f"{rolle}: {grund}")
+            continue
+        eintraege = _eigene_eintraege(acl, rolle)
+        if eintraege:
+            eintrag = eintraege[0]
+        else:
+            eintrag = ACLEntry(
+                apply_here=True, apply_subs=True, allow=0, deny=0, group=rolle
+            )
+            acl.acls.append(eintrag)
+        eintrag.deny &= ~bit
+        eintrag.allow |= bit
+        gesetzt.append(rolle)
+    return gesetzt, uebersprungen
 
 
 def _kurzname(pfad: str) -> str:
@@ -872,25 +970,10 @@ async def verbindung_setzen(
                 409,
                 f"An {_kurzname(von_pfad)!r} darf zurzeit keine eigene Rolle "
                 "sprechen. Ohne das gibt es niemanden, dem die Verbindung "
-                "etwas nuetzen wuerde -- erst dort das Sprechen erlauben.",
+                "etwas nützen würde -- erst dort das Sprechen erlauben.",
             )
         ziel_acl = acls[body.nach]
-        for rolle in rollen:
-            frei, grund = _bearbeitbar(ziel_acl, rolle)
-            if not frei:
-                uebersprungen.append(f"{rolle}: {grund}")
-                continue
-            eintraege = _eigene_eintraege(ziel_acl, rolle)
-            if eintraege:
-                eintrag = eintraege[0]
-            else:
-                eintrag = ACLEntry(
-                    apply_here=True, apply_subs=True, allow=0, deny=0, group=rolle
-                )
-                ziel_acl.acls.append(eintrag)
-            eintrag.deny &= ~bit
-            eintrag.allow |= bit
-            gesetzt.append(rolle)
+        gesetzt, uebersprungen = _erlauben(ziel_acl, rollen, bit)
         if gesetzt:
             try:
                 await context.ice.set_channel_acl(ziel_acl)
@@ -928,4 +1011,99 @@ async def verbindung_setzen(
             else "Die Verbindung ist weg. Das Recht am Zielplatz bleibt stehen – "
             "es koennte fuer etwas anderes gesetzt worden sein."
         ),
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  Ruftasten
+# --------------------------------------------------------------------------- #
+
+
+class RuftasteBody(BaseModel):
+    kanal: int
+    taste: int
+    #: Rolle, die gerufen werden soll. ``None`` gibt die Taste an diesem Platz
+    #: frei -- dann gilt wieder, was weiter oben festgelegt ist.
+    rolle: str | None = None
+
+
+@router.put("/ruftaste")
+async def ruftaste_setzen(
+    request: Request, body: RuftasteBody, account: Account = Depends(require_admin)
+) -> dict[str, Any]:
+    """Belegt eine Ruftaste an einem Platz.
+
+    Drei Dinge passieren, und alle drei kommen in der Antwort zurueck:
+
+    1. Die Belegung wird gespeichert.
+    2. Damit der Ruf ankommt, bekommen die Rufenden das Fluesterrecht an den
+       Plaetzen, an denen die gerufene Rolle sprechen darf -- murmur prueft es
+       je Zielplatz. Wo das Raster eine Zelle nicht verlustfrei schreiben kann,
+       wird sie uebersprungen und genannt.
+    3. Alle Verbundenen werden sofort umgeleitet, nicht erst beim naechsten
+       Verbinden.
+    """
+    if body.taste not in RUFTASTEN:
+        raise HTTPException(400, f"Es gibt Taste 1 bis {len(RUFTASTEN)}, keine {body.taste}.")
+    context = ctx(request)
+    try:
+        kanaele, acls = await _alles_lesen(context)
+    except IceError as exc:
+        raise _fail(exc) from exc
+    if body.kanal not in kanaele:
+        raise HTTPException(404, "Diesen Platz gibt es nicht.")
+
+    rollen = _eigene_rollen(acls)
+    if body.rolle and body.rolle not in rollen and body.rolle not in EINGEBAUTE_ZIELE:
+        raise HTTPException(404, f"Die Rolle {body.rolle!r} gibt es nicht.")
+
+    store = _store(context)
+    pfad = pfade_der_plaetze(kanaele).get(body.kanal, "")
+    try:
+        store.set_ruftaste(pfad, body.taste, body.rolle, account.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    belegung = store.ruftasten()
+
+    erlaubt: dict[str, list[str]] = {}
+    uebersprungen: list[str] = []
+    wirk = wirksame_belegung(body.kanal, kanaele, belegung).get(body.taste)
+    if wirk is not None:
+        ab = abdeckung(body.kanal, body.taste, wirk.rolle, kanaele, acls, rollen, belegung)
+        je_platz: dict[int, list[str]] = {}
+        for rufer, platz in ab.fehlt:
+            je_platz.setdefault(platz, []).append(rufer)
+        namen = {k["id"]: k["pfad"] for k in _baum(kanaele)}
+        for platz, rufende in sorted(je_platz.items()):
+            acl = acls[platz]
+            gesetzt, nicht = _erlauben(acl, rufende, WHISPER)
+            uebersprungen.extend(f"{namen.get(platz, platz)}: {n}" for n in nicht)
+            if gesetzt:
+                try:
+                    await context.ice.set_channel_acl(acl)
+                except IceError as exc:
+                    raise _fail(exc) from exc
+                for rolle in gesetzt:
+                    erlaubt.setdefault(rolle, []).append(namen.get(platz, str(platz)))
+
+    try:
+        kanaele = await context.ice.get_channels()
+    except IceError as exc:
+        raise _fail(exc) from exc
+    context.enforcer.lade_ruftasten(belegung, kanaele)
+    await context.ice.run(context.enforcer.enforce_all, list(context.live.users.values()))
+
+    context.audit(
+        account.name,
+        "pult.ruftaste",
+        f"{pfad or UEBERALL} / Taste {body.taste}",
+        after=body.rolle or "frei",
+    )
+    return {
+        "ok": True,
+        "taste": body.taste,
+        "gruppe": ruf_gruppe(body.taste),
+        "rolle": body.rolle,
+        "reinschalten_erlaubt": erlaubt,
+        "uebersprungen": uebersprungen,
     }

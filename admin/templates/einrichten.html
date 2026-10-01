@@ -3,43 +3,293 @@
 {% from "_kopf.html" import seitenkopf %}
 {{ seitenkopf(
   "einrichten",
-  "Einrichten",
-  "Fertige Baukaesten fuer den Anfang, und die Sicherung.",
-  "Einmal ganz am Anfang. Und die Sicherung immer dann, wenn der Aufbau steht und bevor etwas Grosses ansteht.",
-  achtung="Ein Baukasten ist ein <strong>einmaliger Startschuss</strong>, keine laufende Bindung. Wer danach einen Platz umbenennt, hat einen umbenannten Platz – es schreibt nichts wieder zurueck. Vor dem Anwenden zeigt ein Testlauf, was entstehen wuerde.",
+  "Shows & Sicherung",
+  "Ganze Aufbauten unter einem Namen ablegen und wieder laden. Dazu die Sicherung als Datei und Baukästen für den allerersten Start.",
+  "Wenn derselbe Server für verschiedene Veranstaltungen umgebaut wird – Landesfinale, Training, Probe: einmal als Show ablegen, beim nächsten Mal laden statt neu klicken. Und vor jedem großen Umbau den aktuellen Stand sichern.",
+  achtung="Laden <strong>mit Aufräumen</strong> löscht Plätze, Rollen und Regeln, die in der Show nicht vorkommen. Erst der Testlauf zeigt jede einzelne Änderung, dann lässt sich laden. Registrierte Personen bleiben immer: Mumble erkennt sie am Zertifikat ihres Geräts, und das kann keine Show mitbringen.",
+  schritte=[
+    "Aufbau steht → unten bei <b>Shows</b> einen Namen eingeben, <b>Aktuellen Stand speichern</b>.",
+    "Zum Umbauen: bei der gewünschten Show <b>Testlauf</b>. Er schreibt nichts und zeigt jede Änderung.",
+    "<b>Laden</b>. Verbundene Geräte folgen sofort: fester Platz, Mithören, Ruftasten.",
+  ],
 ) }}
 
 <div x-data="einrichten()" x-init="start()">
 
-  {# --- Hinweis, wenn der Server gar nicht erreichbar ist -------------------
-     Ohne Verbindung kann nichts angelegt werden. Dann werden die Knoepfe
-     nicht nur gesperrt, es steht auch da warum -- ein grauer Knopf ohne
-     Begruendung ist die schlechteste Auskunft. #}
+  {# Ohne Verbindung kann nichts angelegt werden. Dann werden die Knoepfe nicht
+     nur gesperrt, es steht auch da warum -- ein grauer Knopf ohne Begruendung
+     ist die schlechteste Auskunft. #}
+  <div class="banner" x-show="hinweis" x-cloak style="border-color: var(--ok); background: var(--ok-bg); margin-bottom:12px">
+    <span x-text="hinweis"></span>
+  </div>
+
   <template x-if="!verbunden">
     <div class="banner">
-      Keine Verbindung zum Mumble-Server. Solange die fehlt, laesst sich nichts
-      anlegen und nichts einspielen. Unter „Server“ steht, woran es liegt.
+      Keine Verbindung zum Mumble-Server. Solange die fehlt, lässt sich nichts
+      speichern, laden oder einspielen. Unter „Server“ steht, woran es liegt.
     </div>
   </template>
 
   <!-- =================================================================== -->
-  <!--  Baukaesten                                                          -->
+  <!--  Shows                                                               -->
+  <!-- =================================================================== -->
+  <div class="karte shows" style="margin-bottom:12px">
+    <header>
+      Shows
+      <span class="rechts leise" x-text="shows.length ? shows.length + ' abgelegt' : ''"></span>
+    </header>
+    <div class="inhalt">
+      <p class="hinweis">
+        Eine Show ist der <b>ganze Aufbau</b>: Plätze, Rollen, Regeln – und
+        alles, was Mumble selbst nicht kennt: feste Plätze, Mithören und
+        Vorrang je Person, Verbindungen zwischen Plätzen, Ruftasten,
+        Netzsegmente. Sie liegt im Admin-Container und lässt sich jederzeit
+        auch als Datei herunterladen.
+      </p>
+
+      {% if account.can_write %}
+      <form class="show-speichern" @submit.prevent="speichern()">
+        <label>
+          <span>Name</span>
+          <input type="text" x-model="neuName" maxlength="80" required
+                 placeholder="z. B. Landesfinale Halle 1">
+        </label>
+        <label class="breit">
+          <span>Notiz <span class="leise">(optional)</span></span>
+          <input type="text" x-model="neuNotiz" maxlength="500"
+                 placeholder="z. B. mit 8 Kampfgerichten, ohne Presse">
+        </label>
+        <button class="knopf haupt" type="submit"
+                :disabled="laeuft || !verbunden || !neuName.trim()">
+          Aktuellen Stand speichern
+        </button>
+      </form>
+      {% endif %}
+
+      <p class="leise" x-show="geladenListe && shows.length === 0" style="margin-top:10px">
+        Noch keine Show abgelegt. Steht der Aufbau, oben einen Namen eingeben
+        und speichern.
+      </p>
+
+      <div class="tabellenrahmen" x-show="shows.length" style="margin-top:10px">
+        <table class="dicht showliste">
+          <thead>
+            <tr>
+              <th>Show</th>
+              <th>Inhalt</th>
+              <th>Gespeichert</th>
+              <th>Zuletzt geladen</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="s in shows" :key="s.name">
+              <tr :class="{ gewaehlt: quelle === 'show:' + s.name }">
+                <td>
+                  <strong x-text="s.name"></strong>
+                  <span class="abzeichen ok" x-show="s.name === zuletztGeladen"
+                        title="Diese Show wurde zuletzt geladen. Was seither geändert wurde, zeigt ein Testlauf.">zuletzt geladen</span>
+                  <div class="leise" x-show="s.notiz" x-text="s.notiz"></div>
+                </td>
+                <td class="inhaltzeile" x-text="inhaltText(s.inhalt)"></td>
+                <td>
+                  <span x-text="I.fmtDatum(s.geaendert)"></span>
+                  <span class="leise" x-show="s.author" x-text="'· ' + s.author"></span>
+                </td>
+                <td>
+                  <span x-text="s.geladen ? I.fmtDatum(s.geladen) : 'noch nie'"></span>
+                  <span class="leise" x-show="s.geladen_von" x-text="'· ' + s.geladen_von"></span>
+                </td>
+                <td class="aktionen">
+                  {% if account.can_write %}
+                  <button class="knopf klein" :disabled="laeuft || !verbunden"
+                          @click="showTestlauf(s.name)">Testlauf</button>
+                  <button class="knopf klein haupt"
+                          :disabled="laeuft || !verbunden || !ladenBereit(s.name)"
+                          :title="ladenBereit(s.name) ? 'Jetzt laden' : 'Erst Testlauf – dann ist sichtbar, was passiert.'"
+                          @click="showLaden(s.name)">Laden</button>
+                  {% endif %}
+                  <details class="mehr">
+                    <summary class="knopf klein" title="Weitere Aktionen">…</summary>
+                    <div class="mehr-menue">
+                      <a class="knopf klein"
+                         :href="'/api/shows/datei?name=' + encodeURIComponent(s.name)">Herunterladen</a>
+                      {% if account.can_write %}
+                      <button class="knopf klein" :disabled="laeuft || !verbunden"
+                              @click="ueberschreiben(s.name)">Mit aktuellem Stand überschreiben</button>
+                      <button class="knopf klein" :disabled="laeuft" @click="umbenennen(s)">Umbenennen</button>
+                      <button class="knopf klein" :disabled="laeuft" @click="notizAendern(s)">Notiz ändern</button>
+                      <button class="knopf klein gefahr" :disabled="laeuft" @click="loeschen(s.name)">Löschen</button>
+                      {% endif %}
+                    </div>
+                  </details>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      {% if account.can_write %}
+      <label class="aufraeumen" x-show="shows.length">
+        <input type="checkbox" x-model="aufraeumenShow" @change="planVerwerfen('show')">
+        <span>
+          <b>Aufräumen</b> – was in der Show nicht vorkommt, wird gelöscht.
+          <span class="leise">Empfohlen beim Umbauen: danach ist der Aufbau genau
+          die Show. Ohne Haken wird nur ergänzt und geändert.</span>
+        </span>
+      </label>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- =================================================================== -->
+  <!--  Ergebnis des Testlaufs / des Ladens                                 -->
+  <!-- =================================================================== -->
+  <template x-if="plan">
+    <div class="karte ergebnis" style="margin-bottom:12px" x-ref="ergebnis">
+      <header>
+        <span x-text="ergebnisTitel"></span>
+        <span class="rechts leise" x-text="plan.summary"></span>
+      </header>
+      <div class="inhalt">
+        <p class="leise" x-show="!(plan.changes || []).length && !(plan.zusatz || []).length">
+          Nichts zu tun – der Server steht schon so.
+        </p>
+        <p class="hinweis" x-show="planLeer && (plan.changes || []).length">
+          Ohne Aufräumen ändert sich hier nichts. Was darunter mit „nur mit
+          Aufräumen“ markiert ist, steht am Server, aber nicht in der Datei –
+          es bleibt, solange der Haken bei Aufräumen fehlt.
+        </p>
+
+        <div class="plan" x-show="(plan.changes || []).length">
+          <template x-for="(c, i) in plan.changes" :key="i">
+            <div class="diff" :class="{ geloescht: c.destructive && (!c.needs_prune || plan.prune) }">
+              <div>
+                <span x-text="c.applied ? '✔' : (c.error ? '✘' : (c.destructive ? '−' : '·'))"></span>
+                <strong x-text="c.target"></strong>
+                <span x-text="c.summary"></span>
+                <span class="abzeichen stumm" x-show="c.needs_prune && !plan.prune"
+                      title="Passiert nur mit Haken bei Aufräumen">nur mit Aufräumen</span>
+              </div>
+              <div class="fehlertext" x-show="c.error" x-text="c.error"></div>
+              <template x-for="z in (c.before || [])" :key="z">
+                <div class="leise">− <span x-text="z"></span></div>
+              </template>
+              <template x-for="z in (c.after || [])" :key="z">
+                <div>+ <span x-text="z"></span></div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <template x-if="(plan.zusatz || []).length">
+          <div class="zusatz">
+            <strong>Außerdem, was nur diese Oberfläche kennt:</strong>
+            <ul>
+              <template x-for="z in plan.zusatz" :key="z"><li x-text="z"></li></template>
+            </ul>
+          </div>
+        </template>
+
+        <template x-if="plan.unknown_users && plan.unknown_users.length">
+          <p class="hinweis">
+            Diese Namen sind am Server nicht registriert und können deshalb in
+            keiner Rolle sein: <span x-text="plan.unknown_users.join(', ')"></span>.
+            Sie müssen sich einmal verbinden, dann unter „Personen“ registrieren
+            – und die Show noch einmal laden.
+          </p>
+        </template>
+
+        <template x-if="(plan.issues || []).length">
+          <ul class="hinweise">
+            <template x-for="(h, i) in plan.issues" :key="i">
+              <li :class="h.level"><span x-text="h.path"></span>: <span x-text="h.message"></span></li>
+            </template>
+          </ul>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="fehler">
+    <div class="banner" x-text="fehler" style="margin-bottom:12px"></div>
+  </template>
+
+  <!-- =================================================================== -->
+  <!--  Sicherung als Datei                                                 -->
   <!-- =================================================================== -->
   <div class="karte" style="margin-bottom:12px">
-    <header>Baukästen</header>
+    <header>Sicherung als Datei</header>
+    <div class="inhalt">
+      <p class="hinweis">
+        Dieselbe Datei wie eine Show, nur zum Wegheften außerhalb des
+        Containers – auf den Laptop, ins Projektarchiv. Eine Momentaufnahme,
+        keine Steuerdatei: der Server bleibt die Wahrheit.
+      </p>
+
+      <div class="werkzeugleiste">
+        <a class="knopf" href="/api/provision/export" download="intercom-sicherung.yaml">
+          Aktuellen Stand herunterladen
+        </a>
+        {% if account.can_write %}
+        <label class="knopf">
+          Datei wählen …
+          <input type="file" accept=".yaml,.yml,text/yaml" style="display:none"
+                 @change="dateiGewaehlt($event)">
+        </label>
+        {% endif %}
+        <span class="leise" x-show="dateiName" x-text="dateiName"></span>
+      </div>
+
+      <template x-if="dateiInhalt">
+        <div style="margin-top:10px">
+          <label class="aufraeumen">
+            <input type="checkbox" x-model="aufraeumenDatei" @change="planVerwerfen('sicherung')">
+            <span>
+              <b>Aufräumen</b> – auch löschen, was in der Datei fehlt.
+              <span class="leise">Ohne Haken bleibt alles stehen, was seit der
+              Sicherung dazugekommen ist.</span>
+            </span>
+          </label>
+          <div class="werkzeugleiste">
+            <button class="knopf" :disabled="laeuft || !verbunden" @click="sicherungTestlauf()">
+              Testlauf
+            </button>
+            {% if account.can_write %}
+            <button class="knopf haupt"
+                    :disabled="laeuft || !verbunden || !plan || quelle !== 'sicherung' || angewendet"
+                    @click="sicherungEinspielen()">
+              Einspielen
+            </button>
+            <button class="knopf" :disabled="laeuft" @click="dateiAlsShow()">
+              Als Show ablegen
+            </button>
+            {% endif %}
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- =================================================================== -->
+  <!--  Baukaesten                                                          -->
+  <!-- =================================================================== -->
+  <div class="karte">
+    <header>Baukästen für den allerersten Start</header>
     <div class="inhalt">
       <p class="hinweis">
         Ein Baukasten legt einmalig Plätze und Rollen an – danach ist er fertig
         und bindet nichts. Was du anschließend umbenennst, löschst oder
-        hinzufügst, bleibt so. Es gibt keinen Neustart, der einen Baukasten
-        wieder herstellt.
+        hinzufügst, bleibt so. Für den Wechsel zwischen Veranstaltungen sind
+        die Shows da.
       </p>
 
       <template x-for="v in vorlagen" :key="v.schluessel">
         <div class="karte" style="margin-top:10px">
           <header>
             <span x-text="v.titel"></span>
-            <span class="rechts leise" x-show="gewaehlt === v.schluessel && plan"
+            <span class="rechts leise" x-show="quelle === 'vorlage:' + v.schluessel && plan"
                   x-text="plan ? plan.summary : ''"></span>
           </header>
           <div class="inhalt">
@@ -55,7 +305,7 @@
               </button>
               {% if account.can_write %}
               <button class="knopf haupt"
-                      :disabled="laeuft || !verbunden || gewaehlt !== v.schluessel || !plan || planLeer"
+                      :disabled="laeuft || !verbunden || quelle !== 'vorlage:' + v.schluessel || !plan || planLeer || angewendet"
                       @click="anwenden(v.schluessel)">
                 Anwenden
               </button>
@@ -64,10 +314,10 @@
 
             {# Der Anwenden-Knopf bleibt gesperrt, bis ein Testlauf gelaufen ist.
                Niemand soll etwas schreiben, das er nicht vorher gesehen hat. #}
-            <p class="leise" x-show="gewaehlt !== v.schluessel || !plan">
+            <p class="leise" x-show="quelle !== 'vorlage:' + v.schluessel || !plan">
               Erst Testlauf, dann Anwenden.
             </p>
-            <p class="leise" x-show="gewaehlt === v.schluessel && plan && planLeer">
+            <p class="leise" x-show="quelle === 'vorlage:' + v.schluessel && plan && planLeer">
               Es gibt nichts zu tun – der Server enthält das bereits.
             </p>
           </div>
@@ -77,121 +327,26 @@
       <p class="leise" x-show="vorlagen.length === 0">Keine Baukästen vorhanden.</p>
     </div>
   </div>
-
-  <!-- =================================================================== -->
-  <!--  Sicherung                                                           -->
-  <!-- =================================================================== -->
-  <div class="karte" style="margin-bottom:12px">
-    <header>Sicherung</header>
-    <div class="inhalt">
-      <p class="hinweis">
-        Die Sicherung ist ein Abbild dessen, was <em>gerade</em> im Server steht:
-        Plätze, Rollen, Rechte. Sie ist eine Momentaufnahme zum Wegheften, keine
-        Steuerdatei – der Server bleibt die Wahrheit.
-      </p>
-
-      <div class="werkzeugleiste">
-        <a class="knopf" href="/api/provision/export" download="intercom-sicherung.yaml">
-          Sicherung herunterladen
-        </a>
-        {% if account.can_write %}
-        <label class="knopf">
-          Datei wählen …
-          <input type="file" accept=".yaml,.yml,text/yaml" style="display:none"
-                 @change="dateiGewaehlt($event)">
-        </label>
-        {% endif %}
-        <span class="leise" x-show="dateiName" x-text="dateiName"></span>
-      </div>
-
-      <template x-if="dateiInhalt">
-        <div style="margin-top:10px">
-          <label>
-            <input type="checkbox" x-model="aufraeumen">
-            auch löschen, was in der Sicherung fehlt
-          </label>
-          <p class="leise">
-            Ohne Haken bleibt alles stehen, was seit der Sicherung dazugekommen ist.
-            Mit Haken wird der Server exakt auf den Stand der Datei gebracht.
-          </p>
-          <div class="werkzeugleiste">
-            <button class="knopf" :disabled="laeuft || !verbunden" @click="sicherungTestlauf()">
-              Testlauf
-            </button>
-            {% if account.can_write %}
-            <button class="knopf haupt"
-                    :disabled="laeuft || !verbunden || !plan || quelle !== 'sicherung'"
-                    @click="sicherungEinspielen()">
-              Einspielen
-            </button>
-            {% endif %}
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
-
-  <!-- =================================================================== -->
-  <!--  Ergebnis des Testlaufs / der Anwendung                              -->
-  <!-- =================================================================== -->
-  <template x-if="plan">
-    <div class="karte">
-      <header>
-        <span x-text="angewendet ? 'Das wurde geändert' : 'Das würde passieren'"></span>
-        <span class="rechts leise" x-text="plan.summary"></span>
-      </header>
-      <div class="inhalt">
-        <p class="leise" x-show="planLeer">Nichts zu tun.</p>
-        <div class="plan" x-show="!planLeer">
-          <template x-for="(c, i) in plan.changes" :key="i">
-            <div class="diff">
-              <div>
-                <span x-text="c.applied ? '✔' : (c.error ? '✘' : '·')"></span>
-                <strong x-text="c.target"></strong>
-                <span x-text="c.summary"></span>
-                <span class="abzeichen stumm" x-show="c.needs_prune">nur mit Aufräumen</span>
-              </div>
-              <div class="fehlertext" x-show="c.error" x-text="c.error"></div>
-              <template x-for="z in (c.before || [])" :key="z">
-                <div class="leise">− <span x-text="z"></span></div>
-              </template>
-              <template x-for="z in (c.after || [])" :key="z">
-                <div>+ <span x-text="z"></span></div>
-              </template>
-            </div>
-          </template>
-        </div>
-
-        <template x-if="plan.unknown_users && plan.unknown_users.length">
-          <p class="hinweis">
-            Diese Namen sind noch nicht registriert und können deshalb in keiner
-            Rolle sein: <span x-text="plan.unknown_users.join(', ')"></span>.
-            Sie müssen sich einmal verbinden, dann kannst du sie unter „Personen“
-            registrieren.
-          </p>
-        </template>
-      </div>
-    </div>
-  </template>
-
-  <template x-if="fehler">
-    <div class="banner" x-text="fehler"></div>
-  </template>
 </div>
 
 <script>
 function einrichten() {
   return {
     I: window.Intercom,
-    vorlagen: [], plan: null, gewaehlt: null, quelle: null,
+    vorlagen: [], shows: [], zuletztGeladen: null, geladenListe: false,
+    plan: null, quelle: null, planAufraeumen: null,
     laeuft: false, angewendet: false, fehler: "",
-    dateiName: "", dateiInhalt: "", aufraeumen: false,
+    neuName: "", neuNotiz: "",
+    aufraeumenShow: true,
+    dateiName: "", dateiInhalt: "", aufraeumenDatei: false,
     verbunden: false,
+    hinweis: "", _hinweisTimer: null,
 
     start() {
       this.I.get("/api/vorlagen")
         .then(d => { this.vorlagen = d.vorlagen || []; })
         .catch(e => { this.fehler = "Baukästen nicht lesbar: " + e.message; });
+      this.liste();
       this.zustand();
       /* Der Verbindungszustand kommt vom Server, nicht aus einer Annahme. */
       setInterval(() => this.zustand(), 5000);
@@ -203,57 +358,240 @@ function einrichten() {
         .catch(() => { this.verbunden = false; });
     },
 
+    liste() {
+      return this.I.get("/api/shows")
+        .then(d => {
+          this.shows = d.shows || [];
+          this.zuletztGeladen = d.zuletzt_geladen;
+          this.geladenListe = true;
+        })
+        .catch(e => { this.fehler = "Shows nicht lesbar: " + e.message; });
+    },
+
+    inhaltText(i) {
+      if (!i || !i.lesbar) { return "Datei nicht lesbar"; }
+      const teile = [];
+      const z = (n, eins, viele) => { if (n) { teile.push(n + " " + (n === 1 ? eins : viele)); } };
+      z(i.plaetze, "Platz", "Plätze");
+      z(i.rollen, "Rolle", "Rollen");
+      z(i.personen, "Person", "Personen");
+      z(i.ruftasten, "Ruftaste", "Ruftasten");
+      z(i.verbindungen, "Verbindung", "Verbindungen");
+      z(i.netze, "Netz", "Netze");
+      return teile.length ? teile.join(" · ") : "leer";
+    },
+
     get planLeer() {
-      return !!this.plan && (this.plan.changes || []).filter(c => !c.needs_prune).length === 0;
+      return !!this.plan && (this.plan.changes || [])
+        .filter(c => !c.needs_prune || this.plan.prune).length === 0;
     },
 
-    testlauf(schluessel) {
-      this.laeuft = true; this.fehler = ""; this.angewendet = false;
-      this.gewaehlt = schluessel; this.quelle = "vorlage";
-      this.I.post("/api/vorlagen/" + encodeURIComponent(schluessel) + "/plan")
-        .then(p => { this.plan = p; })
-        .catch(e => { this.plan = null; this.fehler = e.message; })
-        .finally(() => { this.laeuft = false; });
+    get ergebnisTitel() {
+      const was = this.quelle && this.quelle.startsWith("show:")
+        ? "Show „" + this.quelle.slice(5) + "“"
+        : (this.quelle === "sicherung" ? "Datei „" + this.dateiName + "“" : "Baukasten");
+      return (this.angewendet ? "Geladen: " : "Testlauf: ") + was +
+             (this.plan && this.plan.prune ? " (mit Aufräumen)" : "");
     },
 
-    anwenden(schluessel) {
-      if (!confirm("Baukasten jetzt anwenden?")) { return; }
+    loeschungen() {
+      if (!this.plan) { return 0; }
+      return (this.plan.changes || [])
+        .filter(c => c.destructive && (!c.needs_prune || this.plan.prune)).length;
+    },
+
+    planZeigen(p, quelle, aufraeumen, angewendet) {
+      this.plan = p; this.quelle = quelle; this.planAufraeumen = aufraeumen;
+      this.angewendet = angewendet;
+      this.$nextTick(() => {
+        if (this.$refs.ergebnis) { this.$refs.ergebnis.scrollIntoView({behavior: "smooth", block: "start"}); }
+      });
+    },
+
+    planVerwerfen(art) {
+      /* Wer den Haken umlegt, hat einen anderen Testlauf vor sich. Der alte
+         Plan darf dann nicht mehr als Freigabe zum Laden gelten. */
+      if (!this.quelle) { return; }
+      if ((art === "show" && this.quelle.startsWith("show:")) ||
+          (art === "sicherung" && this.quelle === "sicherung")) {
+        this.plan = null; this.quelle = null;
+      }
+    },
+
+    ladenBereit(name) {
+      return !!this.plan && !this.angewendet && this.quelle === "show:" + name &&
+             this.planAufraeumen === this.aufraeumenShow;
+    },
+
+    arbeit(versprechen) {
       this.laeuft = true; this.fehler = "";
-      this.I.post("/api/vorlagen/" + encodeURIComponent(schluessel) + "/anwenden")
-        .then(p => { this.plan = p; this.angewendet = true; })
-        .catch(e => { this.fehler = e.message; })
+      return versprechen
+        .catch(e => { this.fehler = e.message; throw e; })
         .finally(() => { this.laeuft = false; });
     },
+
+    melde(text) {
+      this.hinweis = text;
+      if (this._hinweisTimer) { window.clearTimeout(this._hinweisTimer); }
+      this._hinweisTimer = window.setTimeout(() => {
+        this.hinweis = "";
+        this._hinweisTimer = null;
+      }, 5000);
+    },
+
+    /* --- Shows ------------------------------------------------------- */
+
+    speichern(ueberschreiben) {
+      const name = this.neuName.trim().split(/\s+/).join(" ");
+      if (!name) { return; }
+      /* Erst hier fragen, wenn der Name schon in der Liste steht. Der 409 des
+         Servers bleibt die Absicherung, falls jemand anderes gleichzeitig
+         speichert. */
+      if (!ueberschreiben && this.shows.some(s => s.name === name)) {
+        if (!confirm("Es gibt schon eine Show „" + name + "“.\n\nMit dem aktuellen Stand überschreiben?")) { return; }
+        ueberschreiben = true;
+      }
+      this.arbeit(this.I.post("/api/shows",
+                  {name: name, notiz: this.neuNotiz, ueberschreiben: !!ueberschreiben}))
+        .then(d => {
+          this.neuName = ""; this.neuNotiz = "";
+          this.melde("Show „" + d.name + "“ gespeichert.");
+          return this.liste();
+        })
+        .catch(e => {
+          if (e.status === 409 && !ueberschreiben &&
+              confirm("Es gibt schon eine Show „" + name + "“.\n\nMit dem aktuellen Stand überschreiben?")) {
+            this.fehler = "";
+            this.speichern(true);
+          }
+        });
+    },
+
+    ueberschreiben(name) {
+      if (!confirm("Show „" + name + "“ durch den aktuellen Stand ersetzen?\n\nDer bisherige Inhalt der Show geht verloren.")) { return; }
+      const show = this.shows.find(s => s.name === name) || {};
+      this.arbeit(this.I.post("/api/shows", {name: name, notiz: show.notiz || "", ueberschreiben: true}))
+        .then(() => { this.melde("Show „" + name + "“ überschrieben."); return this.liste(); })
+        .catch(() => {});
+    },
+
+    umbenennen(s) {
+      const neu = prompt("Neuer Name für „" + s.name + "“:", s.name);
+      if (neu === null || !neu.trim() || neu.trim() === s.name) { return; }
+      this.arbeit(this.I.patch("/api/shows", {name: s.name, neuer_name: neu}))
+        .then(d => {
+          if (this.quelle === "show:" + s.name) { this.quelle = "show:" + d.name; }
+          return this.liste();
+        })
+        .catch(() => {});
+    },
+
+    notizAendern(s) {
+      const neu = prompt("Notiz zu „" + s.name + "“:", s.notiz || "");
+      if (neu === null) { return; }
+      this.arbeit(this.I.patch("/api/shows", {name: s.name, notiz: neu}))
+        .then(() => this.liste())
+        .catch(() => {});
+    },
+
+    loeschen(name) {
+      if (!confirm("Show „" + name + "“ löschen?\n\nAm Server ändert das nichts – es verschwindet nur die abgelegte Show.")) { return; }
+      this.arbeit(this.I.entferne("/api/shows?name=" + encodeURIComponent(name)))
+        .then(() => {
+          if (this.quelle === "show:" + name) { this.plan = null; this.quelle = null; }
+          this.melde("Show „" + name + "“ gelöscht.");
+          return this.liste();
+        })
+        .catch(() => {});
+    },
+
+    showTestlauf(name) {
+      const aufraeumen = this.aufraeumenShow;
+      this.arbeit(this.I.post("/api/shows/plan", {name: name, aufraeumen: aufraeumen}))
+        .then(p => this.planZeigen(p, "show:" + name, aufraeumen, false))
+        .catch(() => { this.plan = null; });
+    },
+
+    showLaden(name) {
+      const weg = this.loeschungen();
+      const frage = "Show „" + name + "“ jetzt laden?" +
+        (weg ? "\n\nDabei wird " + weg + (weg === 1 ? " Eintrag" : " Einträge") + " gelöscht – siehe Testlauf." : "");
+      if (!confirm(frage)) { return; }
+      const aufraeumen = this.aufraeumenShow;
+      this.arbeit(this.I.post("/api/shows/laden", {name: name, aufraeumen: aufraeumen}))
+        .then(p => {
+          this.planZeigen(p, "show:" + name, aufraeumen, true);
+          this.melde(p.fehlgeschlagen
+            ? "Show geladen, aber " + p.fehlgeschlagen + " Schritte sind fehlgeschlagen – siehe unten."
+            : "Show „" + name + "“ geladen.");
+          return this.liste();
+        })
+        .catch(() => {});
+    },
+
+    /* --- Datei ------------------------------------------------------- */
 
     dateiGewaehlt(ereignis) {
       const datei = ereignis.target.files && ereignis.target.files[0];
       if (!datei) { return; }
       this.dateiName = datei.name;
-      this.plan = null; this.angewendet = false; this.fehler = "";
+      if (this.quelle === "sicherung") { this.plan = null; this.quelle = null; }
+      this.fehler = "";
       const leser = new FileReader();
       leser.onload = () => { this.dateiInhalt = String(leser.result); };
       leser.onerror = () => { this.fehler = "Datei nicht lesbar."; };
       leser.readAsText(datei);
+      ereignis.target.value = "";
     },
 
     sicherungTestlauf() {
-      this.laeuft = true; this.fehler = ""; this.angewendet = false;
-      this.gewaehlt = null; this.quelle = "sicherung";
-      this.I.post("/api/sicherung/plan",
-                  {yaml_text: this.dateiInhalt, aufraeumen: this.aufraeumen})
-        .then(p => { this.plan = p; })
-        .catch(e => { this.plan = null; this.fehler = e.message; })
-        .finally(() => { this.laeuft = false; });
+      const aufraeumen = this.aufraeumenDatei;
+      this.arbeit(this.I.post("/api/sicherung/plan",
+                  {yaml_text: this.dateiInhalt, aufraeumen: aufraeumen}))
+        .then(p => this.planZeigen(p, "sicherung", aufraeumen, false))
+        .catch(() => { this.plan = null; });
     },
 
     sicherungEinspielen() {
-      if (!confirm("Sicherung jetzt einspielen?")) { return; }
-      this.laeuft = true; this.fehler = "";
-      this.I.post("/api/sicherung/einspielen",
-                  {yaml_text: this.dateiInhalt, aufraeumen: this.aufraeumen})
-        .then(p => { this.plan = p; this.angewendet = true; })
-        .catch(e => { this.fehler = e.message; })
-        .finally(() => { this.laeuft = false; });
+      const weg = this.loeschungen();
+      if (!confirm("Datei jetzt einspielen?" +
+          (weg ? "\n\nDabei wird " + weg + (weg === 1 ? " Eintrag" : " Einträge") + " gelöscht." : ""))) { return; }
+      const aufraeumen = this.aufraeumenDatei;
+      this.arbeit(this.I.post("/api/sicherung/einspielen",
+                  {yaml_text: this.dateiInhalt, aufraeumen: aufraeumen}))
+        .then(p => this.planZeigen(p, "sicherung", aufraeumen, true))
+        .catch(() => {});
+    },
+
+    dateiAlsShow(ueberschreiben) {
+      const vorschlag = this.dateiName.replace(/\.(ya?ml)$/i, "");
+      const name = ueberschreiben || prompt("Unter welchem Namen ablegen?", vorschlag);
+      if (!name || !name.trim()) { return; }
+      this.arbeit(this.I.post("/api/shows/hochladen",
+                  {name: name, yaml_text: this.dateiInhalt, ueberschreiben: !!ueberschreiben}))
+        .then(d => { this.melde("Als Show „" + d.name + "“ abgelegt."); return this.liste(); })
+        .catch(e => {
+          if (e.status === 409 && !ueberschreiben &&
+              confirm("Es gibt schon eine Show „" + name.trim() + "“. Überschreiben?")) {
+            this.fehler = "";
+            this.dateiAlsShow(name);
+          }
+        });
+    },
+
+    /* --- Baukaesten -------------------------------------------------- */
+
+    testlauf(schluessel) {
+      this.arbeit(this.I.post("/api/vorlagen/" + encodeURIComponent(schluessel) + "/plan"))
+        .then(p => this.planZeigen(p, "vorlage:" + schluessel, false, false))
+        .catch(() => { this.plan = null; });
+    },
+
+    anwenden(schluessel) {
+      if (!confirm("Baukasten jetzt anwenden?")) { return; }
+      this.arbeit(this.I.post("/api/vorlagen/" + encodeURIComponent(schluessel) + "/anwenden"))
+        .then(p => this.planZeigen(p, "vorlage:" + schluessel, false, true))
+        .catch(() => {});
     }
   };
 }

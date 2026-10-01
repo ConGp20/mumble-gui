@@ -1864,14 +1864,17 @@ def test_sicherung_nimmt_die_netzsegmente_mit(app_client):
 
     client, _ = app_client
     _anmelden(client)
+    # Bewusst ein anderes Segment als in der intercom.yaml des Fixtures: das
+    # Einspielen las frueher die geladene intercom.yaml statt der Datei, und
+    # mit demselben Segment fiel das nicht auf.
     _schreibe(client, "put", "/api/netze",
-              {"netze": [{"name": "Kabel Regie", "cidr": "10.20.10.0/24",
+              {"netze": [{"name": "Funk Halle", "cidr": "10.30.0.0/16",
                           "notiz": "Hauptstrang"}]})
 
     text = client.get("/api/provision/export").text
     roh = _yaml.safe_load(text)
     assert roh["networks"] == [
-        {"name": "Kabel Regie", "cidr": "10.20.10.0/24", "note": "Hauptstrang"}
+        {"name": "Funk Halle", "cidr": "10.30.0.0/16", "note": "Hauptstrang"}
     ]
 
     _schreibe(client, "put", "/api/netze", {"netze": []})
@@ -1880,7 +1883,10 @@ def test_sicherung_nimmt_die_netzsegmente_mit(app_client):
     wieder = _schreibe(client, "post", "/api/sicherung/einspielen", {"yaml_text": text})
     assert wieder.status_code == 200, wieder.text
     assert wieder.json()["netze"]["uebernommen"] == 1
-    assert client.get("/api/netze").json()["netze"][0]["name"] == "Kabel Regie"
+    netze = client.get("/api/netze").json()["netze"]
+    assert [(n["name"], n["cidr"], n["notiz"]) for n in netze] == [
+        ("Funk Halle", "10.30.0.0/16", "Hauptstrang")
+    ]
 
 
 def test_cockpit_verweist_nicht_mehr_auf_die_intercom_yaml(app_client):
@@ -1948,7 +1954,7 @@ def test_navigation_spricht_die_sprache_der_intercom(app_client):
     client, _ = app_client
     _anmelden(client)
     text = client.get("/pult").text
-    for begriff in ("Pult", "Personen", "Plätze", "Einrichten", "Anleitung"):
+    for begriff in ("Pult", "Personen", "Plätze", "Shows", "Anleitung"):
         assert f">{begriff}</a>" in text, f"{begriff} fehlt in der Navigation"
     # Und die Gruppen, die den neun Punkten Ordnung geben.
     for gruppe in ("Betrieb", "Aufbauen", "Fachsicht"):
@@ -1963,3 +1969,119 @@ def test_jede_seite_erklaert_sich_selbst(app_client):
         text = client.get(pfad).text
         assert 'class="seitenkopf"' in text, f"{pfad} hat keinen Erklaerkopf"
         assert "Wann brauchst du das?" in text, f"{pfad} sagt nicht, wann man es braucht"
+
+
+# --------------------------------------------------------------------------- #
+#  Ruftasten
+# --------------------------------------------------------------------------- #
+
+
+def test_ruftaste_belegen_leitet_verbundene_sofort_um(app_client):
+    """Nicht erst beim naechsten Verbinden -- sonst haette man nach dem Belegen
+    eine Taste, die bis zum Neustart des Geraets das Alte ruft."""
+    client, fake = app_client
+    _anmelden(client)
+    kameras = _kanal_id(client, "Kameras")
+    session = fake.server.connect_user("kam-tablet", channel=kameras)
+    _warte_auf_client(client, "kam-tablet")
+
+    antwort = _schreibe(
+        client, "put", "/api/pult/ruftaste", {"kanal": kameras, "taste": 1, "rolle": "regie"}
+    )
+    assert antwort.status_code == 200, antwort.text
+    assert antwort.json()["gruppe"] == "ruf1"
+    assert fake.server.whisper_redirects[session] == {"ruf1": "regie"}
+
+
+def test_ruftaste_erlaubt_reinschalten_wo_der_ruf_sonst_nicht_ankaeme(app_client):
+    """murmur prueft das Fluesterrecht am Platz jedes Empfaengers."""
+    client, _ = app_client
+    _anmelden(client)
+    kameras = _kanal_id(client, "Kameras")
+    regie = _kanal_id(client, "Regie")
+    _schreibe(client, "put", "/api/pult/recht",
+              {"kanal": regie, "rolle": "kamera", "recht": "reinschalten", "wert": "verboten"})
+
+    antwort = _schreibe(
+        client, "put", "/api/pult/ruftaste", {"kanal": kameras, "taste": 1, "rolle": "regie"}
+    )
+    erlaubt = antwort.json()["reinschalten_erlaubt"]
+    # Das Verbot war ein eigener Eintrag der Rolle kamera an Regie -- der wird
+    # umgestellt, und das steht in der Antwort.
+    assert "kamera" in erlaubt
+    assert any("Regie" in p for p in erlaubt["kamera"])
+
+    blatt = client.get(f"/api/pult/platz/{kameras}").json()
+    taste = next(t for t in blatt["ruftasten"] if t["taste"] == 1)
+    assert taste["eigen"] == "regie"
+    assert taste["kommt_nicht_an"] == []
+
+
+def test_ruftaste_am_ordner_wird_darunter_geerbt(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    intercom = _kanal_id(client, "Intercom")
+    kameras = _kanal_id(client, "Kameras")
+    _schreibe(client, "put", "/api/pult/ruftaste", {"kanal": intercom, "taste": 2, "rolle": "regie"})
+
+    taste = next(t for t in client.get(f"/api/pult/platz/{kameras}").json()["ruftasten"]
+                 if t["taste"] == 2)
+    assert taste["eigen"] is None
+    assert taste["geerbt"] == {"rolle": "regie", "von": "Intercom"}
+    assert taste["wirksam"] == "regie"
+
+    uebersicht = client.get("/api/pult").json()["ruftasten"][str(kameras)]
+    assert {"taste": 2, "rolle": "regie", "eigen": False} in uebersicht
+
+
+def test_ruftaste_freigeben_hebt_die_umleitung_auf(app_client):
+    client, fake = app_client
+    _anmelden(client)
+    kameras = _kanal_id(client, "Kameras")
+    session = fake.server.connect_user("kam-tablet", channel=kameras)
+    _warte_auf_client(client, "kam-tablet")
+    _schreibe(client, "put", "/api/pult/ruftaste", {"kanal": kameras, "taste": 1, "rolle": "regie"})
+
+    _schreibe(client, "put", "/api/pult/ruftaste", {"kanal": kameras, "taste": 1, "rolle": None})
+    assert fake.server.whisper_redirects.get(session, {}) == {}
+
+
+def test_ruftaste_auf_unbekannte_rolle_wird_abgelehnt(app_client):
+    client, _ = app_client
+    _anmelden(client)
+    kameras = _kanal_id(client, "Kameras")
+    antwort = _schreibe(client, "put", "/api/pult/ruftaste",
+                        {"kanal": kameras, "taste": 1, "rolle": "gibt-es-nicht"})
+    assert antwort.status_code == 404
+
+
+def test_durchsage_an_alle_ist_als_ziel_erlaubt(app_client):
+    """Eine Taste auf „Alle“ ist die Durchsage der Profisysteme."""
+    client, _ = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    antwort = _schreibe(client, "put", "/api/pult/ruftaste",
+                        {"kanal": regie, "taste": 4, "rolle": "all"})
+    assert antwort.status_code == 200, antwort.text
+
+
+def test_platzblatt_sagt_beim_reinschalten_dass_es_nur_das_recht_ist(app_client):
+    """Der Server kann keine Taste vergeben -- das muss dastehen."""
+    client, _ = app_client
+    _anmelden(client)
+    text = client.get("/pult").text
+    assert "Erteilt nur das <b>Recht</b>" in text
+    assert "Beschränke auf Gruppe" in text, "die Einrichtungsanleitung fuer den Client fehlt"
+
+
+def test_erklaerkoepfe_merken_sich_den_zustand_je_seite(app_client):
+    """Der Schluessel im Makro muss ankommen -- sonst teilten sich alle Seiten
+    einen Zustand, und das Zuklappen auf einer klappte alle zu. Ein leerer
+    Schluessel faellt beim Rendern nicht auf, deshalb hier."""
+    client, _ = app_client
+    _anmelden(client)
+    for pfad, schluessel in (("/", "cockpit"), ("/pult", "pult"), ("/einrichten", "einrichten"),
+                             ("/kanaele", "kanaele"), ("/nutzer", "nutzer")):
+        text = client.get(pfad).text
+        assert f"kopf:{schluessel}'" in text, f"{pfad}: Schluessel {schluessel!r} fehlt"
+        assert "kopf:'" not in text, f"{pfad}: leerer Schluessel"

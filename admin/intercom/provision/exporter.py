@@ -388,6 +388,7 @@ def export_yaml(
     wunsch: Mapping[str, Mapping[int, list[str]]] | None = None,
     verbindungen: Mapping[str, Mapping[str, list[str]]] | None = None,
     netze: list[Mapping[str, Any]] | None = None,
+    ruftasten: Mapping[str, Mapping[int, str]] | None = None,
 ) -> str:
     """Wie :func:`export_state`, aber gleich als YAML-Text.
 
@@ -412,6 +413,17 @@ def export_yaml(
         }
         if gefiltert:
             document["verbindungen"] = gefiltert
+    if ruftasten:
+        # Der oberste Platz hat den leeren Pfad; in der Datei steht er als "/",
+        # weil ein leerer Schluessel beim Lesen niemandem etwas sagt. Ein
+        # Schraegstrich kann in keinem Platznamen vorkommen.
+        belegt = {
+            (pfad or "/"): {int(t): r for t, r in sorted(je_taste.items()) if r}
+            for pfad, je_taste in sorted(ruftasten.items())
+        }
+        belegt = {pfad: tasten for pfad, tasten in belegt.items() if tasten}
+        if belegt:
+            document["ruftasten"] = belegt
     if netze:
         document["networks"] = [
             {
@@ -427,16 +439,16 @@ def export_yaml(
         "# Hinweis: priority_speaker laesst sich nicht exportieren -- Priority\n"
         "# Speaker ist ein Nutzerzustand und kein ACL-Eintrag, der Server haelt\n"
         "# dafuer keine Sollvorgabe vor. Ebenso fehlen listen_to (Listener haengen\n"
-        "# an der Sitzung), networks und devices (reine Dokumentation).\n"
-        "# Diese Abschnitte aus der bisherigen intercom.yaml uebernehmen.\n"
+        "# an der Sitzung) und devices (reine Dokumentation).\n"
     )
-    if document.get("wunsch") or document.get("verbindungen"):
+    if document.get("wunsch") or document.get("verbindungen") or document.get("ruftasten"):
         header += (
             "#\n"
-            "# Die Abschnitte 'wunsch' und 'verbindungen' kommen nicht vom\n"
-            "# Server, sondern aus dieser Oberflaeche: fester Platz, dauerhaftes\n"
-            "# Mithoeren, Vorrang und die Verbindungen zwischen zwei Plaetzen\n"
-            "# merkt sich Mumble nicht. Beim Einspielen werden sie uebernommen.\n"
+            "# Diese Abschnitte kommen nicht vom Server, sondern aus der Oberflaeche:\n"
+            "#   wunsch        fester Platz, dauerhaftes Mithoeren, Vorrang je Person\n"
+            "#   verbindungen  Verbindungen zwischen zwei Plaetzen\n"
+            "#   ruftasten     Belegung der Ruftasten je Platz ('/' = ueberall)\n"
+            "# Mumble merkt sich nichts davon. Beim Einspielen werden sie uebernommen.\n"
         )
     for hinweis in ausgelassen:
         header += "#\n# Nicht uebernommen: " + hinweis + "\n"

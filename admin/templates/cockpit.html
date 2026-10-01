@@ -4,7 +4,7 @@
 {{ seitenkopf(
   "cockpit",
   "Cockpit",
-  "Der Blick waehrend der Veranstaltung: wer ist verbunden, wie ist seine Leitung, wo hakt es.",
+  "Der Blick während der Veranstaltung: wer ist verbunden, wie ist seine Leitung, wo hakt es.",
   "Im Betrieb. Zum Aufbauen ist das <a href='/pult'>Pult</a> da – hier wird nichts eingerichtet, hier wird zugesehen und im Zweifel eingegriffen.",
   achtung="Paketverlust und Jitter misst nur der Monitor-Bot. Ist er aus, bleiben diese Spalten leer – das heisst <em>nicht gemessen</em>, nicht <em>alles gut</em>.",
 ) }}
@@ -118,14 +118,14 @@
     <div class="karte">
       <header>
         Plätze
-        <span class="rechts leise">gestrichelt = Verlinkung bzw. Mithoeren</span>
+        <span class="rechts leise">gestrichelt = Verlinkung bzw. Mithören</span>
       </header>
       <div class="inhalt baum">
         <template x-for="wurzel in channels" :key="wurzel.id">
           <div x-html="baumHtml(wurzel)"></div>
         </template>
         <template x-if="channels.length === 0">
-          <div class="still">Keine Kanaele gelesen.</div>
+          <div class="still">Keine Kanäle gelesen.</div>
         </template>
       </div>
     </div>
@@ -306,10 +306,10 @@
             <dd :class="(detail.expects_priority && !detail.user.priority_speaker) ? 'fehlertext' : ''"
                 x-text="(detail.user.priority_speaker ? 'ja' : 'nein') +
                         (detail.expects_priority ? ' (Soll: ja)' : '')"></dd>
-            <dt>Hoert mit</dt>
+            <dt>Hört mit</dt>
             <dd :class="detail.listeners_ok ? '' : 'fehlertext'"
                 x-text="(detail.listening || []).map(k => k.name).join(', ') || '(nichts)'"></dd>
-            <dt>Soll mithoeren</dt>
+            <dt>Soll mithören</dt>
             <dd x-text="(detail.expected_listeners || []).map(k => k.name).join(', ') || '(nichts)'"></dd>
           </dl>
 
@@ -358,7 +358,7 @@
           <h3>Zertifikatskette</h3>
           <template x-if="!detail.certificates?.length">
             <div class="hinweis">
-              Der Client hat kein Zertifikat vorgelegt – Anmeldung nur per Passwort moeglich.
+              Der Client hat kein Zertifikat vorgelegt – Anmeldung nur per Passwort möglich.
             </div>
           </template>
           <template x-for="(z, i) in detail.certificates" :key="i">

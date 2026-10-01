@@ -674,6 +674,20 @@ class IceClient:
     def is_listening(self, session: int, channel_id: int) -> bool:
         return bool(self._call(lambda: self._srv().isListening(session, channel_id)))
 
+    def redirect_whisper_group(self, session: int, source: str, target: str) -> None:
+        """Leitet einen Gruppenruf dieser Sitzung auf eine andere Gruppe um.
+
+        Ruft der Client auf einen Platz mit Gruppenbeschraenkung ``source``,
+        geht der Ruf stattdessen an ``target``. Leeres ``target`` hebt die
+        Umleitung auf. Gilt nur fuer diese Sitzung und laesst sich nicht
+        zuruecklesen -- die Slice hat keinen Getter dafuer.
+
+        Ob der Ruf ankommt, entscheidet weiterhin das Fluesterrecht des Rufenden
+        am Platz jedes Empfaengers (``createWhisperTargetCacheFor`` in
+        Server.cpp prueft es je Zielplatz).
+        """
+        self._call(lambda: self._srv().redirectWhisperGroup(session, source, target))
+
     # ------------------------------------------------------------------ #
     #  Server -- schreibend
     # ------------------------------------------------------------------ #
@@ -895,9 +909,6 @@ class IceClient:
 
     def remove_user_from_group(self, channel_id: int, session: int, group: str) -> None:
         self._call(lambda: self._srv().removeUserFromGroup(channel_id, session, group))
-
-    def redirect_whisper_group(self, session: int, source: str, target: str) -> None:
-        self._call(lambda: self._srv().redirectWhisperGroup(session, source, target))
 
 
 class AsyncIceClient:

@@ -921,3 +921,160 @@ meldet die Antwort als fehlend, statt ihn zu verschlucken.
 haelt und was nicht: Rollen, Rechte und der Kanalbaum ueberleben einen Neustart,
 ein Zug in einen Kanal gilt nur fuer diese Verbindung, und ein fester Platz
 kommt gar nicht von Mumble, sondern von uns.
+
+**Nachtrag (Pfadvergleich).** "Ohne Namensverwandte zu treffen" stimmte bis zur
+Einfuehrung der Ruftasten nur halb: verglichen wurde mit `LIKE pfad || '/%'`,
+und dort sind `_` und `%` Platzhalter. Ein Umbenennen von `KG_1` zog `KGA1/...`
+mit. Alle Pfad-Umschreibungen (Wuensche, Verbindungen, Ruftasten) vergleichen
+jetzt mit `substr(spalte, 1, n) = pfad || '/'`; ein Test mit `_` und `%` im
+Namen haelt das fest.
+
+## D-032 - Ruftasten: zentral belegte Tasten ueber `redirectWhisperGroup`
+
+**Problem.** Profi-Intercoms (GreenGo, Riedel, Clear-Com) belegen die Tasten
+eines Beltpacks zentral: in der Konfigurationssoftware steht, dass Taste 1 am
+Kampfgericht die Zeitmessung ruft. In Mumble stehen Fluestertasten im Client.
+Die Slice hat keine Methode, um sie von aussen zu setzen -- `setState`,
+`updateRegistration` und `setACL` beruehren sie nicht.
+
+**Der Umweg.** `MumbleServer.ice` hat
+`redirectWhisperGroup(int session, string source, string target)`. Im Quelltext
+von murmur v1.5.735 nachgelesen -- gesetzt in `Ice.cpp`
+(`impl_Server_redirectWhisperGroup`, Tabelle `ServerUser::qmWhisperRedirect`),
+ausgewertet in `Server.cpp` (`createWhisperTargetCacheFor`):
+
+- greift nur bei einem Fluesterziel vom Typ **Kanal** mit Gruppenbeschraenkung;
+- der Schluessel ist der Gruppenname, den **der Client** in sein Ziel
+  geschrieben hat; murmur setzt dafuer `target` ein;
+- haengt an der **Sitzung** (`ServerUser`) und stirbt beim Trennen;
+- leeres `target` hebt die Umleitung auf; es gibt keinen Getter;
+- `redirectWhisperGroup` ruft `clearACLCache(user)`, das den Fluesterziel-Cache
+  leert -- eine Aenderung wirkt also sofort, nicht erst beim naechsten
+  Tastendruck nach Neuaufbau des Caches.
+
+Daraus: jeder Client richtet **einmal** Taste n ein als "Rufen an den obersten
+Platz samt Unterplaetzen, beschraenkt auf Gruppe `rufn`". Eine Gruppe `rufn`
+gibt es nicht; ohne Umleitung hoert niemand etwas. Der Server leitet `rufn` je
+Sitzung auf die Rolle um, die an diesem Platz gerufen werden soll.
+
+**Gemessen, nicht vermutet.** Echter murmur 1.5.735, drei pymumble-Clients mit
+Opus, ein Sender mit festem Fluesterziel (`ruf1`, Kanal 0, Unterkanaele):
+
+| Fall | Erwartet | Ergebnis |
+|------|----------|----------|
+| keine Umleitung | niemand hoert | ✔ |
+| `ruf1` → Technik | nur Technik | ✔ |
+| mitten in der Sitzung auf Zeitmessung umgestellt | nur Zeitmessung | ✔ |
+| Umleitung entfernt | niemand | ✔ |
+| Zielplatz ohne Fluesterrecht | niemand | ✔ |
+| nach Neuverbinden, nicht erneut gesetzt | niemand | ✔ |
+| nach Neuverbinden erneut gesetzt | Ziel hoert | ✔ |
+
+Der Ende-zu-Ende-Test `test_ruftaste_wird_ueber_den_enforcer_wirklich_gehoert`
+(`tests/test_integration_real_server.py`) laesst das ueber den echten
+`Enforcer` laufen, samt Platzwechsel, bei dem am Client nichts passiert.
+
+**Umsetzung.**
+
+- Tabelle `ruftaste (platz, taste, rolle)`, Migration 6. Platz als Pfad wie
+  bei D-031; der oberste Platz ist der leere Pfad (in der Datei: `/`).
+- Vier Tasten. Belegung **erbt nach unten**: am Ordner "Kampfgerichte"
+  belegt, gilt sie fuer alle acht Kampfgerichte, solange eines nicht selbst
+  etwas anderes festlegt. Der naechstgelegene Eintrag gewinnt.
+- Der `Enforcer` setzt die Umleitung bei jedem Verbinden und jedem
+  Platzwechsel nach -- nur wenn sie sich aendert, weil es keinen Getter gibt
+  und er sich deshalb merkt, was er zuletzt geschrieben hat.
+- Beim Belegen schaltet die Oberflaeche den Rufenden das Fluesterrecht
+  ("Reinschalten") an den Plaetzen der Gerufenen frei, wo es fehlt, und sagt
+  das in der Antwort.
+
+**Was die Oberflaeche anzeigen muss, weil sonst eine Taste belegt aussieht und
+stumm bleibt:**
+
+1. *Fluesterrecht je Zielplatz.* `createWhisperTargetCacheFor` prueft
+   `ChanACL::Whisper` an jedem Kanal, in dem ein Empfaenger sitzt. Fehlt es an
+   einem, kommt der Ruf dort nicht an. Das Platzblatt rechnet das mit
+   `wirkung.py` nach und zeigt "nicht ueberall – fehlt an n Stellen".
+2. *Der Rufende muss auf seinem Platz sprechen duerfen.* Wer unterdrueckt ist,
+   dessen gesamte Sprache verwirft murmur, Fluestern eingeschlossen
+   (`Server.cpp`, Abbruch bei `bSuppress`). Als Rufende gelten deshalb nur
+   Rollen, die dort sprechen duerfen.
+
+**Grenzen, ehrlich benannt.**
+
+- Die Taste im Client muss jede Person **einmal** selbst einrichten. Das
+  Platzblatt fuehrt mit den deutschen Bezeichnungen des Mumble-Programms 1.5
+  durch ("Flüstern/Rufen", "Beschränke auf Gruppe" ...), entnommen aus
+  `mumble_de.ts` und `GlobalShortcut.cpp` derselben Version. Als Zielkanal
+  empfiehlt es den Eintrag **"Hauptkanal"** (`SHORTCUT_TARGET_ROOT`): er wird
+  erst beim Druecken auf Kanal 0 aufgeloest (`MainWindow::mapChannel`), laesst
+  sich also ohne Verbindung einstellen und gilt auf jedem Server. Was der
+  Client dann sendet -- Kanalziel 0, Unterkanaele, Gruppe `rufn` -- ist genau
+  das, was die Messung oben mit pymumble gesendet hat.
+- **Nicht** durchgeklickt ist es am Desktop-Programm selbst, und mit Mumla
+  oder anderen Apps ist nicht geprueft, ob sie im Fluesterziel eine Gruppe
+  beschraenken koennen. Die Oberflaeche sagt das so.
+- Eine Taste ruft eine Rolle, nicht einen Platz. Wer eine Person auf einem
+  bestimmten Platz rufen will, ruft die Rolle, die dort sitzt.
+- Das Fluesterrecht laesst sich in Mumble nicht auf eine Gruppe beschraenken:
+  `ChanACL::Whisper` am Zielplatz gilt fuer jedes Fluestern dorthin, die
+  Gruppenbeschraenkung waehlt der Client. Wer eine Ruftaste auf eine
+  wandernde Rolle (Technik, Leitung) legt, bekommt deshalb Reinschalten an
+  allen Plaetzen, an denen diese Rolle sprechen darf -- und koennte mit einer
+  selbst eingerichteten Fluestertaste ohne Gruppe dort auch alle anderen
+  erreichen. Das Pult setzt das Recht nicht still: die Antwort nennt Rolle
+  und Zahl der Plaetze, das Platzblatt sagt es dauerhaft, und im Raster steht
+  es in der Spalte "Reinschalten".
+- Keine Rueckmeldung am Gerufenen, wer gerufen hat, ausser der Stimme selbst --
+  Mumble zeigt Fluestern als solches an, aber keinen Tastennamen.
+
+## D-033 - Shows: benannte Aufbauten statt einer einzigen Sicherung
+
+**Problem.** Derselbe Server wird fuer verschiedene Veranstaltungen umgebaut --
+Landesfinale mit acht Kampfgerichten, Training mit zwei, Probe ohne Presse.
+Die Sicherung war eine Datei: herunterladen, irgendwo ablegen, beim naechsten
+Mal suchen und hochladen. Und sie war unvollstaendig im Einspielen: Ruftasten
+fehlten, und die Netzsegmente kamen aus der geladenen `intercom.yaml` statt aus
+der hochgeladenen Datei -- ein Test war nur gruen, weil beide zufaellig
+dasselbe Segment enthielten.
+
+**Entscheidung.** Tabelle `show (name, notiz, yaml_text, ...)`, Migration 7.
+Eine Show ist **woertlich dieselbe Datei** wie eine Sicherung. Gespeichert wird
+der Text, nicht eine zerlegte Form:
+
+- Laden geht exakt den Weg einer hochgeladenen Datei (`web/shows.py`,
+  `einspielen()`), es gibt nur einen.
+- Was man herunterlaedt, ist Byte fuer Byte das, was geladen wuerde.
+- Eine Show laesst sich als Datei mitnehmen und anderswo wieder ablegen.
+
+**Ein Weg, drei Schritte, jeder mit Testlauf.**
+
+1. Plaetze, Rollen, Regeln ueber den Planner (mit Aufraeumen auch loeschen).
+2. Was nur diese Oberflaeche kennt: Wunsch je Person (nach Namen), Verbindungen,
+   Ruftasten, Netzsegmente. Der Testlauf zaehlt, was uebernommen, geaendert
+   und entfernt wuerde, und sagt es in Saetzen.
+3. `wunschzustand_neu_laden()`: Enforcer neu laden und alle verbundenen
+   Sitzungen sofort nachziehen -- sonst stuenden Ruftasten und feste Plaetze
+   bis zum naechsten Abgleich auf dem alten Stand.
+
+**Aufraeumen ist bei Shows die Vorgabe, bei Dateien nicht.** Wer eine Show
+laedt, will danach genau diese Show. Wer eine alte Sicherung einspielt, will
+meist nur Verlorenes zurueck. Beide Male gilt: erst Testlauf, und der
+Laden-Knopf bleibt gesperrt, bis ein Testlauf **mit demselben Haken** gelaufen
+ist. Die Rueckfrage nennt die Zahl der Loeschungen.
+
+**Was ein Laden nie tut:** Personen registrieren oder deren Registrierung
+loeschen. murmur registriert an einem Zertifikat, das nur das Geraet der Person
+mitbringt. Namen aus der Show, die der Server nicht kennt, nennt das Ergebnis,
+samt dem Weg dahin.
+
+**"Zuletzt geladen" ist eine Auskunft, kein Zustand.** Der Server bleibt die
+Wahrheit (D-029). Wer nach dem Laden etwas aendert, hat etwas geaendert; ob der
+Server noch der Show entspricht, sagt nur ein Testlauf -- und genau darauf
+verweist die Oberflaeche.
+
+**Namen.** Leerraum wird zusammengezogen, damit "Halle 1" und "Halle  1" nicht
+zwei Shows sind. Ein vorhandener Name wird nur nach ausdruecklicher Rueckfrage
+ueberschrieben (HTTP 409 → Rueckfrage → `ueberschreiben: true`). Namen gehen als
+Query- bzw. Body-Parameter, nicht im Pfad -- ein `/` im Namen ("Halle 1 /
+Probe") bleibt so erlaubt.

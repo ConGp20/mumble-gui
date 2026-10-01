@@ -79,6 +79,8 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
         #: session -> Menge von Kanal-IDs. Bewusst an der Session, nicht am
         #: Nutzer -- genau wie m_channelListenerManager in murmur.
         self.listening: dict[int, set[int]] = {}
+        #: Sitzung -> {Quellgruppe: Zielgruppe}, wie qmWhisperRedirect.
+        self.whisper_redirects: dict[int, dict[str, str]] = {}
         self.superuser_password: str | None = None
         #: Testhilfe: laesst ``getChannels`` so viele Sekunden haengen. Damit
         #: laesst sich ein murmur nachstellen, der die Antwort schuldig
@@ -147,6 +149,8 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
         with self._lock:
             user = self.users.pop(session, None)
             self.listening.pop(session, None)
+            # Die Umleitung haengt am ServerUser und stirbt mit ihm.
+            self.whisper_redirects.pop(session, None)
         if user is not None:
             self._fire("userDisconnected", user)
 
@@ -641,12 +645,6 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
         if session not in self.users:
             raise MumbleServer.InvalidSessionException()
 
-    def redirectWhisperGroup(
-        self, session: int, source: str, target: str, current: Any = None
-    ) -> None:
-        if session not in self.users:
-            raise MumbleServer.InvalidSessionException()
-
     # -- Ice: Registrierung --------------------------------------------------
 
     def registerUser(self, info: dict[Any, str], current: Any = None) -> int:
@@ -740,6 +738,19 @@ class FakeServer(MumbleServer.Server):  # type: ignore[misc, name-defined]
         if channelid not in self.channels:
             raise MumbleServer.InvalidChannelException()
         self.listening.setdefault(session, set()).add(channelid)
+
+    def redirectWhisperGroup(
+        self, session: int, source: str, target: str, current: Any = None
+    ) -> None:
+        # Wie impl_Server_redirectWhisperGroup: leeres Ziel entfernt die
+        # Umleitung, sonst wird sie gesetzt -- je Sitzung.
+        if session not in self.users:
+            raise MumbleServer.InvalidSessionException()
+        umleitungen = self.whisper_redirects.setdefault(session, {})
+        if target:
+            umleitungen[source] = target
+        else:
+            umleitungen.pop(source, None)
 
     def stopListening(self, session: int, channelid: int, current: Any = None) -> None:
         if session not in self.users:

@@ -4,9 +4,9 @@
 {{ seitenkopf(
   "acl",
   "Rechte im Original",
-  "Die Rechte so, wie Mumble sie fuehrt: Eintrag fuer Eintrag, mit allen siebzehn Bits.",
-  "Nur wenn das Raster im <a href='/pult'>Pult</a> nicht reicht – etwa fuer Zugangswoerter, Bedingungen wie <code>in</code>/<code>out</code> oder mehrere Eintraege derselben Rolle an einem Platz. Fuer den Alltag ist diese Seite nicht gedacht.",
-  achtung="Die <strong>Reihenfolge zaehlt</strong>: gelesen wird von oben nach unten, und der letzte passende Eintrag gewinnt. Ein Verbot weiter unten sticht eine Erlaubnis weiter oben.",
+  "Die Rechte so, wie Mumble sie führt: Eintrag für Eintrag, mit allen siebzehn Bits.",
+  "Nur wenn das Raster im <a href='/pult'>Pult</a> nicht reicht – etwa für Zugangswörter, Bedingungen wie <code>in</code>/<code>out</code> oder mehrere Einträge derselben Rolle an einem Platz. Für den Alltag ist diese Seite nicht gedacht.",
+  achtung="Die <strong>Reihenfolge zählt</strong>: gelesen wird von oben nach unten, und der letzte passende Eintrag gewinnt. Ein Verbot weiter unten sticht eine Erlaubnis weiter oben.",
 ) }}
 
 <div x-data="aclEditor()" x-init="start()">
@@ -29,7 +29,7 @@
         </template>
       </select>
     </label>
-    <button class="knopf" :disabled="!vorlage" @click="vorlageAnwenden()">Uebernehmen</button>
+    <button class="knopf" :disabled="!vorlage" @click="vorlageAnwenden()">Übernehmen</button>
     {% endif %}
   </div>
 
@@ -43,13 +43,13 @@
     <div class="karte">
       <header>
         Regeln
-        <span class="rechts leise">Reihenfolge zaehlt – spaeter schlaegt frueher</span>
+        <span class="rechts leise">Reihenfolge zählt – später schlägt früher</span>
       </header>
       <div class="tabellenrahmen">
         <table class="dicht">
           <thead>
             <tr>
-              <th>#</th><th>Gilt fuer</th><th>hier</th><th>Unterk.</th>
+              <th>#</th><th>Gilt für</th><th>hier</th><th>Unterk.</th>
               <th>erlaubt</th><th>verboten</th><th></th>
             </tr>
           </thead>
@@ -106,7 +106,7 @@
     <div class="karte">
       <header>
         Rechte
-        <span class="rechts leise" x-text="bearbeitet === null ? 'Eintrag waehlen' :
+        <span class="rechts leise" x-text="bearbeitet === null ? 'Eintrag wählen' :
           ('Eintrag ' + (bearbeitet + 1))"></span>
       </header>
       <div class="tabellenrahmen">
@@ -175,19 +175,19 @@
       </div>
       <div class="inhalt hinweis">
         Dauerhafte Mitgliedschaft steht in der <code>add</code>-Liste und wird per
-        <code>setACL</code> geschrieben. <code>addUserToGroup</code> waere nur
-        temporaer und ueberlebte keinen Serverneustart.
+        <code>setACL</code> geschrieben. <code>addUserToGroup</code> wäre nur
+        temporär und überlebte keinen Serverneustart.
       </div>
     </div>
 
     <!-- Simulator + Speichern -------------------------------------------- -->
     <div class="karte">
-      <header>Effektive Rechte pruefen</header>
+      <header>Effektive Rechte prüfen</header>
       <div class="inhalt">
         <div class="werkzeugleiste">
           <label>Verbindung
             <select x-model="pruefSession" @change="pruefe()">
-              <option value="">– waehlen –</option>
+              <option value="">– wählen –</option>
               <template x-for="u in clients" :key="u.session">
                 <option :value="u.session" x-text="u.name + ' (' + u.channel_name + ')'"></option>
               </template>
@@ -212,7 +212,7 @@
       {% if account.can_write %}
       <div class="inhalt" style="border-top:1px solid var(--border)">
         <div class="werkzeugleiste">
-          <button class="knopf" @click="vorschau()">Aenderungen ansehen</button>
+          <button class="knopf" @click="vorschau()">Änderungen ansehen</button>
           <button class="knopf haupt" :disabled="!diff" @click="speichern()">Speichern</button>
           <button class="knopf" @click="ladeAcl()">Verwerfen</button>
         </div>
@@ -272,8 +272,8 @@ function aclEditor() {
         this.vorlagen = d.templates || [];
         this.namen = d.registered || {};
         if (d.dangling && d.dangling.length) {
-          this.warnungen = ["Es gibt " + d.dangling.length + " Eintraege, die weder " +
-            "hier noch fuer Unterkanaele gelten. Sie wirken nirgends und werden " +
+          this.warnungen = ["Es gibt " + d.dangling.length + " Einträge, die weder " +
+            "hier noch für Unterkanäle gelten. Sie wirken nirgends und werden " +
             "beim Speichern abgelehnt."];
         }
       }).catch(err => alert("ACL nicht lesbar: " + err.message));

@@ -9,8 +9,9 @@ IP, Ping, Paketverlust, Version und Zertifikat; jede ACL; jede Gruppe.
 
 **Die Wahrheit steht im Server.** Angelegt und geaendert wird in der
 Oberflaeche, und was dort steht, bleibt dort — es gibt keine Datei, die beim
-naechsten Start etwas zurueckschreibt. Fuer den Anfang gibt es Baukaesten, fuer
-den Notfall eine Sicherung zum Herunterladen und Einspielen. Die
+naechsten Start etwas zurueckschreibt. Fuer den Anfang gibt es Baukaesten,
+fuer wechselnde Veranstaltungen benannte **Shows** (ganzer Aufbau speichern und
+laden), fuer den Notfall eine Sicherung als Datei. Die
 YAML-Provisionierung gibt es weiterhin, aber als Werkzeug, nicht als Herrn:
 `PROVISION_ON_START` ist per Vorgabe aus.
 
@@ -137,7 +138,8 @@ denen es weitergeht. Das Passwort steht in der erzeugten `.env` als
 | 2. Alle einmal mit dem Mumble-Programm verbinden lassen | — |
 | 3. Jeden registrieren — der Server erkennt Leute am Zertifikat, nicht am Namen | `/nutzer` |
 | 4. Personen per Ziehen in Rollen und auf Plaetze setzen, Rechte verteilen | `/pult` |
-| 5. Sicherung herunterladen | `/einrichten` |
+| 5. Ruftasten belegen und einmal je Geraet im Mumble-Programm einrichten (das Platzblatt fuehrt durch) | `/pult` |
+| 6. Aktuellen Stand als Show speichern | `/einrichten` („Shows“) |
 
 Wenn Mumbles Modell unklar ist: `/anleitung` erklaert es in Klartext — vor
 allem, warum Rechte am Platz haengen und nicht an der Person.
@@ -312,7 +314,7 @@ Client abfragen kann. Genau dafuer haengt der Monitor-Bot im Server.
 | `/` Cockpit | Betrieb: wer ist verbunden, wie ist die Leitung, was alarmiert |
 | `/pult` | Alltag: Personen, Rollen und Plaetze per Ziehen verbinden, Rechte verteilen |
 | `/anleitung` | Mumbles Modell in Klartext — Vererbung, Richtung der Rechte, Raster lesen |
-| `/einrichten` | Baukaesten fuer den Anfang, Sicherung herunterladen und einspielen |
+| `/einrichten` („Shows“) | Ganze Aufbauten als Show speichern, vergleichen (Testlauf) und laden; Sicherung als Datei; Baukaesten fuer den Anfang |
 | `/kanaele`, `/acl`, `/nutzer` | Expertensicht: dieselben Dinge so, wie Mumble sie nennt |
 | `/server` | Serverkonfiguration, Baenne, Protokoll |
 | `/audit` | Wer hat wann was geaendert |
@@ -587,6 +589,22 @@ samt Gegenprobe.
 
 Ebenfalls korrigiert: die Slice heisst `PermissionRegisterSelf` (nicht
 `PermissionSelfRegister`) und `ResetUserContent` (ohne `Permission`-Praefix).
+
+### Ruftasten: zentral belegt, aber einmal im Client einzurichten
+
+Profisysteme belegen Beltpack-Tasten zentral. Mumble hat Fluestertasten nur im
+Client, und die Slice kann sie nicht setzen. Der Umweg ueber
+`redirectWhisperGroup` ist gemessen (D-032): jedes Geraet richtet **einmal**
+Taste 1–4 als "Rufen an den obersten Platz samt Unterplaetzen, beschraenkt auf
+Gruppe `ruf1`…`ruf4`" ein; wen die Taste ruft, legt danach allein das Pult je
+Platz fest — auch fuer verbundene Geraete sofort, auch nach Platzwechsel.
+
+Grenzen: die Einrichtung im Client bleibt Handarbeit (das Platzblatt fuehrt mit
+den deutschen Bezeichnungen des Mumble-Programms 1.5 hindurch). Gemessen ist
+die Serverseite mit einem Testclient, der genau das sendet, was das
+Mumble-Programm nach dieser Einrichtung sendet; am Desktop-Programm selbst ist
+es nicht durchgeklickt, mit Mumla und anderen Apps nicht geprueft. Eine Taste
+ruft eine **Rolle**, keinen einzelnen Platz.
 
 ### Nicht ueber Ice moeglich
 

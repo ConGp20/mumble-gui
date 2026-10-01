@@ -260,6 +260,62 @@ _MIGRATIONS: Final[tuple[tuple[int, tuple[str, ...]], ...]] = (
             """,
         ),
     ),
+    (
+        6,
+        (
+            # Ruftasten: zentral belegte Tasten je Platz.
+            #
+            # Profisysteme legen in der Konfigurationssoftware fest, was Taste 1
+            # bis 4 am Beltpack tut. Mumble kennt das nicht -- die Tasten stehen
+            # im Client. Der Umweg: jeder Client ruft mit seiner Taste n immer
+            # dieselbe feste Gruppe ``rufn``, und der Server leitet diese Gruppe
+            # je Sitzung per ``redirectWhisperGroup`` auf die Rolle um, die an
+            # dem Platz gerade gerufen werden soll. Gegen murmur v1.5.735
+            # gemessen: 7 von 7 Faellen wie erwartet (DECISIONS D-032).
+            #
+            # Die Umleitung ueberlebt kein Trennen; die Belegung selbst wohnt
+            # deshalb hier, als Pfad wie alles andere.
+            """
+            CREATE TABLE IF NOT EXISTS ruftaste (
+                platz      TEXT    NOT NULL,
+                taste      INTEGER NOT NULL,
+                rolle      TEXT    NOT NULL,
+                author     TEXT    NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (platz, taste)
+            )
+            """,
+        ),
+    ),
+    (
+        7,
+        (
+            # Shows: mehrere benannte Aufbauten statt einer einzigen Sicherung.
+            #
+            # Eine Show ist genau das, was eine Sicherung ist -- der Text, den
+            # der Export liefert, samt der Abschnitte aus dieser Oberflaeche
+            # (feste Plaetze, Verbindungen, Ruftasten, Netze). Gespeichert wird
+            # der Text, nicht eine zerlegte Form: so laedt eine Show genau
+            # denselben Weg wie eine hochgeladene Datei, und was man
+            # herunterlaedt, ist Byte fuer Byte das, was geladen wuerde.
+            #
+            # ``geladen`` ist nur eine Auskunft ("zuletzt geladen am ..."), kein
+            # Zustand: der Server bleibt die Wahrheit, und wer nach dem Laden
+            # etwas aendert, hat eben etwas geaendert.
+            """
+            CREATE TABLE IF NOT EXISTS show (
+                name       TEXT    NOT NULL PRIMARY KEY,
+                notiz      TEXT    NOT NULL DEFAULT '',
+                yaml_text  TEXT    NOT NULL,
+                author     TEXT    NOT NULL DEFAULT '',
+                erstellt   INTEGER NOT NULL,
+                geaendert  INTEGER NOT NULL,
+                geladen    INTEGER,
+                geladen_von TEXT   NOT NULL DEFAULT ''
+            )
+            """,
+        ),
+    ),
 )
 
 #: Stand, den :meth:`Store.migrate` herstellt. Abgeleitet statt gepflegt -- eine
@@ -286,6 +342,11 @@ _AUDIT_COLUMNS: Final[str] = "id, ts, actor, action, target, before, after, ok, 
 #: ACL-Aenderung vollstaendig hineinpasst.
 MAX_KURZFELD = 200
 MAX_LANGFELD = 20_000
+#: Obergrenze fuer den Text einer Show. Ein Stadion mit 200 Plaetzen und
+#: 500 Personen liegt bei gut 100 kB; 2 MB sind reichlich und halten trotzdem
+#: einen versehentlich hochgeladenen Mitschnitt aus der Datenbank.
+MAX_SHOWTEXT = 2_000_000
+MAX_SHOWNAME = 80
 
 #: Die drei Dinge, die murmur selbst nicht behaelt und die deshalb hier wohnen.
 #: ``platz``: wo die Person nach dem Verbinden landen soll.
@@ -298,6 +359,25 @@ WUNSCH_ARTEN: Final[tuple[str, ...]] = ("platz", "mithoeren", "vorrang")
 #: ``reinschalten``: wer auf dem einen Platz sitzt, darf in den anderen
 #: hineinsprechen, ohne ihn zu betreten.
 VERBINDUNGSARTEN: Final[tuple[str, ...]] = ("hoert", "reinschalten")
+
+#: Wie viele Ruftasten es gibt. Vier, wie die Kanaltasten an einem Beltpack --
+#: mehr ist am Geraet ohnehin nicht zu greifen.
+RUFTASTEN: Final[tuple[int, ...]] = (1, 2, 3, 4)
+
+
+def ruf_gruppe(taste: int) -> str:
+    """Der feste Gruppenname, auf den Taste ``taste`` im Client ruft."""
+    return f"ruf{taste}"
+
+
+def _unterhalb(pfad: str) -> tuple[int, str]:
+    """Parameter fuer "liegt unter diesem Pfad": ``substr(spalte, 1, n) = praefix``.
+
+    Bewusst nicht ``LIKE pfad || '/%'``: dort sind ``_`` und ``%`` Platzhalter,
+    und ein Umbenennen von "KG_1" haette auch "KGA1/..." mitgezogen.
+    """
+    praefix = pfad + "/"
+    return len(praefix), praefix
 
 
 def _kappen(text: str, grenze: int) -> str:
@@ -972,6 +1052,12 @@ class Store:
         """Der vollstaendige Wunschzustand -- so geht er in die Sicherung."""
         return {art: self.wuensche(art) for art in WUNSCH_ARTEN}
 
+    def wuensche_leeren(self) -> int:
+        """Loescht den ganzen Wunschzustand -- fuer "Laden mit Aufraeumen"."""
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM wunsch")
+            return int(cur.rowcount or 0)
+
     def wunsch_vergessen(self, userid: int) -> int:
         """Loescht alle Wuensche einer Person. Nach dem Abmelden faellig."""
         with self._transaction() as conn:
@@ -991,8 +1077,8 @@ class Store:
         with self._transaction() as conn:
             cur = conn.execute(
                 "UPDATE wunsch SET ziel = ? || substr(ziel, ?) "
-                "WHERE ziel = ? OR ziel LIKE ? || '/%'",
-                (neu, len(alt) + 1, alt, alt),
+                "WHERE ziel = ? OR substr(ziel, 1, ?) = ?",
+                (neu, len(alt) + 1, alt, *_unterhalb(alt)),
             )
             return int(cur.rowcount or 0)
 
@@ -1044,6 +1130,12 @@ class Store:
             )
         return gesammelt
 
+    def verbindungen_leeren(self) -> int:
+        """Loescht alle Verbindungen -- fuer "Laden mit Aufraeumen"."""
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM verbindung")
+            return int(cur.rowcount or 0)
+
     def verbindung_umschreiben(self, alt: str, neu: str) -> int:
         """Zieht Verbindungen mit, wenn ein Platz umbenannt oder verschoben wird."""
         if not alt or alt == neu:
@@ -1053,8 +1145,8 @@ class Store:
             for spalte in ("von", "nach"):
                 cur = conn.execute(
                     f"UPDATE OR REPLACE verbindung SET {spalte} = ? || substr({spalte}, ?) "
-                    f"WHERE {spalte} = ? OR {spalte} LIKE ? || '/%'",
-                    (neu, len(alt) + 1, alt, alt),
+                    f"WHERE {spalte} = ? OR substr({spalte}, 1, ?) = ?",
+                    (neu, len(alt) + 1, alt, *_unterhalb(alt)),
                 )
                 geaendert += int(cur.rowcount or 0)
         return geaendert
@@ -1066,8 +1158,8 @@ class Store:
         with self._transaction() as conn:
             cur = conn.execute(
                 "DELETE FROM verbindung WHERE von = ? OR nach = ? "
-                "OR von LIKE ? || '/%' OR nach LIKE ? || '/%'",
-                (pfad, pfad, pfad, pfad),
+                "OR substr(von, 1, ?) = ? OR substr(nach, 1, ?) = ?",
+                (pfad, pfad, *_unterhalb(pfad), *_unterhalb(pfad)),
             )
             return int(cur.rowcount or 0)
 
@@ -1118,3 +1210,191 @@ class Store:
                 "VALUES (?, ?, ?, ?, ?)",
                 zeilen,
             )
+
+    # ------------------------------------------------------------------ #
+    #  Ruftasten
+    # ------------------------------------------------------------------ #
+
+    def set_ruftaste(
+        self, platz: str, taste: int, rolle: str | None, author: str = ""
+    ) -> None:
+        """Belegt eine Taste an einem Platz -- oder gibt sie frei (``rolle=None``).
+
+        ``platz`` ist ein Pfad; der leere Pfad ist der oberste Platz
+        ("Ueberall"), eine Belegung dort gilt fuer alle Plaetze, die selbst
+        nichts anderes festlegen.
+        """
+        if taste not in RUFTASTEN:
+            raise ValueError(f"Es gibt keine Taste {taste}.")
+        with self._transaction() as conn:
+            if rolle:
+                conn.execute(
+                    "INSERT INTO ruftaste (platz, taste, rolle, author, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT (platz, taste) DO UPDATE SET "
+                    "rolle = excluded.rolle, author = excluded.author, "
+                    "updated_at = excluded.updated_at",
+                    (platz, taste, rolle, _kappen(author, MAX_KURZFELD), int(time.time())),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM ruftaste WHERE platz = ? AND taste = ?", (platz, taste)
+                )
+
+    def ruftasten(self) -> dict[str, dict[int, str]]:
+        """Alle Belegungen: Platzpfad -> {Taste: Rolle}."""
+        conn = self._connection()
+        rows = conn.execute(
+            "SELECT platz, taste, rolle FROM ruftaste ORDER BY platz, taste"
+        ).fetchall()
+        gesammelt: dict[str, dict[int, str]] = {}
+        for row in rows:
+            gesammelt.setdefault(row["platz"], {})[int(row["taste"])] = row["rolle"]
+        return gesammelt
+
+    def ruftasten_ersetzen(self, belegung: Mapping[str, Mapping[int, str]]) -> None:
+        """Ersetzt alle Belegungen -- fuer Sicherung und Shows."""
+        jetzt = int(time.time())
+        zeilen = [
+            (platz, int(taste), rolle, "", jetzt)
+            for platz, je_taste in belegung.items()
+            for taste, rolle in je_taste.items()
+            if int(taste) in RUFTASTEN and rolle
+        ]
+        with self._transaction() as conn:
+            conn.execute("DELETE FROM ruftaste")
+            conn.executemany(
+                "INSERT INTO ruftaste (platz, taste, rolle, author, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                zeilen,
+            )
+
+    def ruftaste_umschreiben(self, alt: str, neu: str) -> int:
+        """Zieht Belegungen mit, wenn ein Platz umbenannt oder verschoben wird."""
+        if not alt or alt == neu:
+            return 0
+        with self._transaction() as conn:
+            cur = conn.execute(
+                "UPDATE OR REPLACE ruftaste SET platz = ? || substr(platz, ?) "
+                "WHERE platz = ? OR substr(platz, 1, ?) = ?",
+                (neu, len(alt) + 1, alt, *_unterhalb(alt)),
+            )
+            return int(cur.rowcount or 0)
+
+    def ruftaste_vergessen(self, pfad: str) -> int:
+        """Loescht die Belegungen eines geloeschten Platzes samt allem darunter."""
+        if not pfad:
+            return 0
+        with self._transaction() as conn:
+            cur = conn.execute(
+                "DELETE FROM ruftaste WHERE platz = ? OR substr(platz, 1, ?) = ?",
+                (pfad, *_unterhalb(pfad)),
+            )
+            return int(cur.rowcount or 0)
+
+    # ------------------------------------------------------------------ #
+    #  Shows
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _showname(name: str) -> str:
+        sauber = " ".join(str(name).split())
+        if not sauber:
+            raise ValueError("Eine Show braucht einen Namen.")
+        if len(sauber) > MAX_SHOWNAME:
+            raise ValueError(f"Der Name ist zu lang (hoechstens {MAX_SHOWNAME} Zeichen).")
+        return sauber
+
+    def show_speichern(
+        self,
+        name: str,
+        yaml_text: str,
+        *,
+        notiz: str = "",
+        author: str = "",
+        ueberschreiben: bool = False,
+    ) -> str:
+        """Legt eine Show an oder ersetzt ihren Inhalt. Gibt den Namen zurueck.
+
+        Ohne ``ueberschreiben`` ist ein vorhandener Name ein Fehler
+        (:class:`FileExistsError`) -- eine Show versehentlich durch eine
+        gleichnamige zu ersetzen, waere ein stiller Verlust.
+        """
+        sauber = self._showname(name)
+        if len(yaml_text.encode("utf-8")) > MAX_SHOWTEXT:
+            raise ValueError("Die Show ist zu gross.")
+        jetzt = int(time.time())
+        with self._transaction() as conn:
+            da = conn.execute(
+                "SELECT 1 FROM show WHERE name = ?", (sauber,)
+            ).fetchone()
+            if da and not ueberschreiben:
+                raise FileExistsError(sauber)
+            if da:
+                conn.execute(
+                    "UPDATE show SET yaml_text = ?, notiz = ?, author = ?, geaendert = ? "
+                    "WHERE name = ?",
+                    (yaml_text, _kappen(notiz, MAX_LANGFELD),
+                     _kappen(author, MAX_KURZFELD), jetzt, sauber),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO show (name, notiz, yaml_text, author, erstellt, geaendert) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (sauber, _kappen(notiz, MAX_LANGFELD), yaml_text,
+                     _kappen(author, MAX_KURZFELD), jetzt, jetzt),
+                )
+        return sauber
+
+    def shows(self) -> list[dict[str, Any]]:
+        """Alle Shows ohne ihren Text, zuletzt geaenderte zuerst."""
+        conn = self._connection()
+        rows = conn.execute(
+            "SELECT name, notiz, author, erstellt, geaendert, geladen, geladen_von, "
+            "length(yaml_text) AS groesse FROM show ORDER BY geaendert DESC, name"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def show(self, name: str) -> dict[str, Any] | None:
+        """Eine Show samt Text -- oder ``None``."""
+        conn = self._connection()
+        row = conn.execute(
+            "SELECT name, notiz, yaml_text, author, erstellt, geaendert, geladen, "
+            "geladen_von FROM show WHERE name = ?",
+            (" ".join(str(name).split()),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def show_geladen(self, name: str, von: str) -> None:
+        """Vermerkt, dass eine Show gerade geladen wurde."""
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE show SET geladen = ?, geladen_von = ? WHERE name = ?",
+                (int(time.time()), _kappen(von, MAX_KURZFELD), name),
+            )
+
+    def show_aendern(
+        self, name: str, *, neuer_name: str | None = None, notiz: str | None = None
+    ) -> str:
+        """Benennt eine Show um und/oder aendert ihre Notiz."""
+        with self._transaction() as conn:
+            if conn.execute("SELECT 1 FROM show WHERE name = ?", (name,)).fetchone() is None:
+                raise KeyError(name)
+            ziel = name
+            if neuer_name is not None:
+                ziel = self._showname(neuer_name)
+                if ziel != name and conn.execute(
+                    "SELECT 1 FROM show WHERE name = ?", (ziel,)
+                ).fetchone():
+                    raise FileExistsError(ziel)
+                conn.execute("UPDATE show SET name = ? WHERE name = ?", (ziel, name))
+            if notiz is not None:
+                conn.execute(
+                    "UPDATE show SET notiz = ?, geaendert = ? WHERE name = ?",
+                    (_kappen(notiz, MAX_LANGFELD), int(time.time()), ziel),
+                )
+            return ziel
+
+    def show_loeschen(self, name: str) -> bool:
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM show WHERE name = ?", (name,))
+            return bool(cur.rowcount)

@@ -28,6 +28,7 @@ from .api import router as api_router
 from .auth import COOKIE_NAME, SESSION_MAX_AGE, Account, client_ip, current_user, require_user
 from .context import AppContext
 from .pult import router as pult_router
+from .shows import router as shows_router
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(api_router)
     app.include_router(pult_router)
+    app.include_router(shows_router)
 
     # ------------------------------------------------------------------ #
     #  Gesundheit und Metriken -- bewusst ohne Anmeldung.
@@ -228,17 +230,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.get("/", response_class=HTMLResponse)(page("cockpit.html", "Cockpit"))
     app.get("/pult", response_class=HTMLResponse)(page("pult.html", "Pult"))
-    app.get("/kanaele", response_class=HTMLResponse)(page("kanaele.html", "Kanaele"))
-    app.get("/acl", response_class=HTMLResponse)(page("acl.html", "ACL-Editor"))
-    app.get("/nutzer", response_class=HTMLResponse)(page("nutzer.html", "Nutzer"))
+    app.get("/kanaele", response_class=HTMLResponse)(page("kanaele.html", "Plätze"))
+    app.get("/acl", response_class=HTMLResponse)(page("acl.html", "Rechte"))
+    app.get("/nutzer", response_class=HTMLResponse)(page("nutzer.html", "Personen"))
     app.get("/server", response_class=HTMLResponse)(page("server.html", "Server"))
     app.get("/anleitung", response_class=HTMLResponse)(
         page("anleitung.html", "Anleitung")
     )
     app.get("/einrichten", response_class=HTMLResponse)(
-        page("einrichten.html", "Einrichten")
+        page("einrichten.html", "Shows & Sicherung")
     )
-    app.get("/audit", response_class=HTMLResponse)(page("audit.html", "Audit-Log"))
+    app.get("/shows", response_class=HTMLResponse)(
+        page("einrichten.html", "Shows & Sicherung")
+    )
+    app.get("/audit", response_class=HTMLResponse)(page("audit.html", "Protokoll"))
 
     # ------------------------------------------------------------------ #
     #  Fehlerbehandlung

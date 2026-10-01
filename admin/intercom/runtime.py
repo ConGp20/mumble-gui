@@ -163,6 +163,12 @@ class Enforcer:
         #: Zeitmessung": sie gilt fuer jeden, der dort sitzt, und nicht fuer
         #: eine bestimmte Person.
         self._platz_hoert: dict[int, list[int]] = {}
+        #: Kanal-ID -> {Taste: Rolle}: wohin die Ruftasten an diesem Platz rufen.
+        self._ruf_je_kanal: dict[int, dict[int, str]] = {}
+        #: Sitzung -> {Taste: Rolle}, was zuletzt per redirectWhisperGroup
+        #: gesetzt wurde. Die Slice hat keinen Getter -- ohne dieses Gedaechtnis
+        #: muesste jeder Abgleich alle Tasten neu schreiben.
+        self._ruf_gesetzt: dict[int, dict[int, str]] = {}
         #: Sitzungen, die wir schon einmal auf ihren Platz gesetzt haben. Ohne
         #: das zoege der Abgleich jemanden zurueck, der bewusst weggeht.
         self._platz_erledigt: set[int] = set()
@@ -274,10 +280,25 @@ class Enforcer:
                     self._platz_hoert[quelle] = aufgeloest
             self.armed = True
 
+    def lade_ruftasten(
+        self,
+        belegung: Mapping[str, Mapping[int, str]],
+        channels: dict[int, MumbleChannel],
+    ) -> None:
+        """Uebernimmt die Belegung der Ruftasten, mit Vererbung aufgeloest."""
+        from .ruftasten import je_kanal
+
+        aufgeloest = je_kanal(channels, belegung)
+        with self._lock:
+            self._ruf_je_kanal = aufgeloest
+            self.armed = True
+
     def vergiss_sitzung(self, session: int) -> None:
         """Raeumt die Merkliste auf, wenn jemand die Verbindung verliert."""
         with self._lock:
             self._platz_erledigt.discard(session)
+            # Die Umleitung stirbt mit der Sitzung (sie haengt am ServerUser).
+            self._ruf_gesetzt.pop(session, None)
 
     def refresh_membership(self) -> None:
         """Liest die Gruppen am Wurzelkanal neu ein."""
@@ -301,6 +322,7 @@ class Enforcer:
         found.extend(self._person_vorrang(user))
         found.extend(self._enforce_listeners(user))
         found.extend(self._person_mithoeren(user))
+        self._ruftasten_setzen(user)
         return found
 
     def enforce_all(self, users: Iterable[MumbleUser]) -> list[Deviation]:
@@ -512,6 +534,49 @@ class Enforcer:
                 corrected=corrected,
             )
         ]
+
+    def _ruftasten_setzen(self, user: MumbleUser) -> None:
+        """Leitet die festen Rufgruppen dieser Sitzung auf die Rollen des Platzes.
+
+        Kein Eintrag in der Abweichungsliste: das ist kein Fehlzustand, den man
+        im Cockpit sehen muesste, sondern der Normalbetrieb -- bei jedem
+        Verbinden und jedem Platzwechsel. Geschrieben wird nur, was sich gegen
+        den zuletzt gesetzten Stand geaendert hat; so kann das UserState-Echo
+        unserer eigenen Aenderung keine Schleife ausloesen.
+        """
+        from .store.db import RUFTASTEN, ruf_gruppe
+
+        with self._lock:
+            soll = dict(self._ruf_je_kanal.get(user.channel, {}))
+            ist = dict(self._ruf_gesetzt.get(user.session, {}))
+        if not soll and not ist:
+            return
+
+        neu = dict(ist)
+        for taste in RUFTASTEN:
+            gewuenscht = soll.get(taste, "")
+            if ist.get(taste, "") == gewuenscht:
+                continue
+            try:
+                self._client.redirect_whisper_group(
+                    user.session, ruf_gruppe(taste), gewuenscht
+                )
+            except IceError as exc:
+                log.warning(
+                    "Ruftaste %s fuer %s nicht gesetzt: %s", taste, user.name, exc
+                )
+                continue
+            if gewuenscht:
+                neu[taste] = gewuenscht
+            else:
+                neu.pop(taste, None)
+        with self._lock:
+            self._ruf_gesetzt[user.session] = neu
+
+    def ruftasten_der_sitzung(self, session: int) -> dict[int, str]:
+        """Was diese Sitzung laut unserem letzten Schreiben gerade ruft."""
+        with self._lock:
+            return dict(self._ruf_gesetzt.get(session, {}))
 
     # ------------------------------------------------------------------ #
 

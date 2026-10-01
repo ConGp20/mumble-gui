@@ -4,9 +4,9 @@
 {{ seitenkopf(
   "server",
   "Server",
-  "Serverkonfiguration, Baenne und das Protokoll des Mumble-Servers.",
+  "Serverkonfiguration, Sperren und das Protokoll des Mumble-Servers.",
   "Selten. Im Normalbetrieb muss hier nichts angefasst werden.",
-  achtung="Die Konfigurationsansicht zeigt, <strong>woher</strong> ein Wert kommt: aus der Compose-Datei oder aus der Serverdatenbank. Was du hier aenderst, landet in der Datenbank und ueberstimmt die Datei – die naechste Aenderung an der Compose bliebe dann wirkungslos.",
+  achtung="Die Konfigurationsansicht zeigt, <strong>woher</strong> ein Wert kommt: aus der Compose-Datei oder aus der Serverdatenbank. Was du hier änderst, landet in der Datenbank und überstimmt die Datei – die nächste Änderung an der Compose bliebe dann wirkungslos.",
 ) }}
 
 <div x-data="serverSeite()" x-init="start()">
@@ -17,7 +17,7 @@
     </header>
     <div class="inhalt" style="padding-bottom:0">
       <div class="werkzeugleiste">
-        <input type="search" x-model="confFilter" placeholder="Schluessel filtern" style="min-width:240px">
+        <input type="search" x-model="confFilter" placeholder="Schlüssel filtern" style="min-width:240px">
         <label><input type="checkbox" x-model="nurAbweichend"> nur abweichende</label>
         <span class="fueller"></span>
         <button class="knopf" @click="ladeConf()">Neu laden</button>
@@ -26,7 +26,7 @@
     <div class="tabellenrahmen">
       <table class="dicht">
         <thead>
-          <tr><th>Schluessel</th><th>Wirksam</th><th>Herkunft</th><th>Faellt zurueck auf</th><th>Compose</th><th></th><th></th></tr>
+          <tr><th>Schlüssel</th><th>Wirksam</th><th>Herkunft</th><th>Fällt zurück auf</th><th>Compose</th><th></th><th></th></tr>
         </thead>
         <tbody>
           <template x-for="z in gefilterteConf" :key="z.key">
@@ -52,7 +52,7 @@
               </td>
               <td>
                 {% if account.can_write %}
-                <button class="knopf klein" @click="setze(z)">Aendern</button>
+                <button class="knopf klein" @click="setze(z)">Ändern</button>
                 {% endif %}
               </td>
             </tr>
@@ -61,22 +61,22 @@
       </table>
     </div>
     <div class="inhalt hinweis">
-      Als „Neustart“ markierte Schluessel liest murmur nur beim Start; ein
+      Als „Neustart“ markierte Schlüssel liest murmur nur beim Start; ein
       <code>setConf</code> darauf wird gespeichert, wirkt aber erst nach
       <code>docker compose restart mumble-server</code>. Weicht der Live-Wert
-      von dem ab, was die Compose setzt, hat jemand ihn zur Laufzeit geaendert.
+      von dem ab, was die Compose setzt, hat jemand ihn zur Laufzeit geändert.
     </div>
   </div>
 
   <div class="karte">
     <header>
       Serverlog
-      <span class="rechts leise" x-text="gesamt + ' Eintraege'"></span>
+      <span class="rechts leise" x-text="gesamt + ' Einträge'"></span>
     </header>
     <div class="inhalt" style="padding-bottom:0">
       <div class="werkzeugleiste">
         <input type="search" x-model="muster" @keydown.enter="ladeLog()"
-               placeholder="Regulaerer Ausdruck (Enter)" style="min-width:280px">
+               placeholder="Regulärer Ausdruck (Enter)" style="min-width:280px">
         <label><input type="checkbox" x-model="live" @change="live ? starteTail() : stoppeTail()">
           Live-Tail</label>
         <span class="fueller"></span>
@@ -96,7 +96,7 @@
           </div>
         </template>
         <template x-if="logZeilen.length === 0">
-          <div class="still">Keine Eintraege.</div>
+          <div class="still">Keine Einträge.</div>
         </template>
       </div>
     </div>
@@ -201,7 +201,7 @@ function serverSeite() {
     },
 
     setze(z) {
-      const wert = prompt("Neuer Wert fuer " + z.key + ":", z.value);
+      const wert = prompt("Neuer Wert für " + z.key + ":", z.value);
       if (wert === null) return;
       this.I.put("/api/conf", {key: z.key, value: wert})
         .then(d => {

@@ -126,15 +126,38 @@ class Plan:
         return [c for c in self.changes if c.error]
 
     def summary(self) -> str:
-        if self.empty:
-            return "Keine Aenderungen -- der Server entspricht der Konfiguration."
-        created = sum(1 for c in self.pending if c.kind == "channel_create")
-        deleted = sum(1 for c in self.pending if c.kind == "channel_delete")
-        changed = len(self.pending) - created - deleted
+        """Eine Zeile fuer Oberflaeche und CLI.
+
+        Nach dem Anwenden in der Vergangenheit -- "13 anzulegen" ueber einem
+        Ergebnis, das schon angelegt ist, las sich wie ein Plan, der noch
+        aussteht. Was nur mit Aufraeumen passiert, heisst auch so: so steht der
+        Haken in der Oberflaeche, und ``PROVISION_PRUNE`` ist nur der Name
+        derselben Sache in der Umgebung.
+        """
         skipped = sum(1 for c in self.changes if c.needs_prune and not self.prune)
-        parts = [f"{created} anzulegen", f"{changed} zu aendern", f"{deleted} zu loeschen"]
+        if self.empty:
+            if skipped:
+                # "steht schon so" waere hier falsch: es gibt etwas, das nur
+                # die Datei nicht hat -- und ohne Aufraeumen bleibt es.
+                return (
+                    f"Nichts zu ergänzen oder zu ändern – {skipped} nur mit "
+                    "Aufräumen (PROVISION_PRUNE)"
+                )
+            return "Keine Änderungen – der Server steht schon so."
+        # Nach dem Anwenden zaehlt, was wirklich passiert ist -- ein
+        # gescheiterter Schritt ist nicht "angelegt".
+        zaehlen = self.pending if self.dry_run else [c for c in self.pending if c.applied]
+        created = sum(1 for c in zaehlen if c.kind == "channel_create")
+        deleted = sum(1 for c in zaehlen if c.kind == "channel_delete")
+        changed = len(zaehlen) - created - deleted
+        if self.dry_run:
+            parts = [f"{created} anzulegen", f"{changed} zu ändern", f"{deleted} zu löschen"]
+        else:
+            parts = [f"{created} angelegt", f"{changed} geändert", f"{deleted} gelöscht"]
+            if self.failed:
+                parts.append(f"{len(self.failed)} fehlgeschlagen")
         if skipped:
-            parts.append(f"{skipped} nur mit PROVISION_PRUNE")
+            parts.append(f"{skipped} nur mit Aufräumen (PROVISION_PRUNE)")
         return ", ".join(parts)
 
     def to_text(self, colour: bool = False) -> str:
@@ -207,7 +230,7 @@ def _acl_line(entry: ACLEntry) -> str:
     if entry.apply_here:
         scope.append("hier")
     if entry.apply_subs:
-        scope.append("Unterkanaele")
+        scope.append("darunter")
     who = f"@{entry.group}" if entry.is_group else f"Nutzer {entry.userid}"
     return (
         f"{who} [{'+'.join(scope) or 'nirgends'}] "
@@ -401,8 +424,8 @@ class Reconciler:
                         kind="note",
                         target=want.path,
                         summary=(
-                            f"Der Platz darueber ({want.parent_path!r}) "
-                            "fehlt -- uebersprungen."
+                            f"Der Platz darüber ({want.parent_path!r}) "
+                            "fehlt – übersprungen."
                         ),
                     )
                 )
@@ -488,7 +511,7 @@ class Reconciler:
         change = Change(
             kind="channel_update",
             target=want.path,
-            summary="Platz aendern",
+            summary="Platz ändern",
             before=[f"{label}: {old!r}" for label, old, _ in differences],
             after=[f"{label}: {new!r}" for label, _, new in differences],
         )
@@ -550,7 +573,7 @@ class Reconciler:
             change = Change(
                 kind="channel_link",
                 target=want.path,
-                summary="Verlinkungen aendern",
+                summary="Verlinkungen ändern",
                 before=[f"verlinkt mit IDs {sorted(current.links)}"],
                 after=[f"verlinkt mit {want.links}"],
             )
@@ -581,7 +604,7 @@ class Reconciler:
             change = Change(
                 kind="channel_delete",
                 target=path,
-                summary="Platz loeschen (steht nicht in der Vorlage bzw. Sicherung)",
+                summary="Platz löschen (steht nicht in der Show bzw. Datei)",
                 before=[f"Kanal-ID {channel_id}"],
                 destructive=True,
                 needs_prune=True,
@@ -605,7 +628,7 @@ class Reconciler:
                 Change(
                     kind="acl_update",
                     target=UEBERALL,
-                    summary="ACL nicht lesbar",
+                    summary="Regeln nicht lesbar",
                     error=str(exc),
                 )
             )
@@ -626,7 +649,7 @@ class Reconciler:
                 geloescht = Change(
                     kind="group_update",
                     target=f"{UEBERALL} @{group.name}",
-                    summary="Rolle loeschen (steht nicht in der Vorlage bzw. Sicherung)",
+                    summary="Rolle löschen (steht nicht in der Show bzw. Datei)",
                     before=[_group_line(group)],
                     destructive=True,
                     needs_prune=True,
@@ -652,7 +675,7 @@ class Reconciler:
             geloescht = Change(
                 kind="acl_update",
                 target=f"{UEBERALL} {_acl_line(entry)}",
-                summary="ACL-Eintrag loeschen (steht nicht in der YAML)",
+                summary="Regel löschen (steht nicht in der Show bzw. Datei)",
                 before=[_acl_line(entry)],
                 destructive=True,
                 needs_prune=True,
@@ -704,7 +727,7 @@ class Reconciler:
                         Change(
                             kind="acl_update",
                             target=want.path,
-                            summary="ACLs setzen",
+                            summary="Regeln setzen",
                             after=[_acl_line(a) for a in want.acls],
                         )
                     )
@@ -716,7 +739,7 @@ class Reconciler:
                     Change(
                         kind="acl_update",
                         target=want.path,
-                        summary="ACL nicht lesbar",
+                        summary="Regeln nicht lesbar",
                         error=str(exc),
                     )
                 )
@@ -734,7 +757,7 @@ class Reconciler:
                 geloescht = Change(
                     kind="group_update",
                     target=f"{want.path} @{group.name}",
-                    summary="Rolle loeschen (steht nicht in der Vorlage bzw. Sicherung)",
+                    summary="Rolle löschen (steht nicht in der Show bzw. Datei)",
                     before=[_group_line(group)],
                     destructive=True,
                     needs_prune=True,
@@ -754,7 +777,7 @@ class Reconciler:
             change = Change(
                 kind="acl_update",
                 target=want.path,
-                summary="Regeln aendern" if acl_diff else "Rollen aendern",
+                summary="Regeln ändern" if acl_diff else "Rollen ändern",
                 before=[line for line, _ in acl_diff if line]
                 + [line for line, _ in group_diff if line],
                 after=[line for _, line in acl_diff if line]
@@ -840,8 +863,8 @@ class Reconciler:
                         kind="note",
                         target="server.defaultchannel",
                         summary=(
-                            f"Kanal {desired.default_channel_path!r} gibt es noch "
-                            "nicht -- defaultchannel wird beim naechsten Lauf gesetzt."
+                            f"Platz {desired.default_channel_path!r} gibt es noch "
+                            "nicht – der Startplatz wird beim nächsten Lauf gesetzt."
                         ),
                     )
                 )
