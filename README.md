@@ -169,8 +169,17 @@ bleibt:
 
 > **Von einem Stand vor Oktober 2026:** Die `intercom.yaml` im
 > Projektverzeichnis wird nicht mehr gelesen (DECISIONS.md, D-034). Hast du sie
-> nie veraendert, entfernt `git pull` sie von selbst. Sonst meldet `setup.sh`
-> sie und nennt die zwei Moeglichkeiten.
+> nie veraendert, entfernt `git pull` sie von selbst. Hast du sie veraendert,
+> bricht `git pull` mit „local changes would be overwritten“ ab — dann vorher
+> beiseitelegen und danach entscheiden, ob sie gebraucht wird:
+>
+> ```bash
+> mkdir -p config && mv intercom.yaml config/intercom.yaml   # bleibt Vorgabe fuer die Kommandozeile
+> git pull && ./setup.sh
+> ```
+>
+> Als Show einspielen geht stattdessen in der Oberflaeche (*Shows → Datei
+> waehlen …*); dann `config/intercom.yaml` wieder loeschen.
 
 ### Das Image wird normalerweise nicht gebaut, sondern geladen
 
