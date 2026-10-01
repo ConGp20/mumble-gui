@@ -1165,9 +1165,9 @@ murmur, Beobachter mit Zertifikat am obersten Platz, Ziel auf einem anderen):
 | `$<hash>` erlaubt Register | ja |
 | Regel entfernt, `sicherstellen()` der Anwendung | ja |
 
-**Entscheidung.** Die Anwendung setzt beim Verbinden, nach jedem Laden einer
-Show, nach jedem Speichern in der Fachsicht am obersten Platz und alle zehn
-Minuten eine Regel fuer die Gruppe `$<Zertifikats-Hash des Bots>`: erlaubt
+**Entscheidung.** Die Anwendung setzt beim Start, bei jedem (Wieder-)Verbinden
+mit murmur, nach jedem Laden einer Show, nach jedem Speichern in der Fachsicht
+am obersten Platz und alle zehn Minuten eine Regel fuer die Gruppe `$<Zertifikats-Hash des Bots>`: erlaubt
 `Register`, nur am obersten Platz selbst (`intercom/monitor/berechtigung.py`).
 
 * `$hash` vergleicht murmur mit dem Zertifikat der Sitzung
