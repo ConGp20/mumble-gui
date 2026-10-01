@@ -1221,7 +1221,7 @@ async def netze_lesen(
     # ob eine Maske ueberhaupt etwas trifft -- eine Zeile, die nie greift, ist
     # schlimmer als keine.
     zaehler: dict[str, int] = {}
-    for user in context.live.users.values():
+    for user in context.live.teilnehmer().values():
         name = context.live.networks.segment_for(user.address)
         zaehler[name] = zaehler.get(name, 0) + 1
     return {
@@ -1543,8 +1543,9 @@ def metrics_text(context: Any) -> str:
     metric("intercom_admin_uptime_seconds", "gauge", "Laufzeit des Admin-Prozesses.")
     lines.append(f"intercom_admin_uptime_seconds {int(time.time() - context.started_at)}")
 
-    metric("intercom_clients", "gauge", "Anzahl verbundener Clients.")
-    lines.append(f"intercom_clients {len(live.users)}")
+    # Ohne den eigenen Monitor-Bot -- er ist Messtechnik, kein Teilnehmer.
+    metric("intercom_clients", "gauge", "Anzahl verbundener Clients (ohne Monitor-Bot).")
+    lines.append(f"intercom_clients {len(live.teilnehmer())}")
 
     metric("intercom_channels", "gauge", "Anzahl Kanaele.")
     lines.append(f"intercom_channels {len(live.channels)}")
@@ -1560,7 +1561,7 @@ def metrics_text(context: Any) -> str:
     metric("intercom_client_online_seconds", "gauge", "Verbindungsdauer je Client.")
     metric("intercom_client_tcp_only", "gauge", "1 wenn der Client nur ueber TCP laeuft.")
 
-    for session, user in sorted(live.users.items(), key=lambda item: item[1].name):
+    for session, user in sorted(live.teilnehmer().items(), key=lambda item: item[1].name):
         labels = (
             f'client="{_escape(user.name)}",'
             f'channel="{_escape(live.channel_name(user.channel))}",'
@@ -1578,7 +1579,7 @@ def metrics_text(context: Any) -> str:
 
     metric("intercom_channel_users", "gauge", "Nutzer je Kanal.")
     counts: dict[int, int] = {}
-    for user in live.users.values():
+    for user in live.teilnehmer().values():
         counts[user.channel] = counts.get(user.channel, 0) + 1
     for channel_id, _channel in sorted(live.channels.items()):
         labels = f'channel="{_escape(live.channel_name(channel_id))}"'

@@ -138,3 +138,42 @@ def test_export_traegt_den_hash_nicht_in_die_datei(ice_client):
     ohne = export_yaml(ice_client, ohne_gruppen=frozenset({gruppe(FP)}))
     assert gruppe(FP) in mit, "Gegenprobe: ungeschuetzt landet er als Richtlinie in der Datei"
     assert gruppe(FP) not in ohne
+
+
+@needs_ice
+def test_beim_start_ist_der_bot_sofort_berechtigt(fake_murmur, tmp_path):
+    """Die Ice-Verbindung steht, bevor der Bot seinen Fingerabdruck hat. Ohne
+    eigenen Aufruf nach dem Start fehlte die Regel bis zum naechsten Abgleich --
+    auf einer frisch eingerichteten Installation zehn Minuten ohne Verlust."""
+    import socket
+
+    from fastapi.testclient import TestClient
+
+    from intercom.monitor.bot import certificate_fingerprint
+    from intercom.web.app import create_app
+
+    with socket.socket() as frei:  # ein Port, auf dem sicher kein murmur lauscht
+        frei.bind(("127.0.0.1", 0))
+        port = frei.getsockname()[1]
+    settings = fake_murmur.settings(
+        data_dir=tmp_path,
+        intercom_config=tmp_path / "gibt-es-nicht.yaml",
+        monitor_enabled=True,
+        monitor_cert=tmp_path / "monitor-cert.pem",
+        monitor_channel="",
+        mumble_port=port,
+        admin_password="geheim",
+    )
+    with TestClient(create_app(settings)) as client:
+        health = client.get("/healthz").json()
+        fp = certificate_fingerprint(tmp_path / "monitor-cert.pem")
+        assert health["monitor"]["alle_plaetze"] is True, health["monitor"]
+
+    from intercom.ice.client import IceClient
+
+    pruefer = IceClient(settings)
+    pruefer.connect()
+    try:
+        assert any(ist_regel(e, fp) for e in pruefer.get_acl(0).own_acls())
+    finally:
+        pruefer.close()

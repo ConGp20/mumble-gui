@@ -1184,6 +1184,14 @@ Minuten eine Regel fuer die Gruppe `$<Zertifikats-Hash des Bots>`: erlaubt
   "Monitor-Bot", und die Kachel "Messung" im Cockpit zeigt "eingeschraenkt",
   wenn die Regel nicht gesetzt werden konnte.
 
+**Der Bot ist Messtechnik, kein Teilnehmer.** Bei der Abnahme an einer frischen
+Installation meldete das Cockpit "1 verbunden" -- den Bot, mit den Abzeichen
+"unterdrueckt", "selbst stumm", "selbst taub". Er zaehlt jetzt weder bei den
+Verbundenen noch im Ping-Median, bei belegten Plaetzen, in der Netzsicht, in
+`/metrics` oder in Alarmen; sichtbar bleibt er, als "Monitor-Bot"
+gekennzeichnet. Erkannt wird er an seiner Sitzungsnummer, die er selbst meldet
+-- nicht am Namen, den auch ein Mensch tragen koennte.
+
 **Was das Recht sonst erlaubt.** `Register` heisst: Personen registrieren. Der
 Bot sendet nie etwas ausser `UserStats`-Abfragen, und das ist strukturell
 sichergestellt (kein Audio-Ausgang, `send_message` weist Audio ab). Die

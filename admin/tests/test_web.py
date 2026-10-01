@@ -2085,3 +2085,51 @@ def test_erklaerkoepfe_merken_sich_den_zustand_je_seite(app_client):
         text = client.get(pfad).text
         assert f"kopf:{schluessel}'" in text, f"{pfad}: Schluessel {schluessel!r} fehlt"
         assert "kopf:'" not in text, f"{pfad}: leerer Schluessel"
+
+
+def test_cockpit_liest_nur_felder_die_es_gibt(fake_murmur):
+    """Die Kacheln "Ping" und "belegt" lasen ``ping_ms`` und ``channel_id`` --
+    die Clientzeile heisst aber ``ping`` und ``channel``. Folge: Ping stand
+    immer auf "—", und "belegt" zaehlte nur, ob ueberhaupt jemand da war.
+    Ein Tippfehler in JavaScript faellt sonst niemandem auf."""
+    import re
+    from pathlib import Path
+
+    from intercom.ice.types import MumbleUser
+    from intercom.web.state import LiveState
+
+    live = LiveState(fake_murmur.settings(monitor_enabled=False))
+    live.set_users({1: MumbleUser(session=1, userid=1, name="kam-1", channel=0)})
+    zeile = set(live.user_rows()[0])
+
+    skript = (Path(__file__).resolve().parent.parent / "templates" / "cockpit.html").read_text()
+    skript = skript[skript.index("<script"):]
+    benutzt = set(re.findall(r"\b(?:z|u|zeile|detail\.user)\.([a-z_]+)\b", skript))
+    assert benutzt - zeile == set(), "Das Cockpit liest Felder, die keine Clientzeile hat"
+
+
+def test_monitor_bot_zaehlt_nicht_als_teilnehmer(fake_murmur):
+    """Ein leerer Server meldete "1 verbunden" -- den eigenen Messbot, mit dem
+    Abzeichen "unterdrueckt". Er bleibt sichtbar, zaehlt aber nirgends mit."""
+    from intercom.ice.types import MumbleChannel, MumbleUser
+    from intercom.web.state import LiveState
+
+    live = LiveState(fake_murmur.settings(monitor_enabled=True, alert_ping_ms=10.0))
+    live.set_channels({0: MumbleChannel(id=0, name="", parent=-1)})
+    live.set_users({
+        5: MumbleUser(session=5, userid=-1, name="monitor", channel=0,
+                      suppress=True, self_mute=True, self_deaf=True, udp_ping=500.0),
+        6: MumbleUser(session=6, userid=3, name="kam-1", channel=0),
+    })
+    live.bot_session = 5
+
+    schnappschuss = live.snapshot()
+    assert schnappschuss["counts"]["users"] == 1
+    assert schnappschuss["counts"]["registered"] == 1
+    zeilen = {z["name"]: z for z in schnappschuss["users"]}
+    assert zeilen["monitor"]["ist_bot"] is True and zeilen["monitor"]["alert"] is None
+    assert zeilen["kam-1"]["ist_bot"] is False
+    assert not [a for a in schnappschuss["alarms"] if a["subject"] == "monitor"], \
+        "der Bot darf keinen Ping-Alarm ausloesen"
+    assert sum(s["clients"] for s in schnappschuss["segments"]) == 1
+    assert schnappschuss["channels"][0]["total_users"] == 1

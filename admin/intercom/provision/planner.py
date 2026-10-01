@@ -460,20 +460,12 @@ class Reconciler:
                     # Beschreibung und Position sind bei addChannel nicht dabei.
                     self._apply_channel_details(want, channel_id, is_new=True)
                 else:
+                    # Beschreibung und Position stehen schon in den Zeilen von
+                    # "Platz anlegen" -- als eigene Aenderung gezaehlt, nannte
+                    # der Testlauf 13 Aenderungen mehr, als das Anwenden danach
+                    # meldete (dort sind sie Teil des Anlegens).
                     self._path_to_id[want.path] = self._next_virtual_id
                     self._next_virtual_id -= 1
-                    if self.dry_run:
-                        self._record(
-                            Change(
-                                kind="channel_update",
-                                target=want.path,
-                                summary="Beschreibung und Position setzen",
-                                after=[
-                                    f"Beschreibung: {want.description or '(keine)'}",
-                                    f"Position: {want.position}",
-                                ],
-                            )
-                        )
                 continue
 
             current = live.get(existing_id)

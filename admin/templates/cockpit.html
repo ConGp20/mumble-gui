@@ -409,9 +409,14 @@ function cockpit() {
        null heisst "nicht gemessen" und wird auch so angezeigt. Ohne
        Monitor-Bot gibt es ueberhaupt keinen Verlustwert; als 0 dargestellt
        waere das eine Entwarnung, die niemand gegeben hat. */
+    /* Der eigene Monitor-Bot ist Messtechnik, kein Teilnehmer. */
+    get teilnehmer() {
+      return this.users.filter((z) => !z.ist_bot);
+    },
+
     get pingWerte() {
-      return this.users
-        .map((z) => z.ping_ms)
+      return this.teilnehmer
+        .map((z) => z.ping)
         .filter((w) => typeof w === "number" && w > 0)
         .sort((a, b) => a - b);
     },
@@ -429,7 +434,7 @@ function cockpit() {
     },
 
     get verlustMax() {
-      const w = this.users
+      const w = this.teilnehmer
         .map((z) => z.loss_pct)
         .filter((v) => typeof v === "number");
       return w.length ? Math.max.apply(null, w) : null;
@@ -437,7 +442,7 @@ function cockpit() {
 
     get belegtePlaetze() {
       const besetzt = new Set();
-      this.users.forEach((z) => besetzt.add(z.channel_id));
+      this.teilnehmer.forEach((z) => besetzt.add(z.channel));
       return besetzt.size;
     },
 
@@ -554,10 +559,14 @@ function cockpit() {
             ? '<span class="abzeichen ok">ja</span>'
             : '<span class="abzeichen">nein</span>';
         case "zustand": {
+          /* Der eigene Messbot ist absichtlich stumm, taub und ohne
+             Sprechrecht -- als Zustand eines Teilnehmers gelesen, saehe das
+             nach einem Problem aus. */
+          if (z.ist_bot) return '<span class="abzeichen ok" title="Misst Paketverlust, sendet nie">Monitor-Bot</span>';
           let html = "";
           if (z.mute) html += '<span class="abzeichen stumm">stumm</span>';
           if (z.deaf) html += '<span class="abzeichen taub">taub</span>';
-          if (z.suppress) html += '<span class="abzeichen stumm">unterdrueckt</span>';
+          if (z.suppress) html += '<span class="abzeichen stumm">unterdrückt</span>';
           if (z.self_mute) html += '<span class="abzeichen">selbst stumm</span>';
           if (z.self_deaf) html += '<span class="abzeichen">selbst taub</span>';
           if (z.priority_speaker) html += '<span class="abzeichen priority">priority</span>';
@@ -585,6 +594,7 @@ function cockpit() {
         html += '<div class="baum-zeile baum-nutzer">';
         html += '<span class="status status-' + e(u.alert) + '"></span>';
         html += '<span class="name">' + e(u.name) + "</span>";
+        if (u.ist_bot) { html += ' <span class="abzeichen ok">Monitor-Bot</span></div>'; return; }
         if (u.bytes_per_sec > 0) { html += ' <span class="spricht">▮</span>'; }
         if (u.mute) html += ' <span class="abzeichen stumm">stumm</span>';
         if (u.deaf) html += ' <span class="abzeichen taub">taub</span>';

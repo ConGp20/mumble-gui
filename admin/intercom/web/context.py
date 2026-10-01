@@ -123,6 +123,10 @@ class AppContext:
         ]
         if self.settings.monitor_enabled:
             self._start_monitor()
+            # Die Verbindung oben stand schon, bevor der Fingerabdruck des Bots
+            # bekannt war -- ohne diesen Aufruf fehlte die Berechtigung bis zum
+            # naechsten Abgleich, und das Cockpit zeigte so lange keinen Verlust.
+            await self.monitor_berechtigen()
 
     async def shutdown(self) -> None:
         for task in [*self._tasks, *self._nebenaufgaben]:
@@ -536,6 +540,7 @@ class AppContext:
                 self.live.set_channels(await self.ice.get_channels())
                 self._server_uptime = await self.ice.get_uptime()
             self.live.set_users(await self.ice.get_users())
+            self.live.bot_session = getattr(self.monitor, "own_session", None)
         except IceError as exc:
             self.connected = False
             self.connection_error = str(exc)

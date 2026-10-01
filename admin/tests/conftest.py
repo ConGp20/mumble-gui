@@ -1,9 +1,9 @@
 """Gemeinsame Test-Vorbereitung.
 
-Die von ``slice2py`` erzeugten Module liegen nicht im Repository -- sie haengen
-an ``MUMBLE_VERSION`` und werden beim Image-Bau erzeugt. Fuer Tests uebersetzen
-wir sie bei Bedarf einmalig nach ``admin/slice/`` und haengen das Verzeichnis in
-den Suchpfad.
+Die Slice v1.5.735 und ihre Uebersetzung liegen unter ``admin/slice/`` im
+Repository; das Image erzeugt seine eigene aus dem Tag in ``MUMBLE_VERSION``.
+Hier wird das Verzeichnis in den Suchpfad gehaengt -- und fehlt die
+Uebersetzung (etwa nach einem Versionswechsel), einmalig neu erzeugt.
 """
 
 from __future__ import annotations

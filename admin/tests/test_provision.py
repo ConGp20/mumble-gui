@@ -1043,3 +1043,22 @@ def test_vorlagen_beschreiben_genau_was_sie_anlegen(ice_client):
         assert len(neu) == zahlen[-1], (
             f"{vorlage.schluessel}: angekuendigt {zahlen[-1]}, angelegt {len(neu)}"
         )
+
+
+def test_testlauf_und_anwenden_nennen_dieselben_zahlen(ice_client):
+    """Ein Testlauf, der "25 zu aendern" sagt, und ein Ergebnis mit "12
+    geaendert" -- da fragt man sich zu Recht, was mit den anderen 13 ist."""
+    from collections import Counter
+
+    from intercom.provision.planner import reconcile
+    from intercom.provision.vorlagen import vorlage_laden
+
+    config = vorlage_laden("leichtathletik")
+    trocken = reconcile(ice_client, config, dry_run=True)
+    echt = reconcile(ice_client, config, dry_run=False)
+    assert not echt.failed
+    assert Counter(c.kind for c in trocken.pending) == Counter(
+        c.kind for c in echt.pending if c.applied
+    )
+    zahlen = [t for t in trocken.summary().split() if t.isdigit()]
+    assert zahlen == [t for t in echt.summary().split() if t.isdigit()]

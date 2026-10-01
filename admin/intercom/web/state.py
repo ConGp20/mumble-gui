@@ -243,6 +243,13 @@ class LiveState:
         #: Soll-Kanal je Nutzername, aus intercom.yaml.
         self.expected_channels: dict[str, str] = {}
 
+        #: Sitzung des eigenen Monitor-Bots. Er ist Messtechnik, kein
+        #: Teilnehmer: er zaehlt nicht bei "verbunden", nicht im Ping-Median,
+        #: nicht bei belegten Plaetzen und loest keine Alarme aus -- sonst
+        #: meldete ein leerer Server "1 verbunden" und einen unterdrueckten
+        #: Client. Sichtbar bleibt er, als "Monitor-Bot" gekennzeichnet.
+        self.bot_session: int | None = None
+
         self._vox: dict[int, _VoxSuspicion] = {}
         self._alarms: list[Alarm] = []
         self.last_update: float = 0.0
@@ -347,6 +354,10 @@ class LiveState:
             return UEBERALL
         return self.path_of.get(channel_id) or UEBERALL
 
+    def teilnehmer(self) -> dict[int, MumbleUser]:
+        """Alle Verbundenen ausser dem eigenen Monitor-Bot."""
+        return {s: u for s, u in self.users.items() if s != self.bot_session}
+
     def user_rows(self, deviations: list[Any] | None = None) -> list[dict[str, Any]]:
         """Eine Zeile je verbundenem Client -- die Datengrundlage der Tabelle."""
         deviation_map: dict[int, list[str]] = {}
@@ -374,7 +385,10 @@ class LiveState:
             row["channel_ok"] = expected is None or expected == row["channel_path"]
             row["vox_suspect"] = session in vox
             row["deviations"] = deviation_map.get(session, [])
-            row["alert"] = self._user_alert_level(user, self.loss_pct(session))
+            row["ist_bot"] = session == self.bot_session
+            row["alert"] = (
+                None if row["ist_bot"] else self._user_alert_level(user, self.loss_pct(session))
+            )
             rows.append(row)
         rows.sort(key=lambda r: str(r["name"]).lower())
         return rows
@@ -396,7 +410,7 @@ class LiveState:
     def segment_rows(self) -> list[dict[str, Any]]:
         """Netzsicht: je Segment Median-Ping, groesster Ping und Verlust."""
         buckets: dict[str, list[tuple[float, float | None]]] = {}
-        for session, user in self.users.items():
+        for session, user in self.teilnehmer().items():
             segment = self.networks.segment_for(user.address)
             buckets.setdefault(segment, []).append(
                 (user.ping, self.loss_pct(session))
@@ -456,6 +470,8 @@ class LiveState:
                 users_by_channel.get(channel_id, []), key=lambda u: str(u["name"]).lower()
             )
             node["speaking"] = sum(1 for u in node["users"] if u.get("bytes_per_sec", 0) > 0)
+            # Der Bot steht im Baum, zaehlt aber nicht als Teilnehmer.
+            menschen = [u for u in node["users"] if not u.get("ist_bot")]
             node["link_names"] = [self.channel_name(link) for link in channel.links]
             node["children"] = [
                 build(child, depth + 1)
@@ -464,7 +480,7 @@ class LiveState:
                     key=lambda c: (self.channels[c].position, self.channels[c].name),
                 )
             ]
-            node["total_users"] = len(node["users"]) + sum(
+            node["total_users"] = len(menschen) + sum(
                 child["total_users"] for child in node["children"]
             )
             return node
@@ -477,7 +493,7 @@ class LiveState:
         settings = self.settings
         vox = self.vox_suspects()
 
-        for session, user in self.users.items():
+        for session, user in self.teilnehmer().items():
             ping = user.ping
             loss = self.loss_pct(session)
 
@@ -575,14 +591,14 @@ class LiveState:
             "segments": self.segment_rows(),
             "alarms": [a.to_json() for a in self.alarms(deviations)],
             "counts": {
-                "users": len(self.users),
+                "users": len(self.teilnehmer()),
                 "channels": len(self.channels),
-                "bandwidth_bps": sum(u.bytes_per_sec for u in self.users.values()) * 8,
-                "speaking": sum(1 for u in self.users.values() if u.bytes_per_sec > 0),
+                "bandwidth_bps": sum(u.bytes_per_sec for u in self.teilnehmer().values()) * 8,
+                "speaking": sum(1 for u in self.teilnehmer().values() if u.bytes_per_sec > 0),
                 # Wie viele der Verbundenen sind Personen, die der Server
                 # wiedererkennt? Der Rest sind Gaeste und bekommt nur, was fuer
                 # alle gilt -- im Betrieb ist das der haeufigste Grund dafuer,
                 # dass jemand nicht senden darf.
-                "registered": sum(1 for u in self.users.values() if u.registered),
+                "registered": sum(1 for u in self.teilnehmer().values() if u.registered),
             },
         }

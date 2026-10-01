@@ -496,6 +496,9 @@ class MonitorBot:
         self._state = STATE_STOPPED
         self._last_error = ""
         self._cert_hash = ""
+        #: Die eigene Sitzung -- damit das Cockpit den Bot nicht als
+        #: Teilnehmer zaehlt. ``None``, solange er nicht verbunden ist.
+        self._own_session: int | None = None
         self._attempt = 0
         self._random = random.Random()
         #: Session -> die Felder, die nur die Vollantwort enthaelt.
@@ -543,6 +546,12 @@ class MonitorBot:
     def last_error(self) -> str:
         with self._lock:
             return self._last_error
+
+    @property
+    def own_session(self) -> int | None:
+        """Sitzungsnummer des Bots am Server, solange er verbunden ist."""
+        with self._lock:
+            return self._own_session if self._state == STATE_CONNECTED else None
 
     @property
     def cert_hash(self) -> str:
@@ -707,6 +716,8 @@ class MonitorBot:
                 "Der Server hat kein ServerSync geschickt -- eigene Session unbekannt."
             )
         session = int(myself["session"])
+        with self._lock:
+            self._own_session = session
         mumble.execute_command(
             messages.ModUserState(
                 session,
