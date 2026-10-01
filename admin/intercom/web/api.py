@@ -158,9 +158,17 @@ async def user_detail(
             note = None
 
     device = (context.config.devices.get(user.name) if context.config else None) or {}
+    # Der feste Platz steht im Pult (Store), nicht in einer Vorgabedatei. Die
+    # Detailansicht las frueher ``expected_channel`` aus der YAML und meldete
+    # deshalb "keiner festgelegt", obwohl die Person gerade dorthin gesetzt
+    # worden war.
+    fest = context.enforcer.fester_platz(user.userid) if user.registered else None
 
     return {
         "user": row,
+        "fester_platz": (
+            {"id": fest, "name": context.live.channel_name(fest)} if fest is not None else None
+        ),
         "certificates": [_certificate_info(der) for der in certificates],
         "listening": [
             {"id": cid, "name": context.live.channel_name(cid)} for cid in listening

@@ -2133,3 +2133,41 @@ def test_monitor_bot_zaehlt_nicht_als_teilnehmer(fake_murmur):
         "der Bot darf keinen Ping-Alarm ausloesen"
     assert sum(s["clients"] for s in schnappschuss["segments"]) == 1
     assert schnappschuss["channels"][0]["total_users"] == 1
+
+
+def test_skripte_rufen_keine_unbekannten_namen_auf():
+    """In einer Alpine-Methode gibt es kein nacktes ``I`` -- nur ``this.I``.
+    ``I.stufe(...)`` in den Kachelfarben warf "I is not defined", sobald ein
+    Ping-Wert da war; vorher fiel es nur deshalb nicht auf, weil die Kachel ein
+    falsches Feld las und nie einen Wert hatte."""
+    import re
+    from pathlib import Path
+
+    vorlagen = Path(__file__).resolve().parent.parent / "templates"
+    funde = []
+    for datei in sorted(vorlagen.glob("*.html")):
+        for skript in re.findall(r"<script>(.*?)</script>", datei.read_text(), re.S):
+            for nummer, zeile in enumerate(skript.splitlines(), 1):
+                if re.search(r"(^|[^.\w])I\.\w", zeile):
+                    funde.append(f"{datei.name}:{nummer}: {zeile.strip()}")
+    assert not funde, "\n".join(funde)
+
+
+def test_detailansicht_zeigt_den_festen_platz_aus_dem_pult(app_client):
+    """Sie las ``expected_channel`` aus der Vorgabedatei und meldete deshalb
+    "keiner festgelegt", obwohl die Person gerade per Pult dorthin gesetzt war
+    -- bei der Abnahme an einer frischen Installation aufgefallen."""
+    client, fake = app_client
+    _anmelden(client)
+    regie = _kanal_id(client, "Regie")
+    userid = _person_anlegen(client, "tech-1")
+    _schreibe(client, "put", "/api/pult/wunsch", {"art": "platz", "userid": userid, "kanaele": [regie]})
+    session = fake.server.connect_user("tech-1", userid=userid)
+    _warte_auf_client(client, "tech-1")
+
+    daten = client.get(f"/api/users/{session}").json()
+    assert daten["fester_platz"] == {"id": regie, "name": "Intercom/Regie"}
+
+    ohne = fake.server.connect_user("gast-1")
+    _warte_auf_client(client, "gast-1")
+    assert client.get(f"/api/users/{ohne}").json()["fester_platz"] is None

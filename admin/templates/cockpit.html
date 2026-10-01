@@ -254,7 +254,7 @@
       <h2 x-text="detail?.user?.name || ''"></h2>
       <span class="leise" x-text="'Session ' + (detail?.user?.session ?? '')"></span>
       <span class="fueller" style="flex:1"></span>
-      <button class="knopf klein" @click="detail = null">Schliessen ✕</button>
+      <button class="knopf klein" @click="detail = null">Schließen ✕</button>
     </header>
     <div class="inhalt" x-show="detail">
       <template x-if="detail">
@@ -305,12 +305,25 @@
           <!-- Soll/Ist -->
           <h3>Soll gegen Ist</h3>
           <dl class="feldliste">
+            {# Der feste Platz wird beim Anmelden hergestellt, nicht dauernd
+               (D-031): wer danach woanders steht, ist dort mit Absicht. Darum
+               nicht rot, sondern ein Satz, was gilt. #}
             <dt>Fester Platz</dt>
-            <dd :class="detail.user.channel_ok ? '' : 'fehlertext'"
-                x-text="detail.user.expected_channel || '(keiner festgelegt)'"></dd>
+            <dd x-text="detail.fester_platz
+                  ? detail.fester_platz.name + (detail.fester_platz.id === detail.user.channel
+                      ? '' : ' – steht gerade woanders; gilt wieder beim nächsten Anmelden')
+                  : (detail.user.registered ? '(keiner – im Pult festlegen)'
+                                            : '(nur für registrierte Personen)')"></dd>
+            <template x-if="detail.user.expected_channel">
+              <dt>Soll laut Vorgabedatei</dt>
+            </template>
+            <template x-if="detail.user.expected_channel">
+              <dd :class="detail.user.channel_ok ? '' : 'fehlertext'"
+                  x-text="detail.user.expected_channel"></dd>
+            </template>
             <dt>Steht gerade auf</dt>
             <dd x-text="detail.user.channel_name"></dd>
-            <dt>Priority Speaker</dt>
+            <dt>Vorrang</dt>
             <dd :class="(detail.expects_priority && !detail.user.priority_speaker) ? 'fehlertext' : ''"
                 x-text="(detail.user.priority_speaker ? 'ja' : 'nein') +
                         (detail.expects_priority ? ' (Soll: ja)' : '')"></dd>
@@ -449,13 +462,13 @@ function cockpit() {
     get pingStufe() {
       const w = this.pingMax;
       if (w === null) { return ""; }
-      return "stufe-" + I.stufe(w, this.schwellePing, this.schwellePing * 2);
+      return "stufe-" + this.I.stufe(w, this.schwellePing, this.schwellePing * 2);
     },
 
     get verlustStufe() {
       const w = this.verlustMax;
       if (w === null) { return ""; }
-      return "stufe-" + I.stufe(w, this.schwelleVerlust, this.schwelleVerlust * 3);
+      return "stufe-" + this.I.stufe(w, this.schwelleVerlust, this.schwelleVerlust * 3);
     },
 
     spalten: [
