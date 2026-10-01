@@ -277,3 +277,31 @@ def test_zusammenfassung_spricht_nach_dem_laden_in_der_vergangenheit(app_client)
     geladen = _schreibe(client, "post", "/api/shows/laden", {"name": "Grundaufbau"}).json()
     assert "1 gelöscht" in geladen["summary"]
     assert "zu löschen" not in geladen["summary"]
+
+
+def test_show_laden_laesst_die_regel_des_monitor_bots_stehen(app_client):
+    """Sonst naehme jede Show mit Aufraeumen dem Cockpit den Paketverlust (D-035)."""
+    from intercom.monitor.berechtigung import gruppe
+
+    client, _ = app_client
+    _anmelden(client)
+    fp = "cd34" * 10
+    client.app.state.ctx.monitor_fingerabdruck = fp
+
+    _schreibe(client, "post", "/api/shows", {"name": "Grundaufbau"})
+    datei = client.get("/api/shows/datei", params={"name": "Grundaufbau"}).text
+    assert gruppe(fp) not in datei, "der Hash dieser Installation gehoert nicht in die Show"
+
+    geladen = _schreibe(client, "post", "/api/shows/laden", {"name": "Grundaufbau"})
+    assert geladen.status_code == 200, geladen.text
+    acl = client.get("/api/channels/0/acl").json()
+    regeln = [a for a in acl["acls"] if a.get("group") == gruppe(fp) and not a.get("inherited")]
+    assert len(regeln) == 1, acl["acls"]
+    assert acl["bezeichnungen"][gruppe(fp)].startswith("Monitor-Bot")
+
+    plan = _schreibe(client, "post", "/api/shows/plan", {"name": "Grundaufbau"}).json()
+    assert not [c for c in plan["changes"] if gruppe(fp) in c["target"]]
+    assert plan["summary"].startswith("Keine Änderungen"), plan["summary"]
+
+    health = client.get("/healthz").json()
+    assert health["monitor"]["alle_plaetze"] is True

@@ -90,6 +90,7 @@ async def stand_als_yaml(context: Any) -> str:
                 verbindungen=verbindungen,
                 netze=netze,
                 ruftasten=ruftasten,
+                ohne_gruppen=context.geschuetzte_gruppen(),
             ),
             context.ice.sync,
         )

@@ -69,18 +69,26 @@
       <div class="kennzahl">
         <div class="beschriftung">Messung</div>
         <div class="wert">
+          {# "läuft" allein waere geschoent: ohne Register ganz oben misst der
+             Bot Verlust nur auf seinem eigenen Platz (D-035). #}
           <span class="status"
-                :class="health.monitor?.connected ? 'status-ok'
-                        : (health.monitor?.enabled ? 'status-warnung' : 'status-inaktiv')"
-                x-text="health.monitor?.connected ? 'läuft'
-                        : (health.monitor?.enabled ? 'getrennt' : 'aus')"></span>
+                :class="!health.monitor?.connected
+                          ? (health.monitor?.enabled ? 'status-warnung' : 'status-inaktiv')
+                          : (health.monitor?.alle_plaetze === false ? 'status-warnung' : 'status-ok')"
+                x-text="!health.monitor?.connected
+                          ? (health.monitor?.enabled ? 'getrennt' : 'aus')
+                          : (health.monitor?.alle_plaetze === false ? 'eingeschränkt' : 'läuft')"></span>
         </div>
-        <div class="zusatz" :title="health.monitor?.error || ''">
-          <template x-if="health.monitor?.connected">
+        <div class="zusatz"
+             :title="health.monitor?.berechtigung_fehler || health.monitor?.error || ''">
+          <template x-if="health.monitor?.connected && health.monitor?.alle_plaetze === false">
+            <span>Verlust nur auf dem eigenen Platz</span>
+          </template>
+          <template x-if="health.monitor?.connected && health.monitor?.alle_plaetze !== false">
             <span>Bot-Ping <span x-text="I.fmtPing(health.monitor.ping_ms)"></span> ms</span>
           </template>
           <template x-if="!health.monitor?.connected">
-            <span x-text="health.monitor?.enabled ? 'kein Verlustwert' : 'MONITOR_ENABLED=false'"></span>
+            <span x-text="health.monitor?.enabled ? 'kein Verlustwert' : 'MONITOR_BOT_ENABLED=false'"></span>
           </template>
         </div>
       </div>

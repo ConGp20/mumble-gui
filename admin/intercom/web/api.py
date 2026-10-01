@@ -581,6 +581,13 @@ async def acl_read(
     data["registered"] = registered
     data["templates"] = [t.to_json() for t in TEMPLATES.values()]
     data["dangling"] = [a.to_json() for a in acl.own_acls() if a.dangling]
+    # Regeln, die der Anwendung gehoeren, bekommen einen Namen statt eines
+    # nackten Zertifikats-Hashes -- sonst sieht die Bot-Regel aus wie Muell,
+    # den man wegraeumen sollte (D-035).
+    data["bezeichnungen"] = dict.fromkeys(
+        context.geschuetzte_gruppen(),
+        "Monitor-Bot – setzt die Anwendung selbst, nötig für Paketverlust",
+    )
     return data
 
 
@@ -734,6 +741,20 @@ async def acl_write(
         before=json.dumps(current.to_json(), ensure_ascii=False),
         after=json.dumps(wanted.to_json(), ensure_ascii=False),
     )
+    if channel_id == 0:
+        # Wer die Bot-Regel hier entfernt hat, nimmt dem Cockpit den Verlust
+        # fuer alle anderen Plaetze. Sie kommt sofort zurueck, und das Ergebnis
+        # sagt es, statt es still zu tun.
+        vorher = context.monitor_berechtigt
+        await context.monitor_berechtigen()
+        if vorher and context.geschuetzte_gruppen() and not any(
+            e.is_group and e.group in context.geschuetzte_gruppen() for e in wanted.acls
+        ):
+            return {
+                "ok": True,
+                "hinweis": "Die Regel des Monitor-Bots wurde wieder gesetzt – ohne sie "
+                "misst er Paketverlust nur auf seinem eigenen Platz.",
+            }
     return {"ok": True}
 
 

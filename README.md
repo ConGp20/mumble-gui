@@ -5,7 +5,9 @@ PTT-Intercom im Leichtathletik-Stadion: Regie, Kameras, Zeitnahme (FinishLynx),
 Stadionsprecher, Technik, Kampfgericht.
 
 Kein Dashboard zum Anschauen, sondern ein Betriebs-Cockpit: jeder Client mit
-IP, Ping, Paketverlust, Version und Zertifikat; jede ACL; jede Gruppe.
+IP, Ping, Paketverlust, Version und Zertifikat; jede Regel; jede Rolle. Dazu ein
+Pult, an dem Personen, Rollen und Plaetze per Ziehen verbunden, Rechte je Platz
+verteilt und Ruftasten zentral belegt werden.
 
 **Die Wahrheit steht im Server.** Angelegt und geaendert wird in der
 Oberflaeche, und was dort steht, bleibt dort — es gibt keine Datei, die beim
@@ -22,7 +24,7 @@ YAML-Provisionierung gibt es weiterhin, aber als Werkzeug, nicht als Herrn:
 1. [Schnellstart](#schnellstart)
 2. [Architektur](#architektur)
 3. [Vertrag mit der Compose](#vertrag-mit-der-compose)
-4. [Schema-Referenz `intercom.yaml`](#schema-referenz-intercomyaml)
+4. [Dateiformat: Shows, Sicherung, `intercom.yaml`](#dateiformat-shows-sicherung-intercomyaml)
 5. [Kommandozeile](#kommandozeile)
 6. [Bekannte Grenzen](#bekannte-grenzen)
 7. [Fehlersuche](#fehlersuche)
@@ -111,8 +113,8 @@ cd ~/stadion-intercom
 ./setup.sh
 ```
 
-`setup.sh` prueft Docker, legt `./server` und `./admin-data` an, setzt sie auf
-UID/GID 10000, ersetzt alle `ERSETZEN_*`-Werte in der `.env` durch
+`setup.sh` prueft Docker, legt `./server`, `./admin-data` und das (leere)
+`./config` an, setzt die beiden ersten auf UID/GID 10000, ersetzt alle `ERSETZEN_*`-Werte in der `.env` durch
 Zufallswerte, startet den Mumble-Server, wartet auf dessen Ice-Schnittstelle,
 gleicht `MUMBLE_VERSION` an die tatsaechlich laufende Serverversion an und
 **zieht** das Admin-Image aus der Registry (gebaut wird nur, wenn das
@@ -126,8 +128,8 @@ aendert nur, was noch nicht stimmt.
 ./setup.sh --check    # nur pruefen, nichts aendern
 ```
 
-Am Ende nennt es die Adresse, den Benutzernamen und die fuenf Schritte, mit
-denen es weitergeht. Das Passwort steht in der erzeugten `.env` als
+Am Ende nennt es die Adresse, den Benutzernamen und die Schritte, mit denen es
+weitergeht. Das Passwort steht in der erzeugten `.env` als
 `ADMIN_PASSWORD`.
 
 ### Und dann?
@@ -144,21 +146,31 @@ denen es weitergeht. Das Passwort steht in der erzeugten `.env` als
 Wenn Mumbles Modell unklar ist: `/anleitung` erklaert es in Klartext — vor
 allem, warum Rechte am Platz haengen und nicht an der Person.
 
+Danach liegt die Oberflaeche auf `http://<rechner>:8080/`. Benutzer und
+Passwort stehen in der `.env` (`ADMIN_USER`, `ADMIN_PASSWORD`).
+
 ### Auf den neuesten Stand bringen
 
 ```bash
 cd ~/stadion-intercom
 git pull
-docker compose pull
-docker compose up -d
+./setup.sh
 ```
 
-Kanaele, Rollen, Rechte und registrierte Nutzer stehen in `./server` und
-bleiben davon unberuehrt; der Verlauf und der Wunschzustand liegen in
-`./admin-data`.
+`setup.sh` ist wiederholbar: es laesst die `.env` und alle Daten stehen, zieht
+das aktuelle Admin-Image und startet neu. Was wo liegt und davon unberuehrt
+bleibt:
 
-Danach liegt das GUI auf `http://<rechner>:8080/`. Benutzer und Passwort stehen in
-der `.env` (`ADMIN_USER`, `ADMIN_PASSWORD`).
+| Verzeichnis | Inhalt |
+|---|---|
+| `./server` | Plaetze, Rollen, Rechte, registrierte Personen — die Datenbank des Mumble-Servers |
+| `./admin-data` | Shows, feste Plaetze, Mithoeren und Vorrang je Person, Verbindungen, Ruftasten, Netzsegmente, Verlauf und Protokoll |
+| `./config` | leer; nur fuer eine Vorgabedatei der Kommandozeile |
+
+> **Von einem Stand vor Oktober 2026:** Die `intercom.yaml` im
+> Projektverzeichnis wird nicht mehr gelesen (DECISIONS.md, D-034). Hast du sie
+> nie veraendert, entfernt `git pull` sie von selbst. Sonst meldet `setup.sh`
+> sie und nennt die zwei Moeglichkeiten.
 
 ### Das Image wird normalerweise nicht gebaut, sondern geladen
 
@@ -193,7 +205,7 @@ mit lokalem Bau rund eine Minute auf x86-64.
 Selbst bauen, wenn du am Quelltext etwas geaendert hast:
 
 ```bash
-docker compose --profile gui build mumble-admin
+docker compose build mumble-admin
 # oder direkt:
 docker build -t stadion-intercom/mumble-admin:v1.5.735 admin/
 ```
@@ -311,15 +323,25 @@ Client abfragen kann. Genau dafuer haengt der Monitor-Bot im Server.
 
 | Seite | Wofuer |
 |-------|--------|
-| `/` Cockpit | Betrieb: wer ist verbunden, wie ist die Leitung, was alarmiert |
-| `/pult` | Alltag: Personen, Rollen und Plaetze per Ziehen verbinden, Rechte verteilen |
-| `/anleitung` | Mumbles Modell in Klartext — Vererbung, Richtung der Rechte, Raster lesen |
-| `/einrichten` („Shows“) | Ganze Aufbauten als Show speichern, vergleichen (Testlauf) und laden; Sicherung als Datei; Baukaesten fuer den Anfang |
-| `/kanaele`, `/acl`, `/nutzer` | Expertensicht: dieselben Dinge so, wie Mumble sie nennt |
-| `/server` | Serverkonfiguration, Baenne, Protokoll |
-| `/audit` | Wer hat wann was geaendert |
+Die Navigation ist in drei Gruppen geordnet; die Namen folgen
+`admin/intercom/woerter.py` (Platz statt Kanal, Rolle statt Gruppe, Person statt
+registrierter Nutzer, oberster Platz heisst „Ueberall“).
 
-Das Pult ist die Alltagsansicht, die Expertensichten bleiben daneben stehen.
+| Gruppe | Seite | Wofuer |
+|--------|-------|--------|
+| Betrieb | `/` Cockpit | Wer ist verbunden, wie ist die Leitung (Ping, Verlust, Netzsegment), was alarmiert |
+| Aufbauen | `/pult` Pult | Personen in Rollen und auf Plaetze ziehen, Rechte je Platz, Verbindungen, Ruftasten |
+| Aufbauen | `/nutzer` Personen | Registrieren, umbenennen, entfernen — der Server erkennt Leute am Zertifikat |
+| Aufbauen | `/kanaele` Plaetze | Anlegen, umbenennen, verschieben |
+| Aufbauen | `/einrichten` Shows | Ganze Aufbauten speichern, vergleichen (Testlauf) und laden; Sicherung als Datei; Baukaesten fuer den Anfang |
+| Fachsicht | `/acl` Rechte | Die Regeln Eintrag fuer Eintrag, so wie Mumble sie fuehrt (ACL) |
+| Fachsicht | `/server` Server | Serverkonfiguration, Netzsegmente, Sperren |
+| Fachsicht | `/audit` Protokoll | Wer hat wann was geaendert |
+| | `/anleitung` | Mumbles Modell in Klartext — Vererbung, Richtung der Rechte, Raster lesen |
+
+Jede Seite traegt oben denselben Erklaerkopf: was man hier tut, wann man es
+braucht, worueber alle einmal stolpern. Das Pult ist die Alltagsansicht, die
+Fachsicht bleibt daneben stehen.
 Wo das Raster im Pult etwas nicht verlustfrei abbilden kann — mehrere eigene
 ACL-Eintraege derselben Rolle an einem Kanal, deren Reihenfolge entscheidet —
 sperrt es die Zelle und verweist auf `/acl`, statt zu raten.
@@ -329,13 +351,17 @@ sperrt es die Zelle und verweist auf `/acl`, statt zu raten.
 | Pfad | Inhalt |
 |------|--------|
 | `admin/intercom/ice/` | Ice-Anbindung: Client, Callbacks, Rechtetabelle, Domaenenmodell |
-| `admin/intercom/provision/` | YAML-Schema, ACL-Abbildung, Planer, Anwender, Exporter |
+| `admin/intercom/provision/` | Dateiformat, ACL-Abbildung, Planer, Exporter, Baukaesten |
 | `admin/intercom/ice/wirkung.py` | Nachgebaute Rechte-Auswertung (ACL.cpp, Group.cpp) |
-| `admin/intercom/runtime.py` | Laufzeit-Abgleich: fester Platz, Priority Speaker, Listener |
+| `admin/intercom/runtime.py` | Laufzeit-Abgleich: fester Platz, Vorrang, Mithoeren, Ruftasten |
+| `admin/intercom/ruftasten.py` | Belegung der Ruftasten, Vererbung, Abdeckung (D-032) |
+| `admin/intercom/woerter.py` | Die Woerter der Oberflaeche und warum |
 | `admin/intercom/monitor/` | pymumble-Bot und Auswertung der `UserStats` |
-| `admin/intercom/store/` | SQLite: Verlauf, Audit-Log, Notizen |
+| `admin/intercom/store/` | SQLite: Verlauf, Protokoll, Notizen, Wunschzustand, Verbindungen, Ruftasten, Netze, Shows |
 | `admin/intercom/web/` | FastAPI, SSE, Anmeldung, JSON-Schnittstelle |
-| `admin/intercom/web/pult.py` | Pult: Plaetze, Rollen, Personen und die Rechtematrix |
+| `admin/intercom/web/pult.py` | Pult: Plaetze, Rollen, Personen, Rechtematrix, Verbindungen, Ruftasten |
+| `admin/intercom/web/shows.py` | Shows und Sicherung: ein Einspielweg mit Testlauf (D-033) |
+| `beispiele/` | Ein ganzer Stadion-Aufbau als Datei — Beispiel, nicht aktiv |
 | `admin/templates/`, `admin/static/` | Oberflaeche (htmx + Alpine, kein Bauschritt) |
 | `admin/tests/` | Tests inkl. murmur-Doppel ueber echtes Ice |
 
@@ -359,12 +385,12 @@ Variable einfuehrt, aendert diese Datei und die Compose — sonst nichts.
 | `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / – | Vollzugang. |
 | `ADMIN_READONLY_USER` / `ADMIN_READONLY_PASSWORD` | – | Optionaler Nur-Lese-Zugang. Leer = aus. |
 | `SESSION_SECRET` | – | Signiert das Sitzungs-Cookie. Fehlt er, wird ein Zufallswert erzeugt und gewarnt — alle Anmeldungen gehen dann bei jedem Neustart verloren. |
-| `INTERCOM_CONFIG` | `/config/intercom.yaml` | Pfad zur Wunschzustands-Datei. |
-| `PROVISION_ON_START` | `true` | Beim Containerstart anwenden. |
-| `PROVISION_PRUNE` | `false` | Kanaele/Gruppen loeschen, die nicht in der YAML stehen. Im Plan werden sie auch ohne den Schalter angezeigt. |
+| `INTERCOM_CONFIG` | `/config/intercom.yaml` | Vorgabedatei fuer die Kommandozeile. Fehlt sie, ist das der Normalfall. Liegt dort eine, liest die Oberflaeche daraus auch Netze, Geraete und Soll-Plaetze. |
+| `PROVISION_ON_START` | `false` | Beim Containerstart die Vorgabedatei anwenden. Aus, weil der Server die Wahrheit ist (D-029). |
+| `PROVISION_PRUNE` | `false` | Plaetze/Rollen loeschen, die nicht in der Datei stehen — beim Start, fuer Baukaesten und fuer `intercom apply` ohne `--prune`. Shows und Dateien fragen in der Oberflaeche je Testlauf nach („Aufraeumen“). |
 | `MONITOR_BOT_ENABLED` | `true` | Monitor-Bot an/aus. Aus = kein Paketverlust. |
 | `MONITOR_BOT_NAME` | `monitor` | Anmeldename des Bots. |
-| `MONITOR_BOT_CHANNEL` | `Intercom/Regie` | Kanal als **Pfad**, nicht als blosser Name. |
+| `MONITOR_BOT_CHANNEL` | leer | Platz als **Pfad**. Leer = der Bot bleibt ganz oben. |
 | `MONITOR_BOT_CERT` | `/data/monitor-cert.pem` | Client-Zertifikat. Fehlt es, wird eines erzeugt. |
 | `MONITOR_STATS_INTERVAL_MS` | `5000` | Abstand zwischen zwei `UserStats`-Runden. |
 | `MUMBLE_PORT` | `64738` | Port, auf dem der Bot sich anmeldet. |
@@ -379,32 +405,54 @@ Variable einfuehrt, aendert diese Datei und die Compose — sonst nichts.
 ### Volumes und Netz
 
 * `./server:/data` (mumble-server), `./admin-data:/data` (mumble-admin),
-  `./intercom.yaml:/config/intercom.yaml:ro`
+  `./config:/config:ro` (mumble-admin, im Normalfall leer)
 * **Beide** Dienste laufen mit `network_mode: host`. Das ist keine Bequemlichkeit:
   Ice-Callbacks sind kein Polling — murmur baut eine Verbindung **zum
   Admin-Prozess** auf. Laege der Server in einem Bridge-Netz, waere `127.0.0.1`
   aus seiner Sicht sein eigener Namespace und der Rueckruf ginge ins Leere.
   Siehe DECISIONS.md, D-002.
-* Das Admin-GUI startet nur mit dem Compose-Profil `gui`:
-  `docker compose --profile gui up -d`.
+* Kein Dienst haengt an einem Compose-Profil: `docker compose down` beendet
+  **beide**, `docker compose up -d` startet beide. Beide stehen auf
+  `restart: unless-stopped` und kommen nach einem Stromausfall von selbst
+  wieder. Beides haelt `admin/tests/test_compose.py` fest.
 
 ---
 
-## Schema-Referenz `intercom.yaml`
+## Dateiformat: Shows, Sicherung, `intercom.yaml`
+
+Eine Show, eine heruntergeladene Sicherung und eine Vorgabedatei fuer die
+Kommandozeile sind **dasselbe Format**. Ein vollstaendiges Beispiel liegt unter
+`beispiele/stadion-intercom.yaml` — als Beispiel, nicht aktiv: kein Container
+liest es. Einspielen in der Oberflaeche unter *Shows → Datei waehlen …*.
+
+Die Namen in der Datei sind Mumbles Namen (`channels`, `groups`, `users`): die
+Datei ist die Fachsicht. In der Oberflaeche heissen dieselben Dinge Plaetze,
+Rollen und Personen.
 
 ### Aufbau
 
 ```yaml
 version: 1
 server:        { defaultchannel: …, welcometext: … }
-groups:        [ … ]
+groups:        [ … ]          # Rollen
 acl_templates: { name: [ … ] }
-channels:      [ … ]          # Baum
+channels:      [ … ]          # Plaetze, als Baum
 policies:      { … }
 users:         { name: { groups: [...], channel: … } }
 networks:      [ { name, cidr, note } ]
 devices:       { name: { … } }
+
+# Nur aus der Oberflaeche -- Mumble merkt sich das nicht (D-031 bis D-033):
+wunsch:        { platz|mithoeren|vorrang: { person: [ pfad, … ] } }
+verbindungen:  { hoert|reinschalten: { von-pfad: [ nach-pfad, … ] } }
+ruftasten:     { pfad: { 1: rolle, … } }   # "/" = Ueberall
 ```
+
+Die letzten drei Abschnitte schreibt der Export, und Shows/Sicherung spielen sie
+wieder ein. Personen stehen dort mit **Namen**, Plaetze mit **Pfad** — IDs
+vergibt der Server und waeren nach dem Wiederanlegen falsch. Wen der Server
+beim Einspielen nicht kennt, nennt das Ergebnis. Die Kommandozeile
+(`intercom apply`) ueberliest diese drei Abschnitte.
 
 ### `groups`
 
@@ -544,14 +592,22 @@ Detailpanel.
 
 ## Kommandozeile
 
+Fuer SSH ohne Browser. `export` und `status` gehen immer;
+`validate`, `plan` und `apply` brauchen eine Vorgabedatei unter
+`./config/intercom.yaml` (Vorlage: `beispiele/stadion-intercom.yaml`).
+
 ```bash
-docker compose exec mumble-admin intercom validate   # nur die YAML pruefen
+docker compose exec mumble-admin intercom export > sicherung.yaml   # vollstaendige Sicherung
+docker compose exec mumble-admin intercom status     # Kurzbericht
+docker compose exec mumble-admin intercom validate   # nur die Datei pruefen
 docker compose exec mumble-admin intercom plan       # zeigen, was sich aendern wuerde
 docker compose exec mumble-admin intercom apply      # anwenden (fragt nach)
 docker compose exec mumble-admin intercom apply --yes --prune
-docker compose exec mumble-admin intercom export > intercom-neu.yaml
-docker compose exec mumble-admin intercom status     # Kurzbericht
 ```
+
+`export` schreibt dasselbe wie der Knopf in der Oberflaeche — samt festen
+Plaetzen, Verbindungen, Ruftasten und Netzen. Die Datei laesst sich unter
+*Shows → Datei waehlen …* wieder einspielen oder als Show ablegen.
 
 Rueckgabewerte: `0` in Ordnung, `1` Fehler, `2` Konfiguration unbrauchbar,
 `3` bei `plan --detailed-exitcode`, wenn es etwas zu tun gaebe.
@@ -671,8 +727,9 @@ Hintergrund mit wachsendem Abstand erneut versucht.
 `PROVISION_ON_START` heisst Containerstart, nicht Serverneustart. Ein
 Netzaussetzer waehrend des Wettkampfs darf nicht dazu fuehren, dass die ACLs
 neu geschrieben werden und dabei eine bewusste Aenderung von vor fuenf Minuten
-verlorengeht. Ist die Serverdatenbank tatsaechlich weg, zeigt der Plan die
-Abweichung sofort — ein Klick auf „Anwenden" holt den Zustand zurueck.
+verlorengeht. Ist die Serverdatenbank tatsaechlich weg, zeigt der Testlauf der
+zuletzt geladenen Show die Abweichung sofort — „Laden“ holt den Zustand
+zurueck.
 
 Abgesichert durch `test_ueberlebt_einen_serverneustart_und_verbindet_neu`.
 
@@ -718,7 +775,7 @@ Der Reihe nach pruefen:
 Aenderung **beide** Container neu starten:
 
 ```bash
-docker compose --profile gui up -d --force-recreate
+docker compose up -d --force-recreate
 ```
 
 Das Secret laesst sich absichtlich nicht ueber das GUI aendern — danach waere
@@ -734,7 +791,7 @@ docker exec mumble-server mumble-server --version
 bauen:
 
 ```bash
-docker compose --profile gui up -d --build mumble-admin
+docker compose up -d --build mumble-admin
 ```
 
 `./setup.sh` macht das von selbst.
@@ -760,21 +817,23 @@ Gruende:
 1. `MONITOR_BOT_ENABLED=false`.
 2. Der Bot ist nicht verbunden — im Cockpit oben rechts sichtbar, Fehlertext
    in der Kachel „Monitor-Bot".
-3. **Der Bot hat zu wenig Rechte.** `Server::msgUserStats` fuellt die
-   Paketzaehler nur, wenn der Fragende im selben Kanal steht **oder** `Ban` am
-   Wurzelkanal hat:
+3. **Der Bot hat zu wenig Rechte** — Kachel „Messung“ zeigt dann
+   *eingeschraenkt*. `Server::msgUserStats` (murmur 1.5.735) fuellt die
+   Paketzaehler nur, wenn der Fragende im selben Kanal steht **oder**
+   `Register` am obersten Platz hat:
 
    ```cpp
    bool extend = (uSource == pDstServerUser)
-                 || hasPermission(uSource, qhChannels.value(0), ChanACL::Ban);
+                 || hasPermission(uSource, qhChannels.value(0), ChanACL::Register);
    bool local  = extend || (pDstServerUser->cChannel == uSource->cChannel);
    ```
 
-   Deshalb hat die Beispielkonfiguration eine eigene Gruppe `monitor` mit genau
-   einem Mitglied, und `policies.ban` enthaelt sie. Steht der Bot stattdessen
-   nur in `regie`, misst er ausschliesslich die Clients in seinem eigenen Kanal
-   — die Spalte bleibt fuer alle anderen leer, ohne dass irgendwo ein Fehler
-   auftaucht. Siehe DECISIONS.md, D-015.
+   Die Anwendung setzt dafuer selbst eine Regel fuer den Zertifikats-Hash des
+   Bots (in der Fachsicht als „Monitor-Bot“ beschriftet); Shows und Aufraeumen
+   lassen sie stehen. Steht dort trotzdem *eingeschraenkt*, nimmt eine
+   spaetere Regel am obersten Platz `Register` wieder weg — oder Ice ist nur
+   lesend angebunden. Siehe DECISIONS.md, D-035 (und D-015 fuer den frueheren,
+   falschen Stand mit `Ban`).
 4. Ein Client laeuft nur ueber TCP: dessen UDP-Zaehler bleiben auf 0. Das
    Cockpit zeigt dann `–` statt `0,0 %` — „unbekannt" ist die richtige Aussage,
    und die Alarmschwelle darf darauf nicht anschlagen.
@@ -809,7 +868,7 @@ Aenderungen stehen mit Fehlertext im Report — ein `apply` bricht **nicht** bei
 ersten Fehler ab, sondern macht weiter und meldet am Ende alles.
 
 Haeufigster Fall: „Nicht registriert: …". Diese Nutzer haben keine ID und
-koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
+koennen darum in keiner Rolle sein. Auf der Seite „Personen" registrieren
 (verbundene Clients per Knopf mit ihrem aktuellen Zertifikat).
 
 ---
@@ -820,7 +879,7 @@ koennen darum in keiner Gruppe sein. Auf der Seite „Nutzer" registrieren
 cd admin
 python3.11 -m pip install -e ".[dev,ice]"   # ice nur ohne python3-zeroc-ice
 ./scripts/build_slice.sh v1.5.735 slice     # Slice holen und uebersetzen
-python -m pytest -q                          # 219 Tests (ohne echten Server: 207)
+python -m pytest -q                          # gut 340 Tests; die gegen den echten Server werden ohne ihn uebersprungen
 python -m ruff check .
 python -m mypy intercom
 ```

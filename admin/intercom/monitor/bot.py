@@ -25,11 +25,15 @@ des pymumble-Threads und zerstoert den Rahmenstrom.
 
 Rechte
 ------
-``Server::msgUserStats`` gibt ``from_client``/``from_server`` nur heraus, wenn
-der Anfragende im selben Kanal steht **oder** ``Ban`` am Wurzelkanal besitzt.
-Der Bot muss also entweder in der Gruppe ``admin`` am Wurzelkanal stehen oder
-er sieht Paketverlust nur fuer die Clients seines eigenen Kanals. Ohne Rechte
-antwortet murmur mit ``PermissionDenied``; das landet in :attr:`MonitorBot.last_error`.
+``Server::msgUserStats`` (murmur 1.5.735) gibt ``from_client``/``from_server``
+nur heraus, wenn der Anfragende im selben Kanal steht **oder** ``Register`` am
+Wurzelkanal besitzt -- nicht ``Ban``, wie es aeltere Fassungen und D-015
+annahmen; gemessen in ``test_monitor_braucht_register_am_obersten_platz_nicht_ban``.
+Fehlt das Recht, kommt **keine** Fehlermeldung: die Zaehler fehlen einfach.
+Die Anwendung setzt das Recht deshalb selbst, ueber eine Regel fuer den
+Zertifikats-Hash des Bots (:mod:`intercom.monitor.berechtigung`, D-035).
+``PermissionDenied`` gibt es nur, wenn der Bot den Platz des Ziels nicht einmal
+betreten duerfte; das landet in :attr:`MonitorBot.last_error`.
 
 Abhaengigkeiten
 ---------------
@@ -720,7 +724,7 @@ class MonitorBot:
         channel_id = resolve_channel_path(mumble.channels, path)
         if channel_id is None:
             # Kein Abbruch: ausserhalb seines Zielkanals sieht der Bot immer
-            # noch Ping und Paketzahlen, und bei Ban-Recht am Wurzelkanal sogar
+            # noch Ping und Paketzahlen, und mit Register am Wurzelkanal sogar
             # alles. Ein Bot, der wegen eines Tippfehlers gar nicht laeuft,
             # waere schlechter.
             message = (
@@ -836,7 +840,7 @@ class MonitorBot:
         aendern. Deshalb: einmal voll fragen, merken, danach ``stats_only``.
 
         Selbstheilend: gemerkt wird nur, was auch angekommen ist. Fehlt dem Bot
-        das Recht ``Ban`` am Wurzelkanal, liefert murmur diese Felder gar
+        das Recht ``Register`` am Wurzelkanal, liefert murmur diese Felder gar
         nicht -- dann bleibt das Woerterbuch leer und weiter voll gefragt.
         Bekommt der Bot das Recht spaeter, greift es sofort.
 
@@ -878,7 +882,9 @@ class MonitorBot:
         text = (
             f"murmur hat abgelehnt ({kind}): {message.reason or 'ohne Begruendung'}. "
             "Fuer Paketverlust fremder Clients braucht der Monitor-Bot das "
-            "Recht 'Ban' am Wurzelkanal -- sonst sieht er nur seinen eigenen Kanal."
+            "Recht 'Register' ganz oben -- sonst sieht er nur seinen eigenen Platz. "
+            "Die Anwendung setzt es selbst; steht diese Meldung trotzdem da, "
+            "verbietet eine spaetere Regel es wieder."
         )
         log.warning("%s", text)
         with self._lock:

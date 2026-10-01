@@ -85,7 +85,12 @@ services:
         condition: service_healthy
     volumes:
       - ./admin-data:/data
-      - ./intercom.yaml:/config/intercom.yaml:ro
+      # Ein Verzeichnis, keine Datei: im Normalfall ist es leer, und das ist
+      # richtig so -- der Server ist die Wahrheit (D-029). Wer fuer die
+      # Kommandozeile eine Vorgabe braucht, legt sie als ./config/intercom.yaml
+      # ab. Frueher stand hier die intercom.yaml aus dem Repository, und jede
+      # Installation las deren Beispielpersonen und -netze als Vorgabe (D-034).
+      - ./config:/config:ro
     environment:
       TZ: ${TZ:-Europe/Berlin}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -106,9 +111,9 @@ services:
       INTERCOM_CONFIG: ${INTERCOM_CONFIG:-/config/intercom.yaml}
       # Aus, und das ist Absicht: der SERVER ist die Wahrheit, nicht eine
       # Datei. Was in der Oberflaeche angelegt wird, bleibt. Auf true nur,
-      # wer den Server bei jedem Start auf den Stand einer intercom.yaml
-      # zwingen will -- dann gewinnt die Datei, und Aenderungen aus der
-      # Oberflaeche sind nach dem naechsten Neustart weg.
+      # wer den Server bei jedem Start auf den Stand von
+      # ./config/intercom.yaml zwingen will -- dann gewinnt die Datei, und
+      # Aenderungen aus der Oberflaeche sind nach dem naechsten Neustart weg.
       PROVISION_ON_START: ${PROVISION_ON_START:-false}
       PROVISION_PRUNE: ${PROVISION_PRUNE:-false}
 

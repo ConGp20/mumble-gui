@@ -34,6 +34,7 @@ from ..provision.planner import Plan, reconcile
 from ..provision.schema import ConfigInvalid, IntercomConfig, load_config
 from ..runtime import Enforcer
 from ..store.db import StoreClosed
+from ..woerter import UEBERALL
 from .auth import SessionManager
 from .state import LiveState, NetworkMap
 
@@ -62,6 +63,12 @@ class AppContext:
 
         self.store: Any = None
         self.monitor: Any = None
+        #: SHA-1 des Bot-Zertifikats. Damit berechtigt sich die Anwendung ihren
+        #: Bot selbst (D-035); ohne ihn gaebe es Verlust nur fuer seinen Platz.
+        self.monitor_fingerabdruck: str = ""
+        #: Steht die Regel am obersten Platz? ``None`` = noch nicht geprueft.
+        self.monitor_berechtigt: bool | None = None
+        self.monitor_berechtigung_fehler: str = ""
         #: Rechnet die kumulativen Paketzaehler in die Rate je Intervall um.
         #: Er gehoert hierher und nicht in den Bot: er ist nicht thread-sicher,
         #: und hier laeuft alles im asyncio-Loop. Siehe MonitorBot-Docstring.
@@ -206,9 +213,15 @@ class AppContext:
             )
             return
         try:
+            from ..monitor.bot import ensure_certificate
             from ..monitor.stats import LossTracker
 
             self._loss = LossTracker()
+            # Vor dem Start: der Bot nimmt dasselbe Zertifikat, und die
+            # Anwendung braucht seinen Fingerabdruck fuer die Berechtigung.
+            self.monitor_fingerabdruck = ensure_certificate(
+                self.settings.monitor_cert, self.settings.monitor_name
+            )
             self.monitor = MonitorBot(
                 self.settings, on_stats=self._on_stats, on_state=self._on_monitor_state
             )
@@ -434,6 +447,7 @@ class AppContext:
         """
         if not self.connected:
             return
+        await self.monitor_berechtigen()
         try:
             channels = await self.ice.get_channels()
             if self.config is not None:
@@ -449,6 +463,50 @@ class AppContext:
             log.warning("Laufzeit-Abgleich nicht scharf: %s", exc)
         except StoreClosed:
             log.debug("Wunschzustand nicht lesbar -- Store geschlossen")
+
+    def geschuetzte_gruppen(self) -> frozenset[str]:
+        """Regeln am obersten Platz, die der Anwendung gehoeren (D-035)."""
+        if not self.monitor_fingerabdruck:
+            return frozenset()
+        from ..monitor.berechtigung import gruppe
+
+        return frozenset({gruppe(self.monitor_fingerabdruck)})
+
+    async def monitor_berechtigen(self) -> None:
+        """Gibt dem Monitor-Bot ``Register`` am obersten Platz, falls es fehlt.
+
+        Ohne das liefert murmur Paketzaehler nur fuer Clients auf dem Platz des
+        Bots -- die Verlustspalte bliebe fuer alle anderen leer, ohne dass es
+        irgendwo auffiele. Liest erst und schreibt nur, wenn die Regel fehlt;
+        darum ist der Aufruf billig genug fuer jeden Abgleich.
+        """
+        if not self.monitor_fingerabdruck or not self.connected:
+            return
+        from ..monitor.berechtigung import sicherstellen
+
+        try:
+            geschrieben = await self.ice.run(
+                sicherstellen, self.ice.sync, self.monitor_fingerabdruck
+            )
+        except IceError as exc:
+            self.monitor_berechtigt = False
+            self.monitor_berechtigung_fehler = str(exc)
+            log.warning("Monitor-Bot nicht berechtigt: %s", exc)
+            return
+        self.monitor_berechtigt = True
+        self.monitor_berechtigung_fehler = ""
+        if geschrieben:
+            log.info(
+                "Monitor-Bot berechtigt: Register am obersten Platz fuer $%s...",
+                self.monitor_fingerabdruck[:12],
+            )
+            self.audit(
+                "system",
+                "monitor.berechtigt",
+                UEBERALL,
+                after=f"${self.monitor_fingerabdruck[:12]}… darf Register "
+                "(nötig für Paketverlust auf allen Plätzen)",
+            )
 
     async def wunschzustand_neu_laden(self) -> None:
         """Nach dem Laden einer Show: Enforcer neu laden, Sitzungen sofort nachziehen.
@@ -559,6 +617,10 @@ class AppContext:
                 and not self.monitor.connected
             ):
                 log.info("Monitor-Bot ist nicht verbunden -- der Bot regelt das selbst.")
+            # Wer die Regel in der Fachsicht von Hand loescht, bekommt sie hier
+            # zurueck -- sonst stuende die Verlustspalte bis zum naechsten
+            # Neustart leer.
+            await self.monitor_berechtigen()
 
     # ------------------------------------------------------------------ #
     #  Provisioning
@@ -591,6 +653,7 @@ class AppContext:
                 config,
                 prune=effective_prune,
                 dry_run=dry_run,
+                geschuetzt=self.geschuetzte_gruppen(),
             )
             if not dry_run:
                 self.last_plan = plan
@@ -634,6 +697,7 @@ class AppContext:
                 self.config,
                 prune=effective_prune,
                 dry_run=dry_run,
+                geschuetzt=self.geschuetzte_gruppen(),
             )
             if not dry_run:
                 self.last_plan = plan
@@ -714,6 +778,10 @@ class AppContext:
                 "connected": bool(self.monitor and self.monitor.connected),
                 "ping_ms": getattr(self.monitor, "own_ping_ms", None),
                 "error": getattr(self.monitor, "last_error", ""),
+                # Sieht der Bot die Paketzaehler aller Plaetze? Nein heisst:
+                # Verlust nur fuer Clients auf seinem eigenen Platz.
+                "alle_plaetze": self.monitor_berechtigt,
+                "berechtigung_fehler": self.monitor_berechtigung_fehler,
             },
             "provision": {
                 "last_at": self.last_provision_at or None,

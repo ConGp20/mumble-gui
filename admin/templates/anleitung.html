@@ -200,10 +200,11 @@
     <header>Was Mumble sich <em>nicht</em> merkt</header>
     <div class="inhalt">
       <p>
-        Drei Dinge kann Mumble nicht dauerhaft speichern. Das ist keine
+        Diese Dinge kann Mumble nicht dauerhaft speichern. Das ist keine
         Einstellung, die man suchen müsste – es gibt schlicht kein Feld dafür.
         Diese Oberfläche merkt sie sich deshalb selbst und stellt sie wieder her,
-        sobald sich jemand verbindet.
+        sobald sich jemand verbindet. Eine Show und die Sicherung enthalten sie
+        mit.
       </p>
       <table class="dicht">
         <thead><tr><th>Was</th><th>Warum nicht</th><th>Wie es hier trotzdem geht</th></tr></thead>
@@ -214,9 +215,18 @@
           <tr><td>Dauerhaftes Mithören</td>
               <td>Hängt an der Sitzung, nicht am Nutzer – nach dem Trennen weg.</td>
               <td>Wird nach jedem Verbinden neu gesetzt.</td></tr>
-          <tr><td>Priority Speaker</td>
+          <tr><td>Vorrang (Priority Speaker)</td>
               <td>Ist Zustand einer Sitzung, kein Recht.</td>
               <td>Desgleichen.</td></tr>
+          <tr><td>Ruftasten</td>
+              <td>Wohin eine Taste ruft, steht im Mumble-Programm, nicht am Server.</td>
+              <td>Jedes Gerät ruft mit Taste <i>n</i> immer die Gruppe <code>ruf<i>n</i></code>;
+                  der Server leitet sie je Sitzung auf die Rolle um, die am Platz
+                  eingestellt ist – nach jedem Verbinden und Platzwechsel neu.</td></tr>
+          <tr><td>Verbindungen zwischen Plätzen</td>
+              <td>Mumble kennt nur Rechte je Platz, keine Verbindung als Ganzes.</td>
+              <td>Wird hier gemerkt; das Recht steht am Server, das Mithören wird
+                  je Sitzung nachgezogen.</td></tr>
         </tbody>
       </table>
       <div class="hinweis">

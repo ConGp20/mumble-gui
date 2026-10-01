@@ -174,7 +174,10 @@ def _im_export(pfad: str, top_level: list[str]) -> bool:
 
 
 def export_state(
-    client: IceClient, *, roots: list[str] | None = None
+    client: IceClient,
+    *,
+    roots: list[str] | None = None,
+    ohne_gruppen: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Liest den Server und baut daraus die YAML-Struktur.
 
@@ -215,7 +218,10 @@ def export_state(
             {
                 entry.group
                 for entry in root_acl.own_acls()
-                if entry.is_group and entry.group not in {"all", "admin"} and entry.allow & bit
+                if entry.is_group
+                and entry.group not in {"all", "admin"}
+                and entry.group not in ohne_gruppen
+                and entry.allow & bit
             }
         )
         setattr(policies, policy_name, members)
@@ -389,6 +395,7 @@ def export_yaml(
     verbindungen: Mapping[str, Mapping[str, list[str]]] | None = None,
     netze: list[Mapping[str, Any]] | None = None,
     ruftasten: Mapping[str, Mapping[int, str]] | None = None,
+    ohne_gruppen: frozenset[str] = frozenset(),
 ) -> str:
     """Wie :func:`export_state`, aber gleich als YAML-Text.
 
@@ -398,7 +405,10 @@ def export_yaml(
     ID: murmur vergibt IDs beim Wiederanlegen neu, und eine gespeicherte ID
     zeigte danach auf die falsche Person.
     """
-    document = export_state(client, roots=roots)
+    # ``ohne_gruppen``: Regeln, die der Anwendung gehoeren (der Monitor-Bot,
+    # D-035). Sie haengen an einem Zertifikat dieser Installation und haetten
+    # in einer Show, die woanders geladen wird, nichts zu suchen.
+    document = export_state(client, roots=roots, ohne_gruppen=ohne_gruppen)
     ausgelassen = document.pop("_ausgelassen", [])
     if wunsch:
         abschnitt = _wunsch_mit_namen(client, wunsch)

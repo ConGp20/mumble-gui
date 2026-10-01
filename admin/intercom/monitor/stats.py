@@ -95,13 +95,14 @@ class UserStatsSample:
     (``Server::msgUserStats``):
 
     * immer: ``session``, Ping- und Paketzaehler, ``onlinesecs``
-    * nur wenn der Bot im selben Kanal steht **oder** ``Ban`` am Wurzelkanal
-      hat: ``from_client``/``from_server``, ``bandwidth``, ``idlesecs``
-    * nur bei ``Ban`` am Wurzelkanal: Zertifikate, ``version``, ``opus``,
+    * nur wenn der Bot im selben Kanal steht **oder** ``Register`` am
+      Wurzelkanal hat: ``from_client``/``from_server``, ``bandwidth``, ``idlesecs``
+    * nur bei ``Register`` am Wurzelkanal: Zertifikate, ``version``, ``opus``,
       ``address``
 
     Fehlende Felder kommen als 0 bzw. leerer String an. Genau deshalb braucht
-    der Bot ``Ban`` am Wurzelkanal -- ohne das gibt es keinen Paketverlust.
+    der Bot ``Register`` am Wurzelkanal -- ohne das gibt es keinen Paketverlust.
+    In murmur 1.5.735 gemessen; aeltere Fassungen fragten ``Ban`` ab (D-035).
     """
 
     ts: float

@@ -5,10 +5,13 @@
 /server/
 /admin-data/
 
-# Von slice2py erzeugt -- haengt an MUMBLE_VERSION und wird beim Bau erstellt
-/admin/slice/MumbleServer.ice
-/admin/slice/MumbleServer_ice.py
-/admin/slice/MumbleServer/
+# Eine Vorgabedatei fuer die Kommandozeile ist Sache der Installation, nicht
+# des Repositorys (siehe beispiele/).
+/config/
+
+# Die Slice v1.5.735 und ihre Uebersetzung liegen im Repository: die Tests
+# brauchen sie, und sie ist die Referenz, gegen die alles geprueft wird. Das
+# Image erzeugt seine eigene aus dem Tag in MUMBLE_VERSION.
 /admin/slice/*.pyc
 
 # Python

@@ -120,3 +120,40 @@ def test_fehlendes_ice_secret_wird_gemeldet(tmp_path, capsys):
     with mock.patch.dict(os.environ, {"ICE_SECRET": ""}, clear=True):
         assert main(["validate"]) == 2
     assert "ICE_SECRET" in capsys.readouterr().err
+
+
+def test_export_enthaelt_was_nur_die_oberflaeche_kennt(fake_murmur, tmp_path, capsys):
+    """Eine Sicherung per SSH darf nicht stillschweigend weniger enthalten als
+    der Knopf in der Oberflaeche."""
+    import yaml
+
+    from intercom.cli import main
+    from intercom.store.db import Store
+
+    store = Store(tmp_path / "history.sqlite")
+    store.connect()
+    store.migrate()
+    store.set_ruftaste("Intercom", 1, "regie", "admin")
+    store.set_verbindung("hoert", "Intercom/Regie", "Intercom", an=True)
+    store.set_netze([{"name": "Funk", "cidr": "10.30.0.0/16"}])
+    store.close()
+
+    env = _env(fake_murmur, tmp_path, MINIMAL)
+    with mock.patch.dict(os.environ, env, clear=False):
+        main(["apply", "--yes"])
+        capsys.readouterr()
+        assert main(["export"]) == 0
+    roh = yaml.safe_load(capsys.readouterr().out)
+    assert roh["ruftasten"] == {"Intercom": {1: "regie"}}
+    assert roh["verbindungen"]["hoert"] == {"Intercom/Regie": ["Intercom"]}
+    assert roh["networks"][0]["name"] == "Funk"
+
+
+def test_export_ohne_store_geht_trotzdem(fake_murmur, tmp_path, capsys):
+    from intercom.cli import main
+
+    env = _env(fake_murmur, tmp_path, MINIMAL)
+    env["DATA_DIR"] = str(tmp_path / "gibt-es-nicht")
+    with mock.patch.dict(os.environ, env, clear=False):
+        assert main(["export"]) == 0
+    assert "ruftasten" not in capsys.readouterr().out

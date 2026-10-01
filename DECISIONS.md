@@ -28,6 +28,11 @@ und das Schema aus `README.md`. Der Code liest **ausschliesslich** die in
 `admin/intercom/config.py` aufgefuehrten Variablen – diese Datei ist der
 Vertrag.
 
+**Nachtrag.** Zwei der hier genannten Vorgaben gibt es nicht mehr: das
+Compose-Profil `gui` (mit ihm beendete `docker compose down` den Admin-Container
+nicht; `admin/tests/test_compose.py` haelt fest, dass kein Dienst an einem
+Profil haengt) und die `intercom.yaml` als eingebundene Datei (D-034).
+
 ---
 
 ## D-002 – Beide Container laufen im Host-Netz
@@ -253,6 +258,10 @@ cd admin && python -m pytest -m integration -v
 docker compose -f docker-compose.test.yml down -v
 ```
 
+**Nachtrag.** Inzwischen ausgefuehrt, regelmaessig, gegen murmur 1.5.735
+(ueber den Spiegel `mirror.gcr.io`, siehe README). Was dabei herauskam, steht
+in D-023 bis D-025 und D-032.
+
 
 ---
 
@@ -378,6 +387,10 @@ etwas ausser `UserStats`-Abfragen, und das ist strukturell sichergestellt.
 **Alternative verworfen.** Den Bot in jeden Kanal zu schicken, waere die einzige
 Moeglichkeit ohne `Ban` -- mit einem Client geht das aber nicht gleichzeitig, und
 reihum zu wandern wuerde die Messung unbrauchbar zerhacken.
+
+**Ueberholt von D-035.** Die zitierte Zeile stammt aus einer aelteren Fassung:
+murmur 1.5.735 prueft `ChanACL::Register`, nicht `Ban` -- gemessen. Und die
+Gruppe `monitor` gab es nach D-029 auf keinem Server mehr.
 
 ---
 
@@ -929,6 +942,8 @@ mit. Alle Pfad-Umschreibungen (Wuensche, Verbindungen, Ruftasten) vergleichen
 jetzt mit `substr(spalte, 1, n) = pfad || '/'`; ein Test mit `_` und `%` im
 Namen haelt das fest.
 
+---
+
 ## D-032 - Ruftasten: zentral belegte Tasten ueber `redirectWhisperGroup`
 
 **Problem.** Profi-Intercoms (GreenGo, Riedel, Clear-Com) belegen die Tasten
@@ -1028,6 +1043,8 @@ stumm bleibt:**
 - Keine Rueckmeldung am Gerufenen, wer gerufen hat, ausser der Stimme selbst --
   Mumble zeigt Fluestern als solches an, aber keinen Tastennamen.
 
+---
+
 ## D-033 - Shows: benannte Aufbauten statt einer einzigen Sicherung
 
 **Problem.** Derselbe Server wird fuer verschiedene Veranstaltungen umgebaut --
@@ -1078,3 +1095,97 @@ zwei Shows sind. Ein vorhandener Name wird nur nach ausdruecklicher Rueckfrage
 ueberschrieben (HTTP 409 → Rueckfrage → `ueberschreiben: true`). Namen gehen als
 Query- bzw. Body-Parameter, nicht im Pfad -- ein `/` im Namen ("Halle 1 /
 Probe") bleibt so erlaubt.
+
+---
+
+## D-034 - Keine aktive `intercom.yaml` im Repository
+
+**Problem.** Im Wurzelverzeichnis lag seit dem ersten Tag eine `intercom.yaml`
+mit dem Kopf "Diese Datei ist die Wahrheit", und `docker-compose.yml` band sie
+nach `/config/intercom.yaml` ein. Nach D-029 sollte eine fehlende Datei der
+Normalfall sein -- auf jeder Installation per `git clone` war sie aber da und
+wurde gelesen (`/healthz` meldete `config.loaded: true`). Folgen:
+
+* Ihre sechs **Netzsegmente** galten, solange im Editor keines gepflegt war.
+  Die Netzsicht zeigte dann Namen wie "Richtfunk Nord", die niemand angelegt
+  hatte und die im Editor nicht standen -- dieselbe Inkonsistenz, die zur
+  Verlagerung der Netze in die Oberflaeche gefuehrt hatte.
+* Ihre **Personen** (`regie-1`, `kam-1`, `monitor` ...) lieferten Soll-Plaetze
+  fuer die Alarmleiste und ihre **Geraete** Angaben im Detailpanel -- fuer
+  jeden, der zufaellig so hiess.
+* Hinzu kam eine Falle: fehlt eine per Bind eingebundene **Datei** auf dem
+  Host, legt Docker an ihrer Stelle ein **Verzeichnis** an. Die Datei einfach
+  zu loeschen haette also einen Lesefehler und ein rotes Banner gebracht.
+
+**Entscheidung.**
+
+* Die Datei liegt jetzt als `beispiele/stadion-intercom.yaml`, mit einem Kopf,
+  der sagt, dass sie nicht aktiv ist und wie man sie verwendet (Shows → Datei
+  waehlen, oder fuer die Kommandozeile nach `./config/` kopieren).
+* Compose bindet ein **Verzeichnis** ein: `./config:/config:ro`. Im Normalfall
+  leer; `setup.sh` legt es an und meldet eine alte `intercom.yaml` im
+  Projektverzeichnis samt den zwei Moeglichkeiten.
+* `intercom export` auf der Kommandozeile schreibt jetzt dasselbe wie der Knopf
+  in der Oberflaeche, samt festen Plaetzen, Verbindungen, Ruftasten und Netzen.
+  Vorher war eine Sicherung per SSH stillschweigend unvollstaendig.
+
+`admin/tests/test_compose.py` haelt fest, dass keine Datei aus dem Repository
+als Vorgabe eingebunden wird und dass das Beispiel gueltig ist.
+
+---
+
+## D-035 - Die Anwendung berechtigt ihren Monitor-Bot selbst -- mit `Register`, nicht `Ban`
+
+**Problem.** Auf einer frischen Installation blieb die Verlustspalte im Cockpit
+fuer jeden Client auf einem Platz leer. Zwei Fehler lagen uebereinander:
+
+1. D-015 setzte auf eine Gruppe `monitor` mit `Ban` am obersten Platz -- aus
+   der `intercom.yaml`. Seit D-029 entsteht ein Aufbau aus Baukaesten und der
+   Oberflaeche; die Gruppe gab es auf keinem Server mehr, und in der
+   Oberflaeche gab es keinen Weg, dem Bot ein Recht zu geben.
+2. Das Recht war ohnehin das falsche. `Server::msgUserStats` in murmur 1.5.735
+   (`src/murmur/Messages.cpp`):
+
+   ```cpp
+   bool extend = (uSource == pDstServerUser)
+                 || hasPermission(uSource, qhChannels.value(0), ChanACL::Register);
+   bool local  = extend || (pDstServerUser->cChannel == uSource->cChannel);
+   ```
+
+   Die Paketzaehler gibt es nur bei `local`. Fehlt das Recht, kommt **keine**
+   Fehlermeldung -- die Zaehler fehlen einfach.
+
+**Gemessen** (`test_monitor_braucht_register_am_obersten_platz_nicht_ban`, echter
+murmur, Beobachter mit Zertifikat am obersten Platz, Ziel auf einem anderen):
+
+| Regel am obersten Platz | Zaehler fuer das Ziel |
+|---|---|
+| keine | nein |
+| `$<hash>` erlaubt Ban | **nein** |
+| `$<hash>` erlaubt Register | ja |
+| Regel entfernt, `sicherstellen()` der Anwendung | ja |
+
+**Entscheidung.** Die Anwendung setzt beim Verbinden, nach jedem Laden einer
+Show, nach jedem Speichern in der Fachsicht am obersten Platz und alle zehn
+Minuten eine Regel fuer die Gruppe `$<Zertifikats-Hash des Bots>`: erlaubt
+`Register`, nur am obersten Platz selbst (`intercom/monitor/berechtigung.py`).
+
+* `$hash` vergleicht murmur mit dem Zertifikat der Sitzung
+  (`Group::appliesToUser`, `user.qsHash`) -- keine Registrierung, keine Rolle,
+  und das Recht haengt an genau diesem einen Zertifikat.
+* Gelesen wird immer, geschrieben nur, wenn die Regel fehlt. Ein Eintrag im
+  Protokoll sagt, wann es passiert ist.
+* Die Regel **gehoert der Anwendung**: Planer und Export lassen sie in Ruhe
+  (`geschuetzt` bzw. `ohne_gruppen`). Ohne das haette jede Show mit Aufraeumen
+  sie geloescht, sie waere neu gesetzt worden, und jeder Testlauf danach haette
+  eine Aenderung gemeldet -- und der Hash dieser Installation stuende in jeder
+  Show.
+* Sichtbar statt versteckt: die Fachsicht beschriftet die Regel als
+  "Monitor-Bot", und die Kachel "Messung" im Cockpit zeigt "eingeschraenkt",
+  wenn die Regel nicht gesetzt werden konnte.
+
+**Was das Recht sonst erlaubt.** `Register` heisst: Personen registrieren. Der
+Bot sendet nie etwas ausser `UserStats`-Abfragen, und das ist strukturell
+sichergestellt (kein Audio-Ausgang, `send_message` weist Audio ab). Die
+Alternative -- `Write` ueber die Gruppe `admin` -- waere viel mehr gewesen.
+

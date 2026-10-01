@@ -116,6 +116,23 @@ ok "docker-compose.yml gefunden"
 # =============================================================================
 titel "Verzeichnisse"
 
+# Vorgabedatei: ./config wird als Verzeichnis eingebunden und ist im
+# Normalfall leer. Frueher lag eine intercom.yaml im Projektverzeichnis, die
+# jede Installation als Vorgabe las -- mit Beispielpersonen und -netzen, die
+# niemand angelegt hatte (DECISIONS D-034).
+if [ -d config ]; then
+  info "config/ ist vorhanden"
+elif [ "${NUR_PRUEFEN}" -eq 1 ]; then
+  warnung "config/ fehlt (würde angelegt)"
+else
+  mkdir -p config && ok "config/ angelegt (bleibt leer – der Server ist die Wahrheit)"
+fi
+if [ -f intercom.yaml ]; then
+  warnung "Im Projektverzeichnis liegt noch eine intercom.yaml. Sie wird nicht mehr gelesen."
+  info "Als Vorgabe für die Kommandozeile:  mv intercom.yaml config/intercom.yaml"
+  info "Sonst kann sie weg; als Show einspielen geht über die Oberfläche (Shows → Datei wählen)."
+fi
+
 # Der mumble-server läuft im Image als 10000:10000; das Admin-Image legt
 # denselben Benutzer an. Damit gehören beide Datenverzeichnisse demselben.
 for verzeichnis in server admin-data; do

@@ -1,14 +1,24 @@
 # =============================================================================
-#  Stadion-Intercom – Wunschzustand des Mumble-Servers
+#  Beispiel: ein ganzer Stadion-Aufbau als Datei
 #
-#  Diese Datei ist die Wahrheit. Der Provisioner bringt den Server in genau
-#  diesen Zustand:
-#     docker compose exec mumble-admin intercom plan     # zeigt nur an
-#     docker compose exec mumble-admin intercom apply    # schreibt
-#     docker compose exec mumble-admin intercom export   # Ist-Zustand -> YAML
-#     docker compose exec mumble-admin intercom validate # nur pruefen
+#  Diese Datei ist NICHT aktiv. Kein Container liest sie: der Server ist die
+#  Wahrheit (DECISIONS.md, D-029), angelegt wird in der Oberflaeche.
 #
-#  Vollstaendige Schema-Referenz: siehe README.md, Abschnitt "intercom.yaml".
+#  Sie zeigt das Format, in dem Shows und Sicherungen gespeichert werden, und
+#  ist die Vorlage fuer die Schema-Referenz in der README. Verwenden:
+#
+#    * Oberflaeche -> Shows -> "Datei waehlen ..." -> Testlauf, dann
+#      "Einspielen" oder "Als Show ablegen".
+#
+#    * Fuer die Kommandozeile nach ./config/intercom.yaml kopieren:
+#        docker compose exec mumble-admin intercom validate
+#        docker compose exec mumble-admin intercom plan
+#        docker compose exec mumble-admin intercom apply
+#      Liegt dort eine Datei, liest die Oberflaeche daraus auch Netzsegmente,
+#      Geraete und Soll-Plaetze (users: ... channel:) als Vorgabe. Im
+#      Normalfall liegt dort nichts.
+#
+#  Vollstaendige Schema-Referenz: README.md, Abschnitt "Dateiformat".
 # =============================================================================
 
 version: 1
@@ -34,9 +44,6 @@ groups:
   - technik        # Ton, Netzwerk, Strom
   - kampfgericht   # Kampfgericht / Wettkampfleitung
   - leitung        # Produktionsleitung (darf alles)
-  # Eigene Gruppe nur fuer den Monitor-Bot. Warum sie sein muss, steht bei
-  # policies.ban -- kurz: ohne dieses Recht misst der Bot keinen Paketverlust.
-  - monitor
 
 # -----------------------------------------------------------------------------
 #  Wiederverwendbare ACL-Bausteine
@@ -206,22 +213,10 @@ policies:
   move_users:         [regie, leitung]
   mute_deafen:        [leitung]
   kick:               [leitung]
-  # ACHTUNG, das sieht falscher aus als es ist: der Monitor-Bot braucht Ban am
-  # Wurzelkanal, sonst bekommt er keine Paketzaehler. murmur entscheidet in
-  # Server::msgUserStats (src/murmur/Messages.cpp) so:
-  #
-  #   bool extend = (uSource == pDstServerUser)
-  #                 || hasPermission(uSource, qhChannels.value(0), ChanACL::Ban);
-  #   bool local  = extend || (pDstServerUser->cChannel == uSource->cChannel);
-  #
-  # und nur bei `local` fuellt er from_client/from_server. Ohne Ban saehe der
-  # Bot also ausschliesslich die Clients in seinem eigenen Kanal -- und damit
-  # bliebe die Verlustspalte fuer fast alle leer.
-  #
-  # Das Recht ist eine echte Befugnis, deshalb liegt es in einer eigenen Gruppe
-  # mit genau einem Mitglied (dem Bot) statt bei `regie`. Der Bot selbst bannt
-  # niemanden: er sendet nie etwas ausser UserStats-Abfragen.
-  ban:                [leitung, monitor]
+  # Der Monitor-Bot braucht hier nichts: die Anwendung gibt ihm selbst das
+  # Recht "Register" ganz oben, das murmur fuer Paketverlust auf allen
+  # Plaetzen verlangt (DECISIONS D-035; D-015 nannte faelschlich "Ban").
+  ban:                [leitung]
   make_channel:       [leitung]
   register_users:     [leitung]
   # true => @all darf am obersten Kanal weder sprechen noch fluestern;
@@ -251,7 +246,6 @@ users:
   kg-1:         { groups: [kampfgericht], channel: "Intercom/Kampfgericht" }
   kg-2:         { groups: [kampfgericht], channel: "Intercom/Kampfgericht" }
   produktion:   { groups: [leitung, regie] }
-  monitor:      { groups: [monitor],      channel: "Intercom/Regie" }   # Monitor-Bot
 
 # -----------------------------------------------------------------------------
 #  Netzsegmente

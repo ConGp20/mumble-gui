@@ -59,6 +59,9 @@
                 <td class="zahl" x-text="i + 1"></td>
                 <td>
                   <span class="mono" x-text="a.group ? '@' + a.group : 'Person ' + a.userid"></span>
+                  <template x-if="a.group && bezeichnungen[a.group]">
+                    <span class="abzeichen ok" x-text="bezeichnungen[a.group]"></span>
+                  </template>
                   <template x-if="a.inherited">
                     <span class="abzeichen">geerbt</span>
                   </template>
@@ -247,7 +250,7 @@ function aclEditor() {
   return {
     I: window.Intercom,
     flach: [], clients: [], rechte: [], vorlagen: [], namen: {},
-    kanalId: "0", acls: [], groups: [], inherit: true,
+    kanalId: "0", acls: [], groups: [], inherit: true, bezeichnungen: {},
     bearbeitet: null, neueGruppe: "", vorlage: "",
     diff: null, warnungen: [], pruefSession: "", pruefung: null,
 
@@ -267,6 +270,7 @@ function aclEditor() {
       this.diff = null; this.warnungen = []; this.bearbeitet = null;
       this.I.get("/api/channels/" + this.kanalId + "/acl").then(d => {
         this.acls = d.acls || [];
+        this.bezeichnungen = d.bezeichnungen || {};
         this.groups = d.groups || [];
         this.inherit = d.inherit;
         this.vorlagen = d.templates || [];
@@ -383,7 +387,7 @@ function aclEditor() {
     speichern() {
       if (!confirm("Alle Regeln dieses Platzes ersetzen?")) return;
       this.I.put("/api/channels/" + this.kanalId + "/acl", this.nutzlast())
-        .then(() => { this.ladeAcl(); alert("Gespeichert."); })
+        .then(d => { this.ladeAcl(); alert(d && d.hinweis ? "Gespeichert.\n\n" + d.hinweis : "Gespeichert."); })
         .catch(err => alert("Speichern fehlgeschlagen: " + err.message));
     },
 

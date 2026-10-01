@@ -142,7 +142,7 @@ _MIGRATIONS: Final[tuple[tuple[int, tuple[str, ...]], ...]] = (
             #
             # "nicht gemessen" und "kein Verlust" sind zwei verschiedene
             # Aussagen, und die zweite ist eine Entwarnung. Ohne Monitor-Bot --
-            # oder ohne dessen Ban-Recht am Wurzelkanal -- gibt es ueberhaupt
+            # oder ohne dessen Register-Recht ganz oben (D-035) -- gibt es ueberhaupt
             # keine Verlustzahlen; als 0 gespeichert zeichnete die Sparkline
             # daraus eine makellose Nulllinie. sparkline() laesst Luecken
             # bewusst als None stehen und app.js zeichnet sie als

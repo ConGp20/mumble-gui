@@ -279,11 +279,16 @@ class Reconciler:
         *,
         prune: bool = False,
         dry_run: bool = True,
+        geschuetzt: frozenset[str] = frozenset(),
     ) -> None:
         self.client = client
         self.config = config
         self.prune = prune
         self.dry_run = dry_run
+        #: Gruppenangaben, deren Regeln am obersten Platz der Anwendung
+        #: gehoeren und nie angefasst werden -- auch nicht mit Aufraeumen.
+        #: Heute genau eine: die des Monitor-Bots (D-035).
+        self.geschuetzt = geschuetzt
         self.plan = Plan(dry_run=dry_run, prune=prune, issues=list(config.issues))
         #: Kanalpfad -> ID. Im Trockenlauf bekommen geplante Kanaele negative
         #: Platzhalter-IDs, damit Kinder trotzdem zugeordnet werden koennen.
@@ -668,8 +673,21 @@ class Reconciler:
         # Er bleibt hinter den verwalteten stehen, behaelt damit das letzte
         # Wort, und der Plan meldet ihn als loeschbar.
         verwaltete_keys = {entry.key() for entry in desired.root_acls}
+        # Regeln der Anwendung selbst bleiben stehen, ohne als Aenderung zu
+        # erscheinen: ein Testlauf, der bei jeder Show "Regel loeschen" fuer
+        # den Monitor-Bot meldet, waere Rauschen -- und Aufraeumen nahme dem
+        # Bot die Verlustmessung, bis er sie sich wieder setzt.
+        geschuetzte_acls = [
+            entry
+            for entry in current.own_acls()
+            if entry.is_group
+            and entry.group in self.geschuetzt
+            and entry.key() not in verwaltete_keys
+        ]
         fremde_acls = [
-            entry for entry in current.own_acls() if entry.key() not in verwaltete_keys
+            entry
+            for entry in current.own_acls()
+            if entry.key() not in verwaltete_keys and entry not in geschuetzte_acls
         ]
         for entry in fremde_acls:
             geloescht = Change(
@@ -686,7 +704,7 @@ class Reconciler:
         if self.prune:
             fremde_acls = []
 
-        wanted_acls = list(desired.root_acls) + fremde_acls
+        wanted_acls = list(desired.root_acls) + fremde_acls + geschuetzte_acls
 
         group_diff = self._diff_groups(current_groups, wanted_groups)
         acl_diff = self._diff_acls(current.own_acls(), wanted_acls)
@@ -920,6 +938,9 @@ def reconcile(
     *,
     prune: bool = False,
     dry_run: bool = True,
+    geschuetzt: frozenset[str] = frozenset(),
 ) -> Plan:
     """Bequemlichkeitsfunktion um :class:`Reconciler`."""
-    return Reconciler(client, config, prune=prune, dry_run=dry_run).run()
+    return Reconciler(
+        client, config, prune=prune, dry_run=dry_run, geschuetzt=geschuetzt
+    ).run()

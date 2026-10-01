@@ -55,3 +55,30 @@ def test_setup_startet_ohne_profilschalter():
     """Sonst entstuende dasselbe Problem ueber die Hintertuer."""
     skript = (WURZEL / "setup.sh").read_text(encoding="utf-8")
     assert "--profile" not in skript
+
+
+def test_keine_datei_aus_dem_repository_wird_als_vorgabe_eingebunden(compose):
+    """Die intercom.yaml aus dem Repository lag als Datei unter /config und
+    wurde auf jeder Installation gelesen -- mit Beispielpersonen, -geraeten und
+    -netzen, die niemand angelegt hatte. Die Netzsicht zeigte dann Segmente,
+    die im Editor gar nicht standen (DECISIONS D-034)."""
+    volumes = compose["services"]["mumble-admin"]["volumes"]
+    config = [v for v in volumes if ":/config" in v]
+    assert config == ["./config:/config:ro"], config
+    assert not any(v.split(":", 1)[0].endswith((".yaml", ".yml")) for v in volumes)
+
+
+def test_beispiel_ist_gueltig_und_sagt_dass_es_nicht_aktiv_ist():
+    from intercom.provision.schema import load_config
+
+    beispiel = WURZEL / "beispiele" / "stadion-intercom.yaml"
+    text = beispiel.read_text(encoding="utf-8")
+    assert "NICHT aktiv" in text.split("version:", 1)[0]
+    config = load_config(beispiel)
+    assert not [i for i in config.issues if i.level == "error"]
+    assert config.channels and config.groups
+
+
+def test_setup_legt_das_vorgabeverzeichnis_an():
+    skript = (WURZEL / "setup.sh").read_text(encoding="utf-8")
+    assert "mkdir -p config" in skript

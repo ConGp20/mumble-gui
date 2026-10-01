@@ -733,3 +733,114 @@ def test_ruftaste_wird_ueber_den_enforcer_wirklich_gehoert(echter_client):
             c.set_channel_acl(wurzel)
         with contextlib.suppress(Exception):
             c.remove_channel(basis)
+
+
+# --------------------------------------------------------------------------- #
+#  Monitor-Bot: welches Recht braucht er wirklich?
+# --------------------------------------------------------------------------- #
+
+
+@needs_real_server
+def test_monitor_braucht_register_am_obersten_platz_nicht_ban(echter_client, tmp_path):
+    """Gemessen statt zitiert (DECISIONS D-035).
+
+    D-015 berief sich auf ``Ban``; in murmur 1.5.735 steht in
+    ``Server::msgUserStats`` aber ``ChanACL::Register``. Ohne das Recht liefert
+    murmur die Paketzaehler (``from_client``) nur fuer Clients im eigenen
+    Kanal des Fragenden -- die Verlustspalte bliebe fuer alle anderen leer.
+
+    Und: eine Regel fuer ``$<Zertifikats-Hash>`` greift ohne Registrierung.
+    Genau so berechtigt die Anwendung ihren Bot.
+    """
+    pytest.importorskip("pymumble_py3")
+    import threading
+
+    import pymumble_py3
+    from pymumble_py3 import mumble_pb2
+    from pymumble_py3.constants import PYMUMBLE_MSG_TYPES_USERSTATS
+
+    from intercom.ice import wirkung
+    from intercom.ice.types import ACLEntry
+    from intercom.monitor.bot import ensure_certificate
+
+    c = echter_client
+    port = int(os.environ.get("MUMBLE_TEST_PORT", "64739"))
+    platz = c.add_channel("ITest-Monitor", 0)
+    cert = tmp_path / "beobachter.pem"
+    fingerabdruck = ensure_certificate(cert, "itest-beobachter")
+
+    antworten: list = []
+    angekommen = threading.Event()
+
+    class Beobachter(pymumble_py3.Mumble):
+        def dispatch_control_message(self, type, message):
+            if type == PYMUMBLE_MSG_TYPES_USERSTATS:
+                stats = mumble_pb2.UserStats()
+                stats.ParseFromString(message)
+                antworten.append(stats)
+                angekommen.set()
+                return
+            super().dispatch_control_message(type, message)
+
+    ziel = pymumble_py3.Mumble(ICE_HOST, "itest-ziel", port=port, reconnect=False)
+    beobachter = Beobachter(ICE_HOST, "itest-beobachter", port=port, reconnect=False,
+                            certfile=str(cert), keyfile=str(cert))
+    wurzel_vorher = c.get_acl(0)
+
+    def frage() -> bool:
+        """Liefert murmur die Paketzaehler fuer das Ziel?"""
+        antworten.clear()
+        angekommen.clear()
+        anfrage = mumble_pb2.UserStats()
+        anfrage.session = ziel.users.myself_session
+        beobachter.send_message(PYMUMBLE_MSG_TYPES_USERSTATS, anfrage)
+        assert angekommen.wait(5), "keine UserStats-Antwort"
+        return antworten[-1].HasField("from_client")
+
+    def regel(recht: int) -> None:
+        acl = c.get_acl(0)
+        acl.acls = [e for e in acl.own_acls() if e.group != f"${fingerabdruck}"] + [
+            ACLEntry(apply_here=True, apply_subs=False, group=f"${fingerabdruck}",
+                     allow=recht, deny=0)
+        ]
+        acl.groups = acl.own_groups()
+        c.set_channel_acl(acl)
+        time.sleep(0.5)
+
+    try:
+        for m in (ziel, beobachter):
+            m.start()
+            m.is_ready()
+        time.sleep(0.8)
+        c.set_user_state(ziel.users.myself_session, channel=platz)
+        time.sleep(0.8)
+
+        assert frage() is False, "ohne Recht darf es keine Zaehler fuer fremde Plaetze geben"
+        regel(wirkung.BAN)
+        assert frage() is False, "Ban reicht in 1.5.735 nicht -- D-015 war falsch"
+        regel(wirkung.REGISTER)
+        assert frage() is True, "mit Register ueber $hash muss murmur die Zaehler liefern"
+
+        # Und genau so, wie die Anwendung es tut: Regel weg, sicherstellen().
+        from intercom.monitor.berechtigung import gruppe, sicherstellen
+
+        ohne = c.get_acl(0)
+        ohne.acls = [e for e in ohne.own_acls() if e.group != gruppe(fingerabdruck)]
+        ohne.groups = ohne.own_groups()
+        c.set_channel_acl(ohne)
+        time.sleep(0.5)
+        assert frage() is False
+        assert sicherstellen(c, fingerabdruck) is True
+        time.sleep(0.5)
+        assert frage() is True, "sicherstellen() muss den Bot wirklich berechtigen"
+        assert sicherstellen(c, fingerabdruck) is False, "und nur einmal schreiben"
+    finally:
+        for m in (ziel, beobachter):
+            with contextlib.suppress(Exception):
+                m.stop()
+        with contextlib.suppress(Exception):
+            wurzel_vorher.acls = wurzel_vorher.own_acls()
+            wurzel_vorher.groups = wurzel_vorher.own_groups()
+            c.set_channel_acl(wurzel_vorher)
+        with contextlib.suppress(Exception):
+            c.remove_channel(platz)

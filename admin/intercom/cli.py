@@ -96,6 +96,7 @@ def cmd_plan(args: argparse.Namespace, settings: Settings) -> int:
             config,
             prune=args.prune if args.prune is not None else settings.provision_prune,
             dry_run=True,
+            geschuetzt=_geschuetzt(settings),
         )
     finally:
         client.close()
@@ -119,7 +120,9 @@ def cmd_apply(args: argparse.Namespace, settings: Settings) -> int:
     client = _connect(settings)
     try:
         if not args.yes:
-            preview = reconcile(client, config, prune=prune, dry_run=True)
+            preview = reconcile(
+                client, config, prune=prune, dry_run=True, geschuetzt=_geschuetzt(settings)
+            )
             print(preview.to_text(colour=_colour(sys.stdout)))
             if preview.empty:
                 return EXIT_OK
@@ -134,7 +137,9 @@ def cmd_apply(args: argparse.Namespace, settings: Settings) -> int:
                 print("  Abgebrochen.")
                 return EXIT_OK
 
-        plan = reconcile(client, config, prune=prune, dry_run=False)
+        plan = reconcile(
+            client, config, prune=prune, dry_run=False, geschuetzt=_geschuetzt(settings)
+        )
     finally:
         client.close()
 
@@ -145,12 +150,63 @@ def cmd_apply(args: argparse.Namespace, settings: Settings) -> int:
     return EXIT_OK
 
 
+def _geschuetzt(settings: Settings) -> frozenset[str]:
+    """Die Regel des Monitor-Bots gehoert der Anwendung (D-035).
+
+    Die Kommandozeile laesst sie so in Ruhe wie die Oberflaeche: ein
+    ``apply --prune`` nahme dem Bot sonst die Verlustmessung, und ein Export
+    truege den Zertifikats-Hash dieser Installation in jede Datei.
+    """
+    if not settings.monitor_enabled or not settings.monitor_cert.exists():
+        return frozenset()
+    try:
+        from .monitor.berechtigung import gruppe
+        from .monitor.bot import certificate_fingerprint
+
+        return frozenset({gruppe(certificate_fingerprint(settings.monitor_cert))})
+    except Exception:  # noqa: BLE001 - ohne Bot-Zertifikat gibt es nichts zu schuetzen
+        return frozenset()
+
+
+def _oberflaechenstand(settings: Settings) -> dict[str, Any]:
+    """Was nur die Oberflaeche kennt, aus dem Store -- fuer einen vollstaendigen Export.
+
+    Ohne das waere ``intercom export`` eine stillschweigend unvollstaendige
+    Sicherung: feste Plaetze, Verbindungen, Ruftasten und Netze fehlten, und
+    das fiele erst beim Einspielen auf. Gibt es noch keinen Store (frische
+    Installation, nie gestartet), gibt es auch nichts davon.
+    """
+    from .store.db import Store
+
+    if not settings.db_path.exists():
+        return {}
+    store = Store(settings.db_path)
+    try:
+        store.connect()
+        return {
+            "wunsch": store.alle_wuensche(),
+            "verbindungen": store.verbindungen(),
+            "netze": store.netze(),
+            "ruftasten": store.ruftasten(),
+        }
+    except Exception as exc:  # noqa: BLE001 - Export soll trotzdem gehen
+        print(
+            f"  Hinweis: Oberflaechenstand nicht lesbar ({exc}) -- exportiert wird "
+            "nur, was am Server steht.",
+            file=sys.stderr,
+        )
+        return {}
+    finally:
+        store.close()
+
+
 def cmd_export(args: argparse.Namespace, settings: Settings) -> int:
     from .provision.exporter import export_yaml
 
+    zusatz = _oberflaechenstand(settings)
     client = _connect(settings)
     try:
-        text = export_yaml(client)
+        text = export_yaml(client, ohne_gruppen=_geschuetzt(settings), **zusatz)
     finally:
         client.close()
 
